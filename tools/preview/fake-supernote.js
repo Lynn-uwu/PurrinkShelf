@@ -5,6 +5,7 @@ import {NativeModules} from 'react-native-web';
 
 const SD = '/storage/ABCD-1234';
 const tree = {
+  '/storage': ['emulated/', 'self/', 'ABCD-1234/'],
   [`${SD}`]: ['Novels/', 'Books/', 'Music/'],
   '/storage/emulated/0': ['Document/', 'Note/', 'MyStyle/'],
   '/storage/emulated/0/Document': ['Welcome.pdf'],
@@ -79,7 +80,11 @@ export const PluginNoteAPI = {
   insertText: async t => (window.__pasted.push('text:' + t.textContentFull.split('\n')[0]), {success: true, result: true}),
 };
 export const PluginFileAPI = {openFile: async () => ({success: true, result: true})};
-export const RattaFileSelector = {selectImage: async () => null};
+export const RattaFileSelector = {
+  selectImage: async () => null,
+  // Supernote's own file picker: pretend the reader picked a book inside Novels/Chinese Novels
+  selectFile: async () => [`${SD}/Novels/Chinese Novels/Moon Over the Jade Pavilion.epub`],
+};
 
 // ?state=1 : pretend some books were read, bookmarked and searched for
 if (new URLSearchParams(location.search).get('state')) {

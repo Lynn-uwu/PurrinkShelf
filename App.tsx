@@ -5,7 +5,7 @@
  */
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
-import {FileUtils, PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
+import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, Vol, needsDetails, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
@@ -29,6 +29,7 @@ type Screen =
   | {kind: 'gallery'; what: 'recent' | 'genres'}
   | {kind: 'libraries'}
   | {kind: 'browse'; path: string | null}
+  | {kind: 'pickroot'; file: string}
   | {kind: 'library'}
   | {kind: 'book'; key: string; from?: From}
   | {kind: 'edit'; key: string; from?: From};
@@ -279,6 +280,38 @@ function InkShelfApp(): React.JSX.Element {
     setBusy(null);
     setScreen(then || {kind: 'library'});
     changeApp(a => ({...a, lastLib: l.path}));
+  }
+
+  // ---------- adding a library: Supernote's own file picker, then choose the folder ----------
+  async function addLibrary() {
+    log('add library: system picker');
+    try {
+      const r: any = await FileSelector.selectFile({
+        selectType: 1,
+        suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'],
+        maxNum: 1,
+        title: 'Pick any book in your library',
+        rightButtonText: 'OK',
+      });
+      const list: any[] = Array.isArray(r) ? r : r?.result || [];
+      log('picker returned', list);
+      if (list.length) setScreen({kind: 'pickroot', file: String(list[0])});
+    } catch (e) {
+      log('picker failed', e);
+      setScreen({kind: 'browse', path: null}); // fall back to InkShelf's own folder list
+    }
+  }
+  async function useFolder(p: string) {
+    try {
+      log('use folder', p);
+      const name = p.split('/').filter(Boolean).pop() || 'Library';
+      const n = [...libs.filter(x => x.path !== p), {name, path: p}];
+      setLibs(n);
+      await saveLibraries(n);
+      await openLibrary({name, path: p});
+    } catch (e) {
+      reportError(e, 'Adding the library');
+    }
   }
 
   // ---------- every library at once (Home, search, Newly added, genres) ----------
@@ -536,7 +569,7 @@ function InkShelfApp(): React.JSX.Element {
           onGenre={goGenre}
           onViewAll={what => setScreen({kind: 'gallery', what})}
           onLibrary={l => openLibrary(l)}
-          onAddLibrary={() => setScreen({kind: 'browse', path: null})}
+          onAddLibrary={addLibrary}
         />
         {taskbar('home')}
       </>,
@@ -617,7 +650,7 @@ function InkShelfApp(): React.JSX.Element {
               />
             </View>
           ))}
-          <Btn dark icon="folder-plus" label="Add a library folder" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(16)}} />
+          <Btn dark icon="folder-plus" label="Add a library folder" onPress={addLibrary} style={{marginTop: px(16)}} />
           <Text style={[st.small, {marginTop: px(20)}]}>
             Removing a library only removes it from this list. Your books and saved details stay in the folder.
           </Text>
@@ -633,20 +666,36 @@ function InkShelfApp(): React.JSX.Element {
         path={screen.path}
         onGo={p => setScreen({kind: 'browse', path: p})}
         onCancel={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})}
-        onPick={async p => {
-          try {
-            log('use folder', p);
-            const name = p.split('/').filter(Boolean).pop() || 'Library';
-            const n = [...libs.filter(x => x.path !== p), {name, path: p}];
-            setLibs(n);
-            await saveLibraries(n);
-            log('saved libraries', n.length);
-            await openLibrary({name, path: p});
-          } catch (e) {
-            reportError(e, 'Adding the library');
-          }
-        }}
+        onPick={useFolder}
       />,
+    );
+  }
+
+  // ----- after picking a book: which folder above it is the library? -----
+  if (screen.kind === 'pickroot') {
+    const parts = screen.file.split('/');
+    const base = screen.file.startsWith('/storage/emulated/0/') ? 4 : 3; // stop at the storage root
+    const folders: string[] = [];
+    for (let i = parts.length - 1; i >= base; i--) folders.unshift(parts.slice(0, i).join('/'));
+    const rootLabel = base === 4 ? 'Supernote' : 'SD card';
+    return shell(
+      <>
+        <Header title="Which folder is the library?" left="Cancel" onLeft={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={[st.para, {fontSize: px(18)}]}>{'Tap the folder that holds all the books for this library. Its subfolders become filters.'}</Text>
+          {folders.map((f, i) => (
+            <Pressable key={f} onPress={() => useFolder(f)} style={[st.folderRow, {paddingLeft: px(10) + i * px(22), flexDirection: 'row', alignItems: 'center'}]}>
+              <Icon name="folder-plus" size={px(26)} />
+              <View style={{flex: 1, marginLeft: px(12)}}>
+                <Text style={st.folderName} numberOfLines={1}>{i === 0 ? `${rootLabel}  ›  ${f.split('/').pop()}` : f.split('/').pop()}</Text>
+              </View>
+              <Icon name="check" size={px(24)} />
+            </Pressable>
+          ))}
+          <Text style={[st.small, {marginTop: px(14)}]} numberOfLines={2}>{`You picked: ${parts[parts.length - 1]}`}</Text>
+          <Btn small icon="library" label="Browse folders instead" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(18)}} />
+        </View>
+      </>,
     );
   }
 
@@ -2013,14 +2062,10 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
         setEntries((await listDir(path)).filter(e => e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt|docx)$/i.test(e.name)));
       } else {
         const r = [{label: 'Supernote (internal storage)', path: '/storage/emulated/0'}];
-        try {
-          const raw: any = await FileUtils.getExternalDirPath();
-          log('storage roots', raw);
-          const ext: string[] = (Array.isArray(raw) ? raw : raw?.result ?? (raw ? [raw] : [])).map((x: any) => String(x));
-          ext.filter(p => !p.startsWith('/storage/emulated')).forEach((p, i) => r.push({label: `SD card${ext.length > 2 ? ' ' + (i + 1) : ''}`, path: p.replace(/\/+$/, '')}));
-        } catch (e) {
-          log('storage roots failed', e);
-        }
+        // SD cards show up as /storage/XXXX-XXXX (found directly, without asking the system)
+        const cards = (await listDir('/storage')).filter(e => e.isDir && !['emulated', 'self'].includes(e.name));
+        log('storage roots', cards.map(c => c.path));
+        cards.forEach((c, i) => r.push({label: `SD card${cards.length > 1 ? ' ' + (i + 1) : ''}`, path: c.path}));
         setRoots(r);
       }
     })();
