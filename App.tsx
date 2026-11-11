@@ -6,7 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
@@ -29,7 +29,7 @@ type Screen =
   | {kind: 'gallery'; what: 'recent' | 'genres'}
   | {kind: 'libraries'}
   | {kind: 'missing'}
-  | {kind: 'browse'; path: string | null}
+  | {kind: 'browse'; path: string | null; for?: 'backup' | 'restore'}
   | {kind: 'pickroot'; file: string}
   | {kind: 'library'}
   | {kind: 'book'; key: string; from?: From}
@@ -227,7 +227,11 @@ function InkShelfApp(): React.JSX.Element {
   const [tags, setTags] = useState<TagState>({});
   const [mode, setMode] = useState<'all' | 'any'>('all');
   const [page, setPage] = useState(1);
-  const [sheet, setSheet] = useState<SheetTab | null>(null);
+  const [sheet, setSheet] = useState<SheetTab | null>(null); // sort and display
+  const [cat, setCat] = useState<string | null>(null); // category picked at the top (null = All)
+  const [catOpen, setCatOpen] = useState(false);
+  const [fKind, setFKind] = useState<'g' | 't' | 'f'>('g'); // filter panel: Genre, Tags, More
+  const [tPage, setTPage] = useState(1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -261,22 +265,86 @@ function InkShelfApp(): React.JSX.Element {
       log('InkShelf started', hasNative() ? 'native ok' : 'NO NATIVE MODULE');
       await askPermissions();
       log('permissions asked');
-      loadSettings().then(setSettings);
-      loadState().then(setApp);
-      const l = await loadLibraries();
-      // what was found last time shows at once; each library then refreshes quietly
-      const cached: {[p: string]: {books: Book[]; meta: MetaStore}} = {};
-      for (const x of l) {
-        const c = await loadCache(x.path);
-        if (c) cached[x.path] = c;
+      // a fresh install: bring everything back from the backup file, if there is one
+      if (!(await isSetUp())) {
+        const bk = await readBackup(DEFAULT_BACKUP_DIR);
+        if (bk) await restoreFrom(bk, DEFAULT_BACKUP_DIR);
       }
-      setLibData(d => ({...cached, ...d}));
-      setLibs(l);
+      await loadAll();
+      ready.current = true;
     })();
     // Supernote's own settings entry for InkShelf opens the settings sheet
     return on('settings', () => setShowSettings(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadAll() {
+    setSettings(await loadSettings());
+    setApp(await loadState());
+    const l = await loadLibraries();
+    // what was found last time shows at once; each library then refreshes quietly
+    const cached: {[p: string]: {books: Book[]; meta: MetaStore}} = {};
+    for (const x of l) {
+      const c = await loadCache(x.path);
+      if (c) cached[x.path] = c;
+    }
+    setLibData(d => ({...d, ...cached}));
+    setLibs(l);
+  }
+  async function restoreFromFolder(dir: string) {
+    const bk = await readBackup(dir);
+    if (!bk) {
+      setMessage(`There's no "${BACKUP_NAME}" in that folder.`);
+      return false;
+    }
+    ready.current = false;
+    await restoreFrom(bk, dir);
+    await loadAll();
+    if (lib) {
+      const c = await loadCache(lib.path);
+      const m = await loadMeta(lib.path);
+      if (c) setBooks(c.books);
+      setMeta(m);
+    }
+    ready.current = true;
+    return true;
+  }
+
+  // ---------- backup file (Document/InkShelf by default): everything InkShelf wrote ----------
+  const ready = useRef(false); // never write a backup before the saved data has been read
+  const [lastBackup, setLastBackup] = useState<number | null>(null);
+  async function restoreFrom(bk: Backup, dir: string) {
+    log('restore from backup', dir, new Date(bk.savedAt).toISOString());
+    // merged with whatever is there now, so restoring never loses anything
+    const curLibs = await loadLibraries();
+    await saveLibraries([...curLibs, ...bk.libraries.filter(l => !curLibs.some(c => c.path === l.path))]);
+    if (!curLibs.length) await saveSettings({...DEFAULT_SETTINGS, ...bk.settings, backupDir: dir});
+    const cur = await loadState();
+    const uniq = (list: Snap[]) => list.filter((x, i) => list.findIndex(y => y.lib === x.lib && y.key === x.key) === i);
+    const bs = bk.state || EMPTY_STATE;
+    await saveState({
+      ...bs,
+      ...cur,
+      recent: uniq([...cur.recent, ...(bs.recent || [])]).slice(0, 12),
+      bookmarks: uniq([...cur.bookmarks, ...(bs.bookmarks || [])]),
+      searches: Array.from(new Set([...cur.searches, ...(bs.searches || [])])).slice(0, 6),
+      knownRoots: Array.from(new Set([...(cur.knownRoots || []), ...(bs.knownRoots || [])])),
+    });
+    for (const l of bk.libraries) if (bk.metas?.[l.path]) await restoreMeta(l.path, bk.metas[l.path]);
+    say(`Restored ${bk.libraries.length} librar${bk.libraries.length === 1 ? 'y' : 'ies'} and their details from the backup (${new Date(bk.savedAt).toLocaleDateString()})`);
+  }
+  const backupTimer = useRef<any>(null);
+  const backupNow = async () => {
+    const metas: {[p: string]: MetaStore} = {};
+    for (const l of libs) {
+      const d = l.path === lib?.path ? {meta} : libData[l.path];
+      if (d) metas[l.path] = d.meta;
+    }
+    const ok = await writeBackup(settings.backupDir || DEFAULT_BACKUP_DIR, {libraries: libs, settings, state: app, metas});
+    if (ok) setLastBackup(Date.now());
+    else log('backup failed', settings.backupDir);
+    return ok;
+  };
 
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
   const titleOf = (b: Book) => metaOf(b).title || b.fileTitle;
@@ -290,6 +358,7 @@ function InkShelfApp(): React.JSX.Element {
     coverCache.current = {};
     setCovers({});
     setTags(filter || {});
+    setCat(null);
     setPage(1);
     // show what InkShelf saw last time straight away, then look for changes quietly
     const have = libData[l.path] || (await loadCache(l.path));
@@ -343,7 +412,6 @@ function InkShelfApp(): React.JSX.Element {
     try {
       const r = await scanLib(l);
       if (r && r.added.length) say(`${r.added.length} new book${r.added.length === 1 ? '' : 's'} in ${l.name}`);
-      if (r && r.relinked.length) say(`Reconnected ${r.relinked.length} book${r.relinked.length === 1 ? '' : 's'} with their details`);
     } catch (e) {
       log('scan failed', l.path, String(e));
     }
@@ -442,6 +510,11 @@ function InkShelfApp(): React.JSX.Element {
   // ---------- every library at once (Home, search, Newly added, genres) ----------
   const [libData, setLibData] = useState<{[path: string]: {books: Book[]; meta: MetaStore}}>({});
   useEffect(() => {
+    if (!ready.current) return;
+    clearTimeout(backupTimer.current);
+    backupTimer.current = setTimeout(backupNow, 4000);
+  }, [libs, settings, app, libData, meta]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
     let alive = true;
     (async () => {
       for (const l of libs) {
@@ -507,6 +580,8 @@ function InkShelfApp(): React.JSX.Element {
     if (!l) return;
     if (lib?.path === l.path) {
       setTags({[`g:${g}`]: 1});
+      setCat(null);
+      setFKind('g');
       setPage(1);
       setScreen({kind: 'library'});
     } else openLibrary(l, undefined, {[`g:${g}`]: 1});
@@ -632,6 +707,7 @@ function InkShelfApp(): React.JSX.Element {
     if (!inc.length) return true;
     return mode === 'all' ? inc.every(t => bt.includes(t)) : inc.some(t => bt.includes(t));
   };
+  const inCat = (b: Book) => !cat || catsOf(b, meta.books[b.key]).includes(cat);
   const sortKey = (b: Book, by: SortBy): string | number => {
     const m = meta.books[b.key] || {};
     if (by === 'read') return readKeys[b.key] ? 1000 - readKeys[b.key] : -1; // higher = read more recently
@@ -642,7 +718,7 @@ function InkShelfApp(): React.JSX.Element {
   };
   const results = useMemo(() => {
     const {by, asc} = settings.sort;
-    const list = shelf.filter(b => matches(b, tags));
+    const list = shelf.filter(b => inCat(b) && matches(b, tags));
     const k = new Map(list.map(b => [b.key, sortKey(b, by)]));
     list.sort((a, b) => {
       const x = k.get(a.key)!, y = k.get(b.key)!;
@@ -650,7 +726,32 @@ function InkShelfApp(): React.JSX.Element {
       return asc ? c : -c;
     });
     return list;
-  }, [shelf, tags, mode, settings.sort, meta, readKeys, app.bookmarks]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shelf, tags, mode, cat, settings.sort, meta, readKeys, app.bookmarks]); // eslint-disable-line react-hooks/exhaustive-deps
+  // categories as a tree (Category › Sub-category) for the picker at the top
+  const catTree = useMemo(() => {
+    const parentOf: {[c: string]: string} = {};
+    const kids: {[p: string]: Set<string>} = {};
+    const count: {[c: string]: number} = {};
+    shelf.forEach(b => {
+      const cs = catsOf(b, meta.books[b.key]);
+      cs.forEach((c, i) => {
+        count[c] = (count[c] || 0) + 1;
+        if (!(c in parentOf)) parentOf[c] = i ? cs[i - 1] : '';
+        (kids[parentOf[c]] = kids[parentOf[c]] || new Set()).add(c);
+      });
+    });
+    const out: {name: string; depth: number; count: number}[] = [];
+    const seen = new Set<string>();
+    const walk = (p: string, d: number) =>
+      Array.from(kids[p] || []).sort((a, b) => a.localeCompare(b)).forEach(c => {
+        if (seen.has(c)) return;
+        seen.add(c);
+        out.push({name: c, depth: d, count: count[c]});
+        walk(c, d + 1);
+      });
+    walk('', 0);
+    return out;
+  }, [shelf, meta]);
 
   async function pickCover(): Promise<string | null> {
     if (!lib) return null;
@@ -858,6 +959,17 @@ function InkShelfApp(): React.JSX.Element {
           onAdd={addLibrary}
           onPicker={addFromBook}
           onMissing={() => setScreen({kind: 'missing'})}
+          backup={{
+            dir: settings.backupDir || DEFAULT_BACKUP_DIR,
+            when: lastBackup,
+            onNow: async () => say((await backupNow()) ? 'Backed up' : "Couldn't write the backup there. Check InkShelf may write files."),
+            onMove: () => setScreen({kind: 'browse', path: '/storage/emulated/0/Document', for: 'backup'}),
+            onRestore: async () => {
+              const dir = settings.backupDir || DEFAULT_BACKUP_DIR;
+              if (await readBackup(dir)) await restoreFromFolder(dir);
+              else setScreen({kind: 'browse', path: null, for: 'restore'});
+            },
+          }}
         />
       </>,
     );
@@ -893,10 +1005,21 @@ function InkShelfApp(): React.JSX.Element {
     return shell(
       <FolderBrowser
         path={screen.path}
-        onGo={p => setScreen({kind: 'browse', path: p})}
-        onCancel={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})}
-        onPick={useFolder}
-        onBookPicker={addFromBook}
+        onGo={p => setScreen({kind: 'browse', path: p, for: screen.for})}
+        onCancel={() => setScreen(libs.length || screen.for ? {kind: 'libraries'} : {kind: 'home'})}
+        title={screen.for === 'backup' ? 'Where to keep the backup' : screen.for === 'restore' ? 'Folder with the backup' : undefined}
+        onPick={
+          screen.for === 'backup'
+            ? p => {
+                changeSettings({backupDir: p});
+                say(`The backup is now kept in ${p.replace('/storage/emulated/0/', '')}`);
+                setScreen({kind: 'libraries'});
+              }
+            : screen.for === 'restore'
+              ? async p => { if (await restoreFromFolder(p)) setScreen({kind: 'libraries'}); }
+              : useFolder
+        }
+        onBookPicker={screen.for ? undefined : addFromBook}
         knownRoots={knownRoots}
       />,
     );
@@ -971,7 +1094,8 @@ function InkShelfApp(): React.JSX.Element {
     }
     scheduleCovers([b]);
     const goFilter = (k: FilterKind, v: string) => {
-      setTags({[`${k}:${v}`]: 1});
+      if (k === 'c') { setCat(v); setTags({}); }
+      else { setTags({[`${k}:${v}`]: 1}); setFKind(k); }
       setPage(1);
       setScreen({kind: 'library'});
     };
@@ -1018,20 +1142,40 @@ function InkShelfApp(): React.JSX.Element {
     );
   }
 
-  // ----- library: books (or folders), with a Mihon-style Filter / Sort / Display sheet -----
+  // ----- library: filter panel (Genre, Tags, More) + books or folders; category picked at the top -----
   const grid2 = grid && !settings.libFolders;
+  const showFilters = settings.showFilters && !settings.libFolders;
+  const sideW = showFilters ? Math.round(W * 0.34) : 0;
   const per = grid2 ? GRID_PER_PAGE : LIST_PER_PAGE;
   const pages = Math.max(1, Math.ceil(results.length / per));
   const pg = Math.min(page, pages);
   const chunk = results.slice((pg - 1) * per, pg * per);
   if (!settings.libFolders) scheduleCovers(chunk.filter(b => !b.missing));
-  const resW = W;
+  const resW = W - sideW;
   const avail = H - px(64) - px(58) - px(64) - TASK_H;
   const active = Object.keys(tags).length;
   const badgeOf = (b: Book) => (b.missing ? 'MISSING LINK' : undefined);
   const isNewB = (b: Book) => settings.badges.newBadge && !!meta.newKeys?.includes(b.key);
   const sortName: {[k in SortBy]: string} = {title: 'Title', read: 'Last read', added: 'Date added', vols: 'Volumes', category: 'Category'};
   const clearAll = () => { setTags({}); setPage(1); };
+  const inView = shelf.filter(inCat);
+  const tagCount = (k: string) => inView.filter(b => keysOf(b).includes(k) && matches(b, tags, k)).length;
+  const fNames = fKind === 'g' ? allGenres : fKind === 't' ? allTags : FLAGS.filter(f => f.k !== 'f:missing' || missingHere.length || tags[f.k]).map(f => f.k);
+  const fixedTop = px(10) + px(36) + px(46) + (fKind === 'f' ? px(24) : px(40) + px(24));
+  const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64) - TASK_H - px(10)) / px(40)));
+  const tPages = Math.max(1, Math.ceil(fNames.length / perT));
+  const tp = Math.min(tPage, tPages);
+  const tagChunk = fNames.slice((tp - 1) * perT, tp * perT);
+  const cycleTag = (t: string) => {
+    const n = {...tags};
+    if (!n[t]) n[t] = 1;
+    else if (n[t] === 1) n[t] = -1;
+    else delete n[t];
+    setTags(n);
+    setPage(1);
+  };
+  const flagLabel = (k: string) => FLAGS.find(f => f.k === k)?.label || k;
+  const kindOn = (k: string) => Object.keys(tags).filter(t => t.startsWith(k + ':')).length;
 
   let content: React.ReactNode;
   if (!shelf.length) {
@@ -1089,15 +1233,15 @@ function InkShelfApp(): React.JSX.Element {
             {b.missing ? (
               <Text style={st.teaser} numberOfLines={2}>{"The file isn't in the library any more. Its details are kept and come back when the file does."}</Text>
             ) : m.description ? (
-              <Text style={st.teaser} numberOfLines={titleOf(b).length > 50 ? 1 : 2}>{m.description.replace(/\s+/g, ' ')}</Text>
+              <Text style={st.teaser} numberOfLines={titleOf(b).length > (showFilters ? 34 : 50) ? 1 : 2}>{m.description.replace(/\s+/g, ' ')}</Text>
             ) : null}
           </View>
         </Pressable>
       );
     });
   } else {
-    const cols = 4;
-    const cellH = Math.floor(avail / 3);
+    const cols = showFilters ? 3 : 4;
+    const cellH = Math.floor(avail / (GRID_PER_PAGE / cols));
     const ch = Math.min(cellH - px(52), Math.round((resW / cols - px(16)) * 1.5));
     const rows = [];
     for (let i = 0; i < chunk.length; i += cols) {
@@ -1127,19 +1271,70 @@ function InkShelfApp(): React.JSX.Element {
       <View style={st.header}>
         <View style={{minWidth: px(110), flexDirection: 'row'}}>
           <View>
-            <IconBtn name="filter" label="Filter, sort and display" dark={active > 0} onPress={() => setSheet('filter')} size={px(46)} style={{borderRadius: px(12)}} />
-            {active ? <View style={[st.badge, {backgroundColor: '#ffffff', borderColor: BLACK}]}><Text style={[st.badgeText, {color: BLACK}]}>{active}</Text></View> : null}
+            <IconBtn name="sidebar" label={settings.showFilters ? 'Hide filters' : 'Show filters'} dark={settings.showFilters} onPress={() => changeSettings({showFilters: !settings.showFilters, libFolders: false})} size={px(46)} style={{borderRadius: px(12)}} />
+            {!showFilters && active ? <View style={st.badge}><Text style={st.badgeText}>{active}</Text></View> : null}
           </View>
         </View>
-        <Pressable style={{flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center'}} onPress={() => setScreen({kind: 'libraries'})} accessibilityLabel="Switch library">
-          <Text style={st.headerName} numberOfLines={1}>{lib?.name || 'Library'}</Text>
-          <Icon name="down" size={px(24)} />
+        <Pressable style={{flex: 1, alignItems: 'center', justifyContent: 'center'}} onPress={() => setCatOpen(true)} accessibilityLabel="Choose a category">
+          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+            <Text style={st.headerName} numberOfLines={1}>{cat || 'All'}</Text>
+            <Icon name="down" size={px(24)} />
+          </View>
+          {libs.length > 1 && lib ? <Text style={[st.small, {marginTop: -px(2)}]} numberOfLines={1}>{lib.name}</Text> : null}
         </Pressable>
         <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
           <IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />
           <CloseBtn />
         </View>
       </View>
+      <View style={{flex: 1, flexDirection: 'row'}}>
+        {showFilters && (
+          <View style={[st.side, {width: sideW}]}>
+            <View style={{flex: 1, padding: px(10)}}>
+              <View style={st.sideHead}>
+                <Text style={st.sideTitle}>Filters</Text>
+                {active > 0 && (
+                  <Pressable onPress={clearAll} hitSlop={px(8)}>
+                    <Text style={st.clear}>Clear</Text>
+                  </Pressable>
+                )}
+              </View>
+              <View style={st.kindTabs}>
+                {(['g', 't', 'f'] as const).map(k => (
+                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); }} style={[st.kindTab, fKind === k && st.btnDark]} accessibilityLabel={k === 'g' ? 'Genre' : k === 't' ? 'Tags' : 'More filters'}>
+                    <Text style={[st.kindTabText, fKind === k && {color: '#ffffff'}]} numberOfLines={1}>{(k === 'g' ? 'Genre' : k === 't' ? 'Tags' : 'More') + (kindOn(k) && fKind !== k ? ' •' : '')}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {fNames.length === 0 ? (
+                <Text style={st.hint}>{`No ${fKind === 'g' ? 'genres' : 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
+              ) : (
+                <>
+                  {fKind !== 'f' ? (
+                    <View style={st.modeRow}>
+                      <Text style={st.small}>Match </Text>
+                      <Pill label="All" active={mode === 'all'} onPress={() => { setMode('all'); setPage(1); }} />
+                      <Pill label="Any" active={mode === 'any'} onPress={() => { setMode('any'); setPage(1); }} />
+                    </View>
+                  ) : null}
+                  <Text style={st.hint}>Tap once to include, again to exclude.</Text>
+                  <View style={{flex: 1}}>
+                    {tagChunk.map(t => {
+                      const k = fKind === 'f' ? t : `${fKind}:${t}`;
+                      return <FilterRow key={k} label={fKind === 'f' ? flagLabel(t) : t} count={tagCount(k)} state={tags[k] || 0} onPress={() => cycleTag(k)} />;
+                    })}
+                  </View>
+                  <View style={st.gPager}>
+                    <IconBtn name="back" label="Previous" disabled={tp <= 1} onPress={() => setTPage(tp - 1)} />
+                    <Text style={st.small}>{`${tp} / ${tPages}`}</Text>
+                    <IconBtn name="forward" label="Next" disabled={tp >= tPages} onPress={() => setTPage(tp + 1)} />
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        )}
+        <View style={{flex: 1}}>
       <View style={st.resBar}>
         <Pressable onPress={() => setSheet('sort')} style={{flex: 1}} accessibilityLabel="Sort">
           <Text style={st.resCount} numberOfLines={1}>
@@ -1147,7 +1342,7 @@ function InkShelfApp(): React.JSX.Element {
             <Text style={st.small}>{settings.libFolders ? '' : `  ·  ${sortName[settings.sort.by]} ${settings.sort.asc ? '↑' : '↓'}`}</Text>
           </Text>
         </Pressable>
-        {active ? <Pill small label="Clear filters  ✕" onPress={clearAll} /> : null}
+        {active && !showFilters ? <Pill small label="Clear  ✕" onPress={clearAll} /> : null}
         <View style={{flexDirection: 'row'}}>
           <ViewIcon kind="list" on={!grid && !settings.libFolders} onPress={() => { changeSettings({libraryGrid: false, libFolders: false}); setPage(Math.floor(((pg - 1) * per) / LIST_PER_PAGE) + 1); }} />
           <ViewIcon kind="grid" on={grid && !settings.libFolders} onPress={() => { changeSettings({libraryGrid: true, libFolders: false}); setPage(Math.floor(((pg - 1) * per) / GRID_PER_PAGE) + 1); }} />
@@ -1185,10 +1380,25 @@ function InkShelfApp(): React.JSX.Element {
           </View>
         </>
       )}
+        </View>
+      </View>
       {taskbar('library')}
+      {catOpen ? (
+        <CategorySheet
+          tree={catTree}
+          total={shelf.length}
+          current={cat}
+          onPick={c => { setCat(c); setPage(1); setCatOpen(false); }}
+          libs={libs}
+          lib={lib}
+          onLib={l => { setCatOpen(false); if (l.path !== lib?.path) openLibrary(l); }}
+          onClose={() => setCatOpen(false)}
+        />
+      ) : null}
       {sheet ? (
         <LibrarySheet
-          tab={sheet}
+          only={['sort', 'display']}
+          tab={sheet === 'display' ? 'display' : 'sort'}
           setTab={setSheet}
           onClose={() => setSheet(null)}
           tags={tags}
@@ -1881,6 +2091,7 @@ function TriRow({label, count, state, onPress}: {label: string; count?: number; 
   );
 }
 function LibrarySheet(props: {
+  only?: SheetTab[];
   tab: SheetTab;
   setTab: (t: SheetTab) => void;
   onClose: () => void;
@@ -1897,7 +2108,7 @@ function LibrarySheet(props: {
   change: (p: Partial<Settings>) => void;
   shown: number;
 }) {
-  const {tab, setTab, onClose, tags, setTags, mode, setMode, count, hasMissing, cats, genres, tagNames, settings, change, shown} = props;
+  const {only, tab, setTab, onClose, tags, setTags, mode, setMode, count, hasMissing, cats, genres, tagNames, settings, change, shown} = props;
   const [kind, setKind] = useState<'g' | 't'>('g');
   const [pg, setPg] = useState(0);
   useEffect(() => setPg(0), [tab, kind]);
@@ -1934,13 +2145,14 @@ function LibrarySheet(props: {
       <Text style={st.hint}>Tap: include  ·  again: exclude</Text>
     </View>
   );
-  const tabs: {t: SheetTab; label: string}[] = [
+  const allTabs: {t: SheetTab; label: string}[] = [
     {t: 'filter', label: 'Filter'},
     {t: 'category', label: 'Category'},
     {t: 'tags', label: 'Tags'},
     {t: 'sort', label: 'Sort'},
     {t: 'display', label: 'Display'},
   ];
+  const tabs = allTabs.filter(x => !only || only.includes(x.t));
   const on = (prefix: string) => Object.keys(tags).filter(k => k.startsWith(prefix)).length;
   let body: React.ReactNode = null;
   if (tab === 'filter') {
@@ -2044,6 +2256,58 @@ function LibrarySheet(props: {
   );
 }
 
+
+// ---------- the category picker at the top of the library ----------
+function CategorySheet({tree, total, current, onPick, libs, lib, onLib, onClose}: {
+  tree: {name: string; depth: number; count: number}[];
+  total: number;
+  current: string | null;
+  onPick: (c: string | null) => void;
+  libs: Lib[];
+  lib: Lib | null;
+  onLib: (l: Lib) => void;
+  onClose: () => void;
+}) {
+  const rows: {name: string | null; depth: number; count: number}[] = [{name: null, depth: 0, count: total}, ...tree];
+  const per = libs.length > 1 ? 9 : 12;
+  const start = Math.max(0, Math.floor(rows.findIndex(r => r.name === current) / per));
+  const [pg, setPg] = useState(start);
+  const pages = Math.max(1, Math.ceil(rows.length / per));
+  const p = Math.min(pg, pages - 1);
+  return (
+    <View style={st.sheetWrap}>
+      <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel="Close" />
+      <View style={st.sheet}>
+        <Pressable onPress={onClose} hitSlop={px(12)} style={{alignItems: 'center'}}>
+          <View style={st.handle} />
+          <Text style={st.sheetTitle}>Category</Text>
+        </Pressable>
+        <View style={{height: per * px(52), marginTop: px(8)}}>
+          {rows.slice(p * per, (p + 1) * per).map(r => {
+            const on = r.name === current;
+            return (
+              <Pressable key={r.name || '*'} onPress={() => onPick(r.name)} style={[st.catRow, {paddingLeft: px(10) + r.depth * px(26)}, on && st.btnDark]} accessibilityLabel={r.name || 'All'}>
+                {r.depth ? <Text style={[st.small, {marginRight: px(6)}, on && {color: '#ffffff'}]}>└</Text> : null}
+                <Text style={[st.catName, r.depth > 0 && {fontWeight: 'normal'}, on && {color: '#ffffff'}]} numberOfLines={1}>{r.name || 'All'}</Text>
+                <Text style={[st.fCount, on && {color: '#ffffff'}]}>{r.count}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
+        {libs.length > 1 ? (
+          <>
+            <Text style={[st.section, {marginTop: px(12)}]}>Library</Text>
+            <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
+              {libs.map(l => <Pill key={l.path} label={l.name} active={l.path === lib?.path} onPress={() => onLib(l)} />)}
+            </View>
+          </>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 // ---------- data and storage ----------
 function DataPage(props: {
   libs: Lib[];
@@ -2057,11 +2321,12 @@ function DataPage(props: {
   onAdd: () => void;
   onPicker: () => void;
   onMissing: () => void;
+  backup: {dir: string; when: number | null; onNow: () => void; onMove: () => void; onRestore: () => void};
 }) {
-  const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing} = props;
+  const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing, backup} = props;
   const [confirm, setConfirm] = useState<string | null>(null);
   const [pg, setPg] = useState(0);
-  const per = 3;
+  const per = 2;
   const pages = Math.max(1, Math.ceil(libs.length / per));
   const p = Math.min(pg, pages - 1);
   const where = (path: string) => (path === '/storage/emulated/0' ? 'Supernote' : path.replace('/storage/emulated/0', 'Supernote').replace(/^\/storage\/[^/]+/, 'SD card'));
@@ -2113,28 +2378,42 @@ function DataPage(props: {
       </View>
       {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
 
-      <Text style={[st.dataTitle, {marginTop: px(14)}]}>When a book's file disappears</Text>
-      <Text style={[st.small, {marginBottom: px(8)}]}>Moved, renamed or deleted files, or a card that was taken out.</Text>
+      <View style={[st.dataHead, {marginTop: px(12)}]}>
+        <Text style={st.dataTitle}>Backup</Text>
+        <Text style={st.small}>{backup.when ? `Saved ${ago(backup.when)}` : 'Saves by itself after every change'}</Text>
+      </View>
+      <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={2}>
+          {'Everything InkShelf wrote (libraries, details, notes, covers chosen, bookmarks, settings) in one file. After reinstalling InkShelf, it reads it back by itself.'}
+        </Text>
+        <Text style={[st.choiceTitle, {fontSize: px(17), marginTop: px(6)}]} numberOfLines={1}>{`${where(backup.dir).replace('Supernote/', '')}  ›  ${BACKUP_NAME}`}</Text>
+        <View style={{flexDirection: 'row', marginTop: px(8)}}>
+          <Btn small dark icon="save" label="Back up now" onPress={backup.onNow} style={{flex: 1}} />
+          <Btn small icon="folder" label="Change folder" onPress={backup.onMove} style={{flex: 1, marginLeft: px(8)}} />
+          <Btn small icon="restore" label="Restore" onPress={backup.onRestore} style={{flex: 1, marginLeft: px(8)}} />
+        </View>
+      </View>
+
+      <Text style={[st.dataTitle, {marginTop: px(8), marginBottom: px(6)}]}>When a book's file disappears</Text>
       <Pressable style={[st.dChoice, missing === 'flag' && st.dChoiceOn]} onPress={() => setMissing('flag')} accessibilityLabel="Keep details and flag it">
         <View style={[st.dRadio, missing === 'flag' && st.dRadioOn]} />
         <View style={{flex: 1}}>
           <Text style={st.choiceTitle}>Keep its details and flag it</Text>
-          <Text style={st.small}>{'Shown as "Missing link" until a file with the same name, or a similar name in the same folder, turns up. Then it reconnects by itself.'}</Text>
+          <Text style={st.small} numberOfLines={1}>{'Shown as "Missing link"; reconnects when the file is back.'}</Text>
         </View>
       </Pressable>
       <Pressable style={[st.dChoice, missing === 'delete' && st.dChoiceOn]} onPress={() => setMissing('delete')} accessibilityLabel="Delete details right away">
         <View style={[st.dRadio, missing === 'delete' && st.dRadioOn]} />
         <View style={{flex: 1}}>
           <Text style={st.choiceTitle}>Delete its details right away</Text>
-          <Text style={st.small}>{'Tags, summary, cover and notes are forgotten at the next refresh. (Never when most of a library is gone at once, e.g. the card is out.)'}</Text>
+          <Text style={st.small} numberOfLines={1}>{'Never when most of a library is gone at once (card out).'}</Text>
         </View>
       </Pressable>
-      <Pressable style={[st.libCard, {marginTop: px(6), height: px(64)}]} onPress={onMissing} accessibilityLabel="Missing links">
+      <Pressable style={[st.libCard, {height: px(58), marginBottom: 0}]} onPress={onMissing} accessibilityLabel="Missing links">
         <Icon name="unlink" size={px(28)} />
         <Text style={[st.choiceTitle, {flex: 1, marginLeft: px(12)}]}>{`Missing links  (${missingCount})`}</Text>
         <Icon name="forward" size={px(24)} />
       </Pressable>
-      <Text style={[st.small, {marginTop: px(4)}]}>{'Details are saved in each library folder (.inkshelf) and a copy is kept with InkShelf, so they survive a wiped card. Removing a library only removes it from this list.'}</Text>
     </View>
   );
 }
@@ -2794,7 +3073,7 @@ export function cardId(p: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
-function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots}: {path: string | null; onGo: (p: string | null) => void; onPick: (p: string) => void; onCancel: () => void; onBookPicker?: () => void; knownRoots: string[]}) {
+function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots, title}: {path: string | null; onGo: (p: string | null) => void; onPick: (p: string) => void; onCancel: () => void; onBookPicker?: () => void; knownRoots: string[]; title?: string}) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [searched, setSearched] = useState(false);
   const [roots, setRoots] = useState<{label: string; path: string}[]>([]);
@@ -2831,7 +3110,7 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots}:
   const shown = list.slice((pg - 1) * rowsPer, pg * rowsPer);
   return (
     <>
-      <Header title="Add a library folder" left="Cancel" onLeft={onCancel} />
+      <Header title={title || 'Add a library folder'} left="Cancel" onLeft={onCancel} />
       <View style={[st.pad, {flex: 1}]}>
         {!path ? (
           <>
@@ -3105,6 +3384,8 @@ const st = StyleSheet.create({
   sheetTab: {flex: 1, alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 4, borderColor: 'transparent', marginBottom: -2},
   sheetTabOn: {borderColor: BLACK},
   sheetTabText: {fontSize: px(18), color: BLACK},
+  catRow: {flexDirection: 'row', alignItems: 'center', height: px(48), borderRadius: px(10), paddingRight: px(12), marginBottom: px(4)},
+  catName: {flex: 1, fontSize: px(20), fontWeight: 'bold', color: BLACK},
   dataHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: px(10)},
   dataTitle: {fontSize: px(22), fontWeight: 'bold', color: BLACK},
   dChoice: {flexDirection: 'row', alignItems: 'flex-start', borderWidth: 1.5, borderColor: '#999999', borderRadius: px(12), padding: px(12), marginBottom: px(8)},

@@ -89,6 +89,18 @@ function novelsMeta() {
   walk(root);
   return {...meta, seenFiles: all.filter(f => !/Starlight Courier|Vol 12/.test(f))};
 }
+// ?backup=1: a fresh install, with a backup file left in Document/InkShelf
+if (new URLSearchParams(location.search).get('backup')) {
+  const N = `${SD}/Novels`;
+  files['/storage/emulated/0/Document/InkShelf/InkShelf backup.json'] = JSON.stringify({
+    app: 'InkShelf', version: 1, savedAt: Date.UTC(2026, 10, 9),
+    libraries: [{name: 'Novels', path: N}],
+    settings: {paging: 'arrows', libraryGrid: true, showFilters: true},
+    state: {recent: [], bookmarks: [], searches: ['jade'], lastLib: N},
+    metas: {[N]: {...meta, seenFiles: undefined}},
+  });
+  files[`${N}/.inkshelf/library.json`] = JSON.stringify({version: 1, books: {}});
+}
 window.__pasted = [];
 export const PluginCommAPI = {
   getCurrentFilePath: async () => ({success: true, result: '/storage/emulated/0/Note/Book reviews.note'}),

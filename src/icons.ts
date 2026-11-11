@@ -33,6 +33,8 @@ export const ICONS = {
   'play-on': require('../assets/icons/play-on.png'),
   'plus': require('../assets/icons/plus.png'),
   'refresh': require('../assets/icons/refresh.png'),
+  'restore': require('../assets/icons/restore.png'),
+  'save': require('../assets/icons/save.png'),
   'scroll': require('../assets/icons/scroll.png'),
   'search': require('../assets/icons/search.png'),
   'select': require('../assets/icons/select.png'),

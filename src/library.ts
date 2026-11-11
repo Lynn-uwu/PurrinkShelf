@@ -47,11 +47,15 @@ export type Settings = {
   sort: {by: SortBy; asc: boolean};
   libFolders: boolean; // library shown as folders instead of books
   badges: {newBadge: boolean; notes: boolean; vols: boolean};
+  backupDir: string; // where the backup file is kept (survives reinstalling InkShelf)
 };
+export const DEFAULT_BACKUP_DIR = '/storage/emulated/0/Document/InkShelf';
+export const BACKUP_NAME = 'InkShelf backup.json';
 export type SortBy = 'title' | 'read' | 'added' | 'vols' | 'category';
 export const DEFAULT_SETTINGS: Settings = {
   paging: 'arrows', libraryGrid: false, volumeGrid: false, showFilters: true, views: {gallery: 'grid'},
   missing: 'flag', sort: {by: 'title', asc: true}, libFolders: false, badges: {newBadge: true, notes: true, vols: true},
+  backupDir: DEFAULT_BACKUP_DIR,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
@@ -192,6 +196,35 @@ export async function loadLibraries(): Promise<Lib[]> {
   } catch (e) {
     return [];
   }
+}
+
+/** false on a fresh install (nothing saved with the plugin yet) */
+export async function isSetUp(): Promise<boolean> {
+  return (await readText(`${await pluginDir()}/libraries.json`)) !== null;
+}
+
+// ---------- backup: everything InkShelf wrote, in one file the reader can keep ----------
+export type Backup = {app: 'InkShelf'; version: 1; savedAt: number; libraries: Lib[]; settings: Settings; state: AppState; metas: {[path: string]: MetaStore}};
+export async function writeBackup(dir: string, b: Omit<Backup, 'app' | 'version' | 'savedAt'>): Promise<boolean> {
+  return writeText(`${dir}/${BACKUP_NAME}`, JSON.stringify({app: 'InkShelf', version: 1, savedAt: Date.now(), ...b}, null, 1));
+}
+export async function readBackup(dir: string): Promise<Backup | null> {
+  const t = await readText(`${dir}/${BACKUP_NAME}`);
+  try {
+    const b = t ? JSON.parse(t) : null;
+    if (b && b.app === 'InkShelf' && Array.isArray(b.libraries)) return b;
+  } catch (e) {}
+  return null;
+}
+/** put a backed-up library's details back, keeping anything newer that is already there */
+export async function restoreMeta(root: string, saved: MetaStore): Promise<void> {
+  const t = await readText(`${root}/${DATA_DIR}/library.json`);
+  let cur: MetaStore | null = null;
+  try { cur = t ? JSON.parse(t) : null; } catch (e) {}
+  const merged: MetaStore = cur?.books
+    ? {...saved, ...cur, books: {...saved.books, ...cur.books}, groups: {...(saved.groups || {}), ...(cur.groups || {})}, series: {...(saved.series || {}), ...(cur.series || {})}}
+    : saved;
+  await saveMeta(root, merged);
 }
 
 export async function saveLibraries(libs: Lib[]) {
