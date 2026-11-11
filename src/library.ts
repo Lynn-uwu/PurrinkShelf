@@ -42,7 +42,31 @@ export const DEFAULT_SETTINGS: Settings = {paging: 'arrows', libraryGrid: false,
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
 export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
-export type MetaStore = {version: 1; books: {[key: string]: Meta}};
+export type MetaStore = {
+  version: 1;
+  books: {[key: string]: Meta};
+  seenFiles?: string[]; // every book file found at the last scan (paths inside the library)
+  newKeys?: string[]; // books found since the library was added that you haven't opened yet
+  lastScan?: number;
+};
+
+/**
+ * Compare a fresh scan with what InkShelf saw last time (like a game list refresh).
+ * The very first scan of a library marks nothing as new.
+ */
+export function reconcile(root: string, books: Book[], meta: MetaStore): {meta: MetaStore; added: string[]; removed: number; changed: boolean} {
+  const rel = (p: string) => (p.startsWith(root + '/') ? p.slice(root.length + 1) : p);
+  const now = books.flatMap(b => b.files.map(rel));
+  const first = !meta.seenFiles;
+  const seen = new Set(meta.seenFiles || []);
+  const nowSet = new Set(now);
+  const added = first ? [] : books.filter(b => b.files.some(f => !seen.has(rel(f)))).map(b => b.key);
+  const removed = first ? 0 : (meta.seenFiles || []).filter(f => !nowSet.has(f)).length;
+  const keys = new Set(books.map(b => b.key));
+  const newKeys = Array.from(new Set([...(meta.newKeys || []).filter(k => keys.has(k)), ...added]));
+  const changed = first || added.length > 0 || removed > 0 || newKeys.length !== (meta.newKeys || []).length;
+  return {meta: {...meta, seenFiles: now, newKeys, lastScan: Date.now()}, added, removed, changed};
+}
 
 const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'];
 const DATA_DIR = '.inkshelf';

@@ -15,11 +15,10 @@ require('fs').mkdirSync(out, {recursive: true});
 
   // first open, adding a library
   await p.goto(url('')); await shot('01-home-first-open');
-  await p.getByText('Add your first library').click(); await p.waitForTimeout(300); await shot('02-which-folder');
-  await p.getByText('Browse folders instead').click(); await shot('02b-browse-fallback');
-  await p.getByLabel('Cancel').click();
-  await p.getByText('Add your first library').click(); await p.waitForTimeout(300);
-  await p.getByText('Novels', {exact: true}).click(); await p.waitForTimeout(400); await shot('04-library-list');
+  await p.getByText('Add your first library').click(); await p.waitForTimeout(300); await shot('02-choose-storage');
+  await p.getByText('SD card', {exact: true}).click(); await p.waitForTimeout(200);
+  await p.getByText('Novels', {exact: true}).click(); await p.waitForTimeout(300); await shot('03-inside-novels');
+  await p.getByText('Use this folder').click(); await p.waitForTimeout(400); await shot('04-library-list');
 
   // someone who has been using it
   await p.goto(url('?lib=2&state=1')); await p.waitForTimeout(600); await shot('05-home');
@@ -29,6 +28,8 @@ require('fs').mkdirSync(out, {recursive: true});
   await p.getByLabel('View all').nth(1).click(); await shot('07-genres-grid');
   await p.getByLabel('List view').click(); await shot('07b-genres-list');
   await tab('Newly added').click(); await p.waitForTimeout(300); await shot('08-new-list');
+  await p.getByText('Just added (2)').click(); await shot('08c-just-added');
+  await p.getByText('All (', {exact: false}).click();
   await p.getByLabel('Grid view').click(); await shot('08b-new-grid');
   await tab('Bookmarks').click(); await shot('09-bookmarks');
   await p.getByText('Moon Over the Jade Pavilion').first().click(); await p.waitForTimeout(500); await shot('10-book');
@@ -43,6 +44,10 @@ require('fs').mkdirSync(out, {recursive: true});
   await p.getByLabel('Close notes').click();
   await p.getByLabel('Back').click(); await p.waitForTimeout(200);
   await tab('Library').click(); await p.waitForTimeout(400); await shot('13-library');
+  await p.getByLabel('Refresh library').click(); await p.waitForTimeout(400); await shot('13b-refreshed');
+  await p.getByText('OK', {exact: true}).click().catch(() => {});
+  await p.getByLabel('Switch library').click(); await p.waitForTimeout(300); await shot('13c-libraries');
+  await p.getByLabel('Home').first().click(); await p.waitForTimeout(200);
   await tab('Settings').click(); await shot('14-settings');
   await b.close();
 })();

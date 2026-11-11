@@ -6,7 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, Vol, needsDetails, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, Vol, needsDetails, reconcile, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
@@ -35,7 +35,7 @@ type Screen =
   | {kind: 'edit'; key: string; from?: From};
 type From = 'home' | 'bookmarks' | 'library' | 'new';
 /** one book anywhere in any library */
-type Found = {lib: Lib; book: Book; meta: Meta};
+type Found = {lib: Lib; book: Book; meta: Meta; isNew?: boolean};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre" or "t:Tag"
 type FilterKind = 'g' | 't';
 
@@ -98,16 +98,23 @@ function Pill({label, onPress, active, small}: {label: string; onPress?: () => v
   );
 }
 
-function Cover({uri, w, h, title}: {uri?: string | null; w: number; h: number; title?: string}) {
+function Cover({uri, w, h, title, isNew}: {uri?: string | null; w: number; h: number; title?: string; isNew?: boolean}) {
   const [bad, setBad] = useState(false);
-  if (!uri || bad) {
-    return (
+  const img =
+    !uri || bad ? (
       <View style={[st.noCover, {width: w, height: h}]}>
         {title ? <Text style={[st.noCoverText, {fontSize: Math.max(px(9), Math.round(w / 9))}]} numberOfLines={5}>{title}</Text> : null}
       </View>
+    ) : (
+      <Image source={{uri: /^[a-z]+:/i.test(uri) ? uri : 'file://' + uri}} style={{width: w, height: h}} resizeMode="cover" onError={() => setBad(true)} />
     );
-  }
-  return <Image source={{uri: /^[a-z]+:/i.test(uri) ? uri : 'file://' + uri}} style={{width: w, height: h}} resizeMode="cover" onError={() => setBad(true)} />;
+  if (!isNew) return img;
+  return (
+    <View style={{width: w, height: h}}>
+      {img}
+      <View style={st.newBadge}><Text style={st.newBadgeText}>NEW</Text></View>
+    </View>
+  );
 }
 
 function ViewIcon({kind, on, onPress}: {kind: 'list' | 'grid'; on: boolean; onPress: () => void}) {
@@ -268,7 +275,7 @@ function InkShelfApp(): React.JSX.Element {
     setFolders([]);
     setTags({});
     setPage(1);
-    const [bs, m] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+    const {books: bs, meta: m} = await scanLib(l);
     log('library read', bs.length, 'books,', Object.keys(m.books).length, 'with details');
     setBooks(bs);
     setMeta(m);
@@ -282,8 +289,59 @@ function InkShelfApp(): React.JSX.Element {
     changeApp(a => ({...a, lastLib: l.path}));
   }
 
-  // ---------- adding a library: Supernote's own file picker, then choose the folder ----------
-  async function addLibrary() {
+  // ---------- scanning: find every book, notice what's new (like a game list refresh) ----------
+  async function scanLib(l: Lib) {
+    const [bs, m0] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+    const r = reconcile(l.path, bs, m0);
+    if (r.changed) await saveMeta(l.path, r.meta);
+    if (r.added.length || r.removed) log('scan', l.name, '+' + r.added.length, '-' + r.removed);
+    return {books: bs, meta: r.meta, added: r.added.length, removed: r.removed};
+  }
+  async function refreshAll(only?: Lib) {
+    const list = only ? [only] : libs;
+    if (!list.length) return;
+    setBusy(only ? `Refreshing ${only.name}…` : 'Refreshing your libraries…');
+    const lines: string[] = [];
+    try {
+      for (const l of list) {
+        const r = await scanLib(l);
+        setLibData(d => ({...d, [l.path]: {books: r.books, meta: r.meta}}));
+        if (lib?.path === l.path) {
+          setBooks(r.books);
+          setMeta(r.meta);
+        }
+        lines.push(`${l.name}: ${r.books.length} books` + (r.added ? `, ${r.added} new` : '') + (r.removed ? `, ${r.removed} file${r.removed === 1 ? '' : 's'} gone` : ''));
+      }
+    } catch (e) {
+      reportError(e, 'Refreshing');
+    }
+    setBusy(null);
+    setMessage(lines.join('\n'));
+  }
+  const markSeen = (b: Book) => {
+    if (!lib || !meta.newKeys?.includes(b.key)) return;
+    const m = {...meta, newKeys: meta.newKeys.filter(k => k !== b.key)};
+    setMeta(m);
+    setLibData(d => ({...d, [lib.path]: {books, meta: m}}));
+    saveMeta(lib.path, m);
+  };
+  async function markAllSeen() {
+    for (const l of libs) {
+      const d = l.path === lib?.path ? {books, meta} : libData[l.path];
+      if (!d?.meta.newKeys?.length) continue;
+      const m = {...d.meta, newKeys: []};
+      await saveMeta(l.path, m);
+      setLibData(x => ({...x, [l.path]: {books: d.books, meta: m}}));
+      if (l.path === lib?.path) setMeta(m);
+    }
+  }
+
+  // ---------- adding a library: choose the folder (like adding a game folder) ----------
+  function addLibrary() {
+    setScreen({kind: 'browse', path: null});
+  }
+  // or: pick any book with Supernote's own file picker, then choose the folder above it
+  async function addFromBook() {
     log('add library: system picker');
     try {
       const r: any = await FileSelector.selectFile({
@@ -321,7 +379,7 @@ function InkShelfApp(): React.JSX.Element {
     (async () => {
       for (const l of libs) {
         if (libData[l.path]) continue;
-        const [bs, m] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+        const {books: bs, meta: m} = await scanLib(l);
         if (!alive) return;
         setLibData(d => ({...d, [l.path]: {books: bs, meta: m}}));
       }
@@ -334,7 +392,7 @@ function InkShelfApp(): React.JSX.Element {
     () =>
       libs.flatMap(l => {
         const d = l.path === lib?.path && books.length ? {books, meta} : libData[l.path];
-        return d ? d.books.map(b => ({lib: l, book: b, meta: d.meta.books[b.key] || {}})) : [];
+        return d ? d.books.map(b => ({lib: l, book: b, meta: d.meta.books[b.key] || {}, isNew: !!d.meta.newKeys?.includes(b.key)})) : [];
       }),
     [libs, lib, books, meta, libData],
   );
@@ -361,7 +419,11 @@ function InkShelfApp(): React.JSX.Element {
   const snapOf = (f: Found, extra?: Partial<Snap>): Snap => ({
     lib: f.lib.path, libName: f.lib.name, key: f.book.key, title: f.meta.title || f.book.fileTitle, cover: xCover(f), folder: f.book.folder, genres: f.meta.genres, at: f.book.added, ...extra,
   });
-  const fresh = useMemo(() => index.filter(f => needsDetails(f.meta)).sort((a, b) => b.book.added - a.book.added), [index]);
+  // New tab: books found since the last refresh, plus books still missing details
+  const fresh = useMemo(
+    () => index.filter(f => f.isNew || needsDetails(f.meta)).sort((a, b) => Number(!!b.isNew) - Number(!!a.isNew) || b.book.added - a.book.added),
+    [index],
+  );
   function goEdit(f: Found) {
     if (lib?.path === f.lib.path) setScreen({kind: 'edit', key: f.book.key, from: 'new'});
     else openLibrary(f.lib, {kind: 'edit', key: f.book.key, from: 'new'});
@@ -397,6 +459,7 @@ function InkShelfApp(): React.JSX.Element {
     }));
   };
   async function readBook(b: Book, path: string) {
+    markSeen(b);
     if (lib) {
       const v = b.vols.find(x => x.path === path);
       const s1 = snap(b, {vol: v?.n});
@@ -545,7 +608,7 @@ function InkShelfApp(): React.JSX.Element {
   if (screen.kind === 'home') {
     return shell(
       <>
-        <Header title="" left={undefined} right={null} />
+        <Header title="" right={libs.length ? <IconBtn bare name="refresh" label="Refresh all libraries" onPress={() => refreshAll()} iconSize={px(28)} style={{marginRight: px(4)}} /> : null} />
         <View style={st.brand} pointerEvents="none">
           <Icon name="logo" size={px(34)} />
           <Text style={st.brandText}>InkShelf</Text>
@@ -595,8 +658,8 @@ function InkShelfApp(): React.JSX.Element {
   if (screen.kind === 'new') {
     return shell(
       <>
-        <Header title="Newly added" />
-        <NewList items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
+        <Header title="Newly added" right={libs.length ? <IconBtn bare name="refresh" label="Refresh all libraries" onPress={() => refreshAll()} iconSize={px(28)} style={{marginRight: px(4)}} /> : null} />
+        <NewList onAllSeen={markAllSeen} items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
         {taskbar('new')}
       </>,
     );
@@ -624,35 +687,51 @@ function InkShelfApp(): React.JSX.Element {
 
   // ----- list of libraries -----
   if (screen.kind === 'libraries') {
+    const info = (l: Lib) => {
+      const d = l.path === lib?.path && books.length ? {books, meta} : libData[l.path];
+      if (!d) return 'Reading…';
+      const n = d.meta.newKeys?.length || 0;
+      return `${d.books.length} book${d.books.length === 1 ? '' : 's'}${n ? `  ·  ${n} new` : ''}`;
+    };
     return shell(
       <>
-        <Header title="Libraries" left="Home" onLeft={() => setScreen({kind: 'home'})} />
+        <Header
+          title="Libraries"
+          left="Home"
+          onLeft={() => setScreen({kind: 'home'})}
+          right={libs.length ? <IconBtn bare name="refresh" label="Refresh all libraries" onPress={() => refreshAll()} iconSize={px(28)} style={{marginRight: px(4)}} /> : null}
+        />
         <ScrollView contentContainerStyle={st.pad}>
-          <Text style={st.h1}>Your libraries</Text>
           {!hasNative() && <Text style={st.warn}>This copy of InkShelf is missing its native part, so it can't read folders or open books.</Text>}
-          {libs.length === 0 && <Text style={st.para}>Add a folder with your books (EPUB, PDF and more). Each folder becomes a library.</Text>}
+          {libs.length === 0 && <Text style={st.para}>Add a folder with your books (EPUB, PDF and more). InkShelf finds every book inside it, including subfolders.</Text>}
           {libs.map(l => (
-            <View key={l.path} style={st.libRow}>
-              <Pressable style={{flex: 1}} onPress={() => openLibrary(l)}>
-                <Text style={st.libName}>{l.name}</Text>
-                <Text style={st.small} numberOfLines={1}>{l.path}</Text>
+            <View key={l.path} style={st.libCard}>
+              <Pressable style={{flex: 1, flexDirection: 'row', alignItems: 'center'}} onPress={() => openLibrary(l)} accessibilityLabel={`Open ${l.name}`}>
+                <View style={st.libIcon}><Icon name="folder" size={px(32)} /></View>
+                <View style={{flex: 1}}>
+                  <Text style={st.libName}>{l.name}</Text>
+                  <Text style={[st.small, {fontWeight: 'bold'}]}>{info(l)}</Text>
+                  <Text style={st.small} numberOfLines={1}>{l.path.replace('/storage/emulated/0', 'Supernote').replace(/^\/storage\/[^/]+/, 'SD card')}</Text>
+                </View>
               </Pressable>
-              <Btn
-                small
-                icon="trash"
-                a11y="Remove from list"
+              <IconBtn name="refresh" label={`Refresh ${l.name}`} onPress={() => refreshAll(l)} style={{marginLeft: px(8)}} />
+              <IconBtn
+                name="trash"
+                label={`Remove ${l.name} from the list`}
                 onPress={async () => {
                   const n = libs.filter(x => x.path !== l.path);
                   setLibs(n);
                   await saveLibraries(n);
                   if (lib?.path === l.path) setLib(null);
                 }}
+                style={{marginLeft: px(8)}}
               />
             </View>
           ))}
-          <Btn dark icon="folder-plus" label="Add a library folder" onPress={addLibrary} style={{marginTop: px(16)}} />
+          <Btn dark icon="folder-plus" label="Add a folder" onPress={addLibrary} style={{marginTop: px(8)}} />
+          <Btn small icon="search" label="Or pick a book with Supernote's file picker" onPress={addFromBook} style={{marginTop: px(10)}} />
           <Text style={[st.small, {marginTop: px(20)}]}>
-            Removing a library only removes it from this list. Your books and saved details stay in the folder.
+            {'Refresh finds books you have added or removed since last time. New ones get a NEW label until you open them.\n\nRemoving a library only removes it from this list. Your books and saved details stay in the folder.'}
           </Text>
         </ScrollView>
       </>,
@@ -667,6 +746,7 @@ function InkShelfApp(): React.JSX.Element {
         onGo={p => setScreen({kind: 'browse', path: p})}
         onCancel={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})}
         onPick={useFolder}
+        onBookPicker={addFromBook}
       />,
     );
   }
@@ -819,7 +899,7 @@ function InkShelfApp(): React.JSX.Element {
       const m = metaOf(b);
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
-          <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} />
+          <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} isNew={meta.newKeys?.includes(b.key)} />
           <View style={st.rowText}>
             <Text style={st.rowTitle} numberOfLines={2}>
               {titleOf(b)}
@@ -868,7 +948,7 @@ function InkShelfApp(): React.JSX.Element {
               <View key={j} style={st.gridCell}>
                 {b && (
                   <Pressable onPress={() => setScreen({kind: 'book', key: b.key})} style={{alignItems: 'center', width: '100%'}}>
-                    <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} />
+                    <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} isNew={meta.newKeys?.includes(b.key)} />
                     <Text style={st.gridTitle} numberOfLines={2}>{titleOf(b)}</Text>
                   </Pressable>
                 )}
@@ -894,7 +974,8 @@ function InkShelfApp(): React.JSX.Element {
           <Text style={st.headerName} numberOfLines={1}>{lib?.name || 'Library'}</Text>
           <Icon name="down" size={px(24)} />
         </Pressable>
-        <View style={{minWidth: px(110), alignItems: 'flex-end'}}>
+        <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
+          {lib ? <IconBtn bare name="refresh" label="Refresh library" onPress={() => refreshAll(lib)} iconSize={px(28)} style={{marginRight: px(4)}} /> : null}
           <CloseBtn />
         </View>
       </View>
@@ -1637,16 +1718,18 @@ type CItem = {
   pills?: string[];
   marks?: string[]; // black labels, e.g. "No summary"
   vol?: number;
+  isNew?: boolean;
   onPress: () => void;
   action?: {icon: IconName; label: string; onPress: () => void; dark?: boolean};
 };
 
 /** count on the left, list/grid buttons on the right */
-function Toolbar({text, grid, setGrid}: {text: string; grid: boolean; setGrid: (g: boolean) => void}) {
+function Toolbar({text, grid, setGrid, extra}: {text: string; grid: boolean; setGrid: (g: boolean) => void; extra?: React.ReactNode}) {
   return (
     <View style={st.toolbar}>
-      <Text style={st.resCount} numberOfLines={1}>{text}</Text>
+      <Text style={[st.resCount, {flex: 1}]} numberOfLines={1}>{text}</Text>
       <View style={{flexDirection: 'row'}}>
+        {extra}
         <ViewIcon kind="list" on={!grid} onPress={() => setGrid(false)} />
         <ViewIcon kind="grid" on={grid} onPress={() => setGrid(true)} />
       </View>
@@ -1679,7 +1762,7 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
     const ch = rowH - px(14);
     return (
       <Pressable key={x.key} style={[st.row, {height: rowH, alignItems: 'center'}]} onPress={x.onPress}>
-        <Cover uri={x.cover} w={Math.round((ch * 2) / 3)} h={ch} title={x.title} />
+        <Cover uri={x.cover} w={Math.round((ch * 2) / 3)} h={ch} title={x.title} isNew={x.isNew} />
         <View style={[st.rowText, {alignSelf: 'stretch'}]}>
           <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
           {x.sub ? <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{x.sub}</Text> : null}
@@ -1695,7 +1778,7 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
   const cell = (x: CItem, i: number) => (
     <Pressable key={x.key} onPress={x.onPress} style={{width: cellW, height: cellH, marginLeft: i % cols ? px(12) : 0, alignItems: 'center'}}>
       <View style={[st.card, {width: cellW, alignItems: 'center'}]}>
-        <Cover uri={x.cover} w={coverW} h={coverH} title={x.title} />
+        <Cover uri={x.cover} w={coverW} h={coverH} title={x.title} isNew={x.isNew} />
         {x.vol ? <View style={st.volBadge}><Text style={st.volBadgeText}>{`Vol ${x.vol}`}</Text></View> : null}
         {x.marks?.length ? (
           <View style={st.markBadge}>
@@ -1761,7 +1844,8 @@ const dateText = (ms: number) => {
   const d = new Date(ms);
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
-function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, onEdit, onOpen}: {
+function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, onEdit, onOpen, onAllSeen}: {
+  onAllSeen: () => void;
   items: Found[];
   libs: Lib[];
   ready: boolean;
@@ -1776,10 +1860,12 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
   const [which, setWhich] = useState('all');
   const noGenre = (f: Found) => !(f.meta.genres?.length || f.meta.tags?.length);
   const noSum = (f: Found) => !f.meta.description;
-  const shown = items.filter(f => which === 'all' || (which === 'genre' ? noGenre(f) : which === 'summary' ? noSum(f) : f.lib.path === which));
+  const justAdded = items.filter(f => f.isNew).length;
+  const shown = items.filter(f => which === 'all' || (which === 'just' ? f.isNew : which === 'genre' ? noGenre(f) : which === 'summary' ? noSum(f) : f.lib.path === which));
   wantCovers(shown);
   const opts = [
     {id: 'all', label: `All (${items.length})`},
+    ...(justAdded ? [{id: 'just', label: `Just added (${justAdded})`}] : []),
     {id: 'genre', label: 'No genre'},
     {id: 'summary', label: 'No summary'},
     ...(libs.length > 1 ? libs.map(l => ({id: l.path, label: l.name})) : []),
@@ -1794,7 +1880,7 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
   return (
     <>
       <Chips options={opts} value={which} onChange={setWhich} />
-      <Toolbar text={`${shown.length} need details  ·  newest first`} grid={grid} setGrid={setGrid} />
+      <Toolbar text={`${shown.length} book${shown.length === 1 ? '' : 's'}  ·  newest first`} grid={grid} setGrid={setGrid} extra={justAdded ? <IconBtn name="check" label="Mark all as seen" onPress={onAllSeen} size={px(44)} style={{borderRadius: px(10)}} /> : null} />
       <Collection
         key={which + grid}
         grid={grid}
@@ -1805,6 +1891,7 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
           title: f.meta.title || f.book.fileTitle,
           sub: [f.book.folder || f.lib.name, f.book.added ? dateText(f.book.added) : ''].filter(Boolean).join('  ·  '),
           cover: cover(f),
+          isNew: f.isNew,
           marks: [noGenre(f) ? 'No genre' : '', noSum(f) ? 'No summary' : ''].filter(Boolean),
           onPress: () => onOpen(f),
           action: {icon: 'edit', label: 'Add details', dark: true, onPress: () => onEdit(f)},
@@ -2050,7 +2137,7 @@ function Home(props: {
 }
 
 // ---------- folder browser ----------
-function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onGo: (p: string | null) => void; onPick: (p: string) => void; onCancel: () => void}) {
+function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker}: {path: string | null; onGo: (p: string | null) => void; onPick: (p: string) => void; onCancel: () => void; onBookPicker?: () => void}) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [roots, setRoots] = useState<{label: string; path: string}[]>([]);
   const [pg, setPg] = useState(1);
@@ -2078,20 +2165,24 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
   const shown = list.slice((pg - 1) * rowsPer, pg * rowsPer);
   return (
     <>
-      <Header title="Choose a folder" left="Cancel" onLeft={onCancel} />
+      <Header title="Add a library folder" left="Cancel" onLeft={onCancel} />
       <View style={[st.pad, {flex: 1}]}>
         {!path ? (
           <>
             <Text style={st.para}>Where are your books?</Text>
             {roots.map(r => (
-              <Pressable key={r.path} style={st.folderRow} onPress={() => onGo(r.path)}>
-                <Text style={st.folderName}>{r.label}  ›</Text>
+              <Pressable key={r.path} style={[st.folderRow, {flexDirection: 'row', alignItems: 'center'}]} onPress={() => onGo(r.path)}>
+                <Icon name="folder" size={px(28)} />
+                <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}]}>{r.label}</Text>
+                <Icon name="forward" size={px(24)} />
               </Pressable>
             ))}
+            {onBookPicker ? <Btn small icon="search" label="Or pick a book with Supernote's file picker" onPress={onBookPicker} style={{marginTop: px(20)}} /> : null}
           </>
         ) : (
           <>
-            <Text style={st.small} numberOfLines={2}>{path}</Text>
+            <Text style={st.small} numberOfLines={2}>{path.replace('/storage/emulated/0', 'Supernote').replace(/^\/storage\/[^/]+/, 'SD card')}</Text>
+            {entries ? <Text style={[st.small, {fontWeight: 'bold'}]}>{`${entries.filter(e => e.isDir).length} folders  ·  ${entries.filter(e => !e.isDir).length} books right here (subfolders are included too)`}</Text> : null}
             <View style={{flexDirection: 'row', marginVertical: px(10)}}>
               <Btn small icon="up" a11y="Up one folder" onPress={() => onGo(isRoot ? null : parent)} />
               <Btn small dark icon="check" label="Use this folder" onPress={() => onPick(path)} style={{marginLeft: px(10), flex: 1}} />
@@ -2100,8 +2191,10 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
             {entries && !entries.length ? <Text style={st.para}>This folder is empty.</Text> : null}
             {shown.map(e =>
               e.isDir ? (
-                <Pressable key={e.path} style={st.folderRow} onPress={() => onGo(e.path)}>
-                  <Text style={st.folderName} numberOfLines={1}>{`▸  ${e.name}`}</Text>
+                <Pressable key={e.path} style={[st.folderRow, {flexDirection: 'row', alignItems: 'center'}]} onPress={() => onGo(e.path)}>
+                  <Icon name="folder" size={px(26)} />
+                  <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}]} numberOfLines={1}>{e.name}</Text>
+                  <Icon name="forward" size={px(22)} />
                 </Pressable>
               ) : (
                 <View key={e.path} style={st.folderRow}>
@@ -2362,10 +2455,14 @@ const st = StyleSheet.create({
   swatch: {width: px(42), height: px(42), borderRadius: px(21), borderWidth: 1.5, borderColor: BLACK, alignItems: 'center', justifyContent: 'center'},
   iconRing: {borderWidth: 1.5, borderColor: BLACK, backgroundColor: '#ffffff'},
   headerName: {fontSize: px(22), fontWeight: 'bold', color: BLACK, marginRight: px(4), maxWidth: W - px(300)},
-  markBadge: {position: 'absolute', left: px(6), top: px(6), backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(6), paddingVertical: px(2)},
+  markBadge: {position: 'absolute', right: px(6), top: px(6), backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(6), paddingVertical: px(2)},
   noteTabPlus: {flexGrow: 0, flexShrink: 0, flexBasis: px(52), width: px(52), borderStyle: 'dashed', backgroundColor: '#ffffff', marginRight: 0},
   brand: {position: 'absolute', top: 0, left: 0, right: 0, height: px(64), flexDirection: 'row', alignItems: 'center', justifyContent: 'center'},
   brandText: {fontSize: px(24), fontWeight: 'bold', color: BLACK, marginLeft: px(10)},
+  newBadge: {position: 'absolute', left: 0, top: px(6), backgroundColor: BLACK, paddingHorizontal: px(6), paddingVertical: px(1), borderTopRightRadius: px(6), borderBottomRightRadius: px(6)},
+  newBadgeText: {fontSize: px(11), fontWeight: 'bold', color: '#ffffff', letterSpacing: 1},
+  libCard: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), padding: px(12), marginBottom: px(12)},
+  libIcon: {width: px(56), height: px(56), borderRadius: px(12), backgroundColor: '#ececec', alignItems: 'center', justifyContent: 'center', marginRight: px(14)},
   toolbar: {height: px(60), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(16)},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},

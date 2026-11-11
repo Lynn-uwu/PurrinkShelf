@@ -54,7 +54,7 @@ function svgCover(title) {
 window.__opened = [];
 NativeModules.InkShelf = {
   listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})),
-  readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? JSON.stringify(meta) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
+  readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {...meta, seenFiles: undefined}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
   writeText: async (path, text) => { files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),
   copyText: async t => ((window.__copied = t), true),
@@ -70,6 +70,15 @@ export const PluginManager = {
   hasPermission: async () => true, requestPermission: async () => 2, getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
 };
 export const FileUtils = {exists: async () => true, getExternalDirPath: async () => ['/storage/emulated/0', SD]};
+// ?state=1: the reader added two books since InkShelf last looked (they show as NEW)
+function novelsMeta() {
+  if (!new URLSearchParams(location.search).get('state')) return meta;
+  const root = `${SD}/Novels`;
+  const all = [];
+  const walk = d => (tree[d] || []).forEach(n => (n.endsWith('/') ? walk(`${d}/${n.slice(0, -1)}`) : all.push(`${d}/${n}`.slice(root.length + 1))));
+  walk(root);
+  return {...meta, seenFiles: all.filter(f => !/Starlight Courier|Vol 12/.test(f))};
+}
 window.__pasted = [];
 export const PluginCommAPI = {
   getCurrentFilePath: async () => ({success: true, result: '/storage/emulated/0/Note/Book reviews.note'}),
