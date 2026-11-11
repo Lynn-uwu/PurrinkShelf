@@ -457,7 +457,11 @@ export default function App(): React.JSX.Element {
   if (screen.kind === 'home') {
     return shell(
       <>
-        <Header title="InkShelf" />
+        <Header title="" left={undefined} right={null} />
+        <View style={st.brand} pointerEvents="none">
+          <Icon name="logo" size={px(34)} />
+          <Text style={st.brandText}>InkShelf</Text>
+        </View>
         <Home
           libs={libs}
           index={index}
@@ -2249,6 +2253,8 @@ const st = StyleSheet.create({
   headerName: {fontSize: px(22), fontWeight: 'bold', color: BLACK, marginRight: px(4), maxWidth: W - px(300)},
   markBadge: {position: 'absolute', left: px(6), top: px(6), backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(6), paddingVertical: px(2)},
   noteTabPlus: {flexGrow: 0, flexShrink: 0, flexBasis: px(52), width: px(52), borderStyle: 'dashed', backgroundColor: '#ffffff', marginRight: 0},
+  brand: {position: 'absolute', top: 0, left: 0, right: 0, height: px(64), flexDirection: 'row', alignItems: 'center', justifyContent: 'center'},
+  brandText: {fontSize: px(24), fontWeight: 'bold', color: BLACK, marginLeft: px(10)},
   toolbar: {height: px(60), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(16)},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},

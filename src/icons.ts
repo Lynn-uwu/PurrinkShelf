@@ -19,6 +19,7 @@ export const ICONS = {
   'image': require('../assets/icons/image.png'),
   'library': require('../assets/icons/library.png'),
   'list': require('../assets/icons/list.png'),
+  'logo': require('../assets/icons/logo.png'),
   'new': require('../assets/icons/new.png'),
   'note': require('../assets/icons/note.png'),
   'pages': require('../assets/icons/pages.png'),

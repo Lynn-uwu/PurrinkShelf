@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo-512.png" width="96" alt="InkShelf logo"></p>
+
 # InkShelf
 
 A library for your Supernote. Pick any folder of books as a library, browse it by cover in a list or grid, add your own titles, tags, descriptions and covers right on the device, filter by folder and tags (include / exclude, match all or any), and tap **Start reading** to open a book in Supernote's reader.
