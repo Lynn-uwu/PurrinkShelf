@@ -18,21 +18,19 @@ const tree = {
     'Starlight Courier.epub', 'The Quiet Alchemist.epub', 'River of Small Lights.epub', 'Crane and the Clockmaker.epub',
     'Echoes of the Ninth Gate/',
   ],
-  [`${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate`]: [
-    'Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 'Echoes of the Ninth Gate Vol 2 (Ch 41-82).epub',
-    'Echoes of the Ninth Gate Vol 3 (Ch 83-120).epub',
-  ],
+  [`${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate`]: ['Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 'Echoes of the Ninth Gate Vol 2 (Ch 41-80).epub', 'Echoes of the Ninth Gate Vol 3 (Ch 81-120).epub', 'Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub', 'Echoes of the Ninth Gate Vol 5 (Ch 161-200).epub', 'Echoes of the Ninth Gate Vol 6 (Ch 201-240).epub', 'Echoes of the Ninth Gate Vol 7 (Ch 241-280).epub', 'Echoes of the Ninth Gate Vol 8 (Ch 281-320).epub', 'Echoes of the Ninth Gate Vol 9 (Ch 321-360).epub', 'Echoes of the Ninth Gate Vol 10 (Ch 361-400).epub', 'Echoes of the Ninth Gate Vol 11 (Ch 401-440).epub', 'Echoes of the Ninth Gate Vol 12 (Ch 441-480).epub'],
 };
 const files = {};
 const meta = {
   version: 1,
   books: {
-    'Chinese Novels/Moon Over the Jade Pavilion.epub': {tags: ['Romance', 'Historical', 'Slow Burn'], description: 'A palace archivist finds a letter that was never meant to be opened, and a prince who would rather it stayed hidden.\nSlow, gentle and full of rainy courtyards.'},
-    'Chinese Novels/The Tea House on Willow Street.epub': {tags: ['Slice of Life', 'Comedy'], description: 'A retired general opens a tiny tea house and tries very hard to live a quiet life. The neighbours have other plans.'},
-    'Chinese Novels/A Sword Without a Name.epub': {tags: ['Action', 'Fantasy', 'Martial Arts'], description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
-    'Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols': {title: 'Echoes of the Ninth Gate', tags: ['Fantasy', 'Mystery', 'Romance'], description: 'Two rival exorcists are bound by a contract neither remembers signing. Nine gates, nine debts, one very long road.'},
-    'Korean Novels/Rain Over Busan.epub': {tags: ['Romance', 'Drama'], description: 'A weather forecaster who is always wrong meets a photographer who only shoots storms.'},
-    'Chinese Novels/Starlight Courier.epub': {tags: ['Sci-fi', 'Comedy'], description: 'The galaxy\'s most punctual delivery driver is assigned a parcel that keeps trying to escape.'},
+    'Chinese Novels/Moon Over the Jade Pavilion.epub': {genres: ['Drama', 'Romance', 'Historical', 'Slice of Life'], tags: ['Archivists', 'Beautiful Female Lead', 'Calm Protagonist', 'Court Politics', 'Hidden Identity', 'Imperial Harem', 'Letters', 'Palace Intrigue', 'Slow Romance', 'Rainy Days', 'Mature Protagonist', 'Royalty', 'Secret Relationship', 'Second Chance', 'Tragic Past', 'Wise Protagonist', 'Clever Protagonist', 'Doting Love Interests', 'Heartwarming', 'Loneliness', 'Older Love Interests', 'Poetry', 'Gardens', 'Strategists', 'Tea Ceremony'], language: 'Chinese', status: '112 Chapters + 4 Extras (Completed)', translated: 'Yes',
+      description: 'For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly.\nThen she opened a letter that had been sealed for twenty years, and the quiet prince who lived in the east wing began appearing at her desk every evening with tea she had not asked for.\nHe said he only wanted the letter back.\nHe did not explain why he kept staying after she returned it, or why the palace guards had started to call her "the prince\'s scholar".\nWhen the old Empress Dowager summoned her to the inner court, Wen Shu realised the letter had never been about love at all, but about a debt the whole dynasty would rather forget.\nThe prince, who had always been calm, lost his composure only once: the night she did not come back from the inner court. He walked through the rain to every gate of the palace until he found her, and said nothing at all on the way home.\nLater the court would whisper about it for years.'},
+    'Chinese Novels/The Tea House on Willow Street.epub': {genres: ['Slice of Life', 'Comedy'], tags: ['Retirement', 'Food'], language: 'Chinese', status: '60 Chapters (Completed)', translated: 'Yes', description: 'A retired general opens a tiny tea house and tries very hard to live a quiet life. The neighbours have other plans.'},
+    'Chinese Novels/A Sword Without a Name.epub': {genres: ['Action', 'Fantasy', 'Martial Arts'], tags: ['Sects', 'Weapon Spirits'], language: 'Chinese', description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
+    'Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols': {title: 'Echoes of the Ninth Gate', genres: ['Fantasy', 'Mystery', 'Romance'], tags: ['Exorcists', 'Contracts', 'Rivals to Lovers'], language: 'Chinese', status: '480 Chapters (Completed)', translated: 'No', description: 'Two rival exorcists are bound by a contract neither remembers signing. Nine gates, nine debts, one very long road.'},
+    'Korean Novels/Rain Over Busan.epub': {genres: ['Romance', 'Drama'], tags: ['Photography', 'Weather'], language: 'Korean', status: '45 Chapters (Completed)', translated: 'Yes', description: 'A weather forecaster who is always wrong meets a photographer who only shoots storms.'},
+    'Chinese Novels/Starlight Courier.epub': {genres: ['Sci-fi', 'Comedy'], tags: ['Space', 'Delivery'], description: 'The galaxy\'s most punctual delivery driver is assigned a parcel that keeps trying to escape.'},
   },
 };
 const COLORS = ['#c9d6df', '#f2d7b6', '#d8c7e8', '#cfe3c5', '#f0c9c9', '#c7dbe8', '#e8e2c7'];

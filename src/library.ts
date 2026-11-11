@@ -12,7 +12,18 @@ export type Book = {
   vols: Vol[];
   ext: string;
 };
-export type Meta = {title?: string; tags?: string[]; description?: string; cover?: string};
+export type Meta = {
+  title?: string;
+  genres?: string[];
+  tags?: string[];
+  description?: string;
+  cover?: string;
+  language?: string;
+  status?: string; // e.g. "94 Chapters + 6 Extras (Completed)"
+  translated?: 'Yes' | 'No';
+};
+export type Settings = {paging: 'arrows' | 'scroll'};
+export const DEFAULT_SETTINGS: Settings = {paging: 'arrows'};
 export type MetaStore = {version: 1; books: {[key: string]: Meta}};
 
 const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'];
@@ -38,6 +49,19 @@ export async function loadLibraries(): Promise<Lib[]> {
 
 export async function saveLibraries(libs: Lib[]) {
   await writeText(`${await pluginDir()}/libraries.json`, JSON.stringify(libs, null, 1));
+}
+
+export async function loadSettings(): Promise<Settings> {
+  const t = await readText(`${await pluginDir()}/settings.json`);
+  try {
+    return {...DEFAULT_SETTINGS, ...(t ? JSON.parse(t) : {})};
+  } catch (e) {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+export async function saveSettings(s: Settings) {
+  await writeText(`${await pluginDir()}/settings.json`, JSON.stringify(s, null, 1));
 }
 
 // ---------- scanning a library folder ----------

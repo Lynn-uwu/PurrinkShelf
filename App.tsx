@@ -6,7 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {FileUtils, PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {Book, Lib, Meta, MetaStore, coverFor, loadLibraries, loadMeta, saveLibraries, saveMeta, scanLibrary} from './src/library';
+import {Book, DEFAULT_SETTINGS, Lib, Meta, MetaStore, Settings, Vol, coverFor, loadLibraries, loadMeta, loadSettings, saveLibraries, saveMeta, saveSettings, scanLibrary} from './src/library';
 import {Entry, hasNative, listDir, openBook} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
@@ -20,11 +20,13 @@ const WRITE = 'plugin.permission.FILE:WRITE';
 
 type Screen =
   | {kind: 'libraries'}
+  | {kind: 'settings'}
   | {kind: 'browse'; path: string | null}
   | {kind: 'library'}
   | {kind: 'book'; key: string}
   | {kind: 'edit'; key: string};
-type TagState = {[t: string]: 1 | -1};
+type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre" or "t:Tag"
+type FilterKind = 'g' | 't';
 
 async function askPermissions() {
   for (const p of [READ, WRITE]) {
@@ -43,10 +45,10 @@ function Btn({label, onPress, dark, small, style}: {label: string; onPress: () =
   );
 }
 
-function Pill({label, onPress, active}: {label: string; onPress?: () => void; active?: boolean}) {
+function Pill({label, onPress, active, small}: {label: string; onPress?: () => void; active?: boolean; small?: boolean}) {
   return (
-    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, active && st.pillActive]}>
-      <Text style={[st.pillText, active && {color: '#ffffff'}]}>{label}</Text>
+    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive]}>
+      <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label}</Text>
     </Pressable>
   );
 }
@@ -141,10 +143,14 @@ export default function App(): React.JSX.Element {
   const [page, setPage] = useState(1);
   const [tPage, setTPage] = useState(1);
   const [showFilters, setShowFilters] = useState(true);
+  const [fKind, setFKind] = useState<FilterKind>('g');
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [volGrid, setVolGrid] = useState(false);
 
   useEffect(() => {
     (async () => {
       await askPermissions();
+      loadSettings().then(setSettings);
       const l = await loadLibraries();
       setLibs(l);
       if (l.length === 1) openLibrary(l[0]);
@@ -208,13 +214,17 @@ export default function App(): React.JSX.Element {
 
   // ---------- filtering ----------
   const allFolders = useMemo(() => Array.from(new Set(books.map(b => b.folder))).sort(), [books]);
-  const allTags = useMemo(
-    () => Array.from(new Set(books.flatMap(b => meta.books[b.key]?.tags || []))).sort((a, b) => a.localeCompare(b)),
-    [books, meta],
-  );
+  const namesOf = (field: 'genres' | 'tags') =>
+    Array.from(new Set(books.flatMap(b => meta.books[b.key]?.[field] || []))).sort((a, b) => a.localeCompare(b));
+  const allGenres = useMemo(() => namesOf('genres'), [books, meta]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allTags = useMemo(() => namesOf('tags'), [books, meta]); // eslint-disable-line react-hooks/exhaustive-deps
+  const keysOf = (b: Book) => {
+    const m = meta.books[b.key] || {};
+    return [...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t)];
+  };
   const matches = (b: Book, fs: string[], ts: TagState, skip?: string) => {
     if (fs.length && !fs.includes(b.folder)) return false;
-    const bt = meta.books[b.key]?.tags || [];
+    const bt = keysOf(b);
     const inc = Object.keys(ts).filter(t => ts[t] === 1 && t !== skip);
     const exc = Object.keys(ts).filter(t => ts[t] === -1 && t !== skip);
     if (exc.some(t => bt.includes(t))) return false;
@@ -266,10 +276,40 @@ export default function App(): React.JSX.Element {
             </View>
           ))}
           <Btn dark label="＋  Add a library folder" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(16)}} />
+          <Btn label="Settings" onPress={() => setScreen({kind: 'settings'})} style={{marginTop: px(12)}} />
           <Text style={[st.small, {marginTop: px(20)}]}>
             Removing a library only removes it from this list. Your books and saved details stay in the folder.
           </Text>
         </ScrollView>
+      </>,
+    );
+  }
+
+  // ----- settings -----
+  if (screen.kind === 'settings') {
+    const set = (n: Settings) => {
+      setSettings(n);
+      saveSettings(n);
+    };
+    const Choice = ({on, label, note, onPress}: {on: boolean; label: string; note: string; onPress: () => void}) => (
+      <Pressable onPress={onPress} style={[st.choice, on && {borderWidth: 3}]}>
+        <View style={[st.radio, on && st.btnDark]} />
+        <View style={{flex: 1}}>
+          <Text style={st.choiceText}>{label}</Text>
+          <Text style={st.small}>{note}</Text>
+        </View>
+      </Pressable>
+    );
+    return shell(
+      <>
+        <Header title="Settings" left="‹ Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'libraries'})} />
+        <View style={st.pad}>
+          <Text style={st.h2}>Long pages</Text>
+          <Text style={[st.para, {fontSize: px(18)}]}>How book pages show long descriptions, lots of tags and many volumes:</Text>
+          <Choice on={settings.paging === 'arrows'} label="Turn pages with ‹ › arrows" note="Everything fits on the screen. Best for e-ink." onPress={() => set({...settings, paging: 'arrows'})} />
+          <Choice on={settings.paging === 'scroll'} label="Scroll up and down" note="One long page you swipe through." onPress={() => set({...settings, paging: 'scroll'})} />
+          <Text style={[st.small, {marginTop: px(16)}]}>Saved automatically.</Text>
+        </View>
       </>,
     );
   }
@@ -308,6 +348,7 @@ export default function App(): React.JSX.Element {
         <EditPage
           book={b}
           meta={metaOf(b)}
+          allGenres={allGenres}
           allTags={allTags}
           cover={coverUri(b)}
           onCancel={() => setScreen({kind: 'book', key: b.key})}
@@ -318,37 +359,28 @@ export default function App(): React.JSX.Element {
         />,
       );
     }
-    const m = metaOf(b);
     scheduleCovers([b]);
-    const paras = (m.description || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
+    const goFilter = (k: 'folder' | FilterKind, v: string) => {
+      if (k === 'folder') { setFolders([v]); setTags({}); }
+      else { setTags({[`${k}:${v}`]: 1}); setFolders([]); setFKind(k); }
+      setPage(1);
+      setScreen({kind: 'library'});
+    };
     return shell(
-      <>
-        <Header title="" left="‹ Back" onLeft={() => setScreen({kind: 'library'})} />
-        <ScrollView contentContainerStyle={st.pad}>
-          <Text style={st.bookTitle}>{titleOf(b)}</Text>
-          <View style={[st.pillWrap, {justifyContent: 'center'}]}>
-            {b.folder ? <Pill label={b.folder} onPress={() => { setFolders([b.folder]); setTags({}); setPage(1); setScreen({kind: 'library'}); }} /> : null}
-            {(m.tags || []).map(t => (
-              <Pill key={t} label={t} active onPress={() => { setTags({[t]: 1}); setFolders([]); setPage(1); setScreen({kind: 'library'}); }} />
-            ))}
-          </View>
-          <View style={{alignItems: 'center', marginVertical: px(14)}}>
-            <Cover uri={coverUri(b)} w={px(200)} h={px(300)} title={titleOf(b)} />
-          </View>
-          <Btn dark label={b.vols.length ? '▶  Start reading (Vol ' + b.vols[0].n + ')' : '▶  Start reading'} onPress={() => read(b.files[0])} />
-          <Btn label="✎  Edit title, tags, description, cover" onPress={() => setScreen({kind: 'edit', key: b.key})} style={{marginTop: px(10)}} />
-          {paras.length ? paras.map((p, i) => <Text key={i} style={[st.para, i === 0 && {marginTop: px(14)}]}>{p}</Text>) : <Text style={[st.small, {marginTop: px(14)}]}>No description yet. Tap Edit to add one.</Text>}
-          {b.vols.length > 0 && <Text style={st.h2}>{`${b.vols.length} volumes`}</Text>}
-          {b.vols.map(v => (
-            <Pressable key={v.path} style={st.vol} onPress={() => read(v.path)}>
-              <Text style={st.volText}>{`▶  Vol ${v.n}`}</Text>
-              {v.label ? <Text style={st.small}>{v.label.replace(/^\(|\)$/g, '')}</Text> : null}
-            </Pressable>
-          ))}
-          <Text style={[st.small, {marginTop: px(16)}]} numberOfLines={3}>{b.files[0].replace(lib.path + '/', '')}</Text>
-          <View style={{height: px(30)}} />
-        </ScrollView>
-      </>,
+      <BookPage
+        key={b.key}
+        book={b}
+        meta={metaOf(b)}
+        title={titleOf(b)}
+        cover={coverUri(b)}
+        paging={settings.paging}
+        volGrid={volGrid}
+        setVolGrid={setVolGrid}
+        onRead={read}
+        onEdit={() => setScreen({kind: 'edit', key: b.key})}
+        onBack={() => setScreen({kind: 'library'})}
+        onFilter={goFilter}
+      />,
     );
   }
 
@@ -363,12 +395,13 @@ export default function App(): React.JSX.Element {
   const avail = H - px(64) - px(58) - px(64);
   const active = folders.length + Object.keys(tags).length;
   const folderCount = (f: string) => books.filter(b => b.folder === f && matches(b, [], tags)).length;
-  const tagCount = (t: string) => books.filter(b => (meta.books[b.key]?.tags || []).includes(t) && matches(b, folders, tags, t)).length;
-  const fixedTop = px(10) + px(36) + px(36) + Math.min(allFolders.length, 5) * px(40) + px(36) + px(40) + px(24);
+  const tagCount = (k: string) => books.filter(b => keysOf(b).includes(k) && matches(b, folders, tags, k)).length;
+  const fNames = fKind === 'g' ? allGenres : allTags;
+  const fixedTop = px(10) + px(36) + px(36) + Math.min(allFolders.length, 5) * px(40) + px(46) + px(40) + px(24);
   const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64)) / px(40)));
-  const tPages = Math.max(1, Math.ceil(allTags.length / perT));
+  const tPages = Math.max(1, Math.ceil(fNames.length / perT));
   const tp = Math.min(tPage, tPages);
-  const tagChunk = allTags.slice((tp - 1) * perT, tp * perT);
+  const tagChunk = fNames.slice((tp - 1) * perT, tp * perT);
   const cycleTag = (t: string) => {
     const n = {...tags};
     if (!n[t]) n[t] = 1;
@@ -404,7 +437,7 @@ export default function App(): React.JSX.Element {
             <View style={st.pillLine}>
               {(() => {
                 // only whole pills: show what fits on one line, then "+N"
-                const all = [...(b.folder ? [b.folder] : []), ...(m.tags || [])];
+                const all = [...(b.folder ? [b.folder] : []), ...(m.genres || [])];
                 const room = resW - Math.round((ch * 2) / 3) - px(40);
                 const pw = (t: string) => t.length * px(15) * 0.56 + px(29);
                 const shown: string[] = [];
@@ -418,7 +451,7 @@ export default function App(): React.JSX.Element {
                 const extra = all.length - shown.length;
                 return (
                   <>
-                    {shown.map((t, i) => <Pill key={t + i} label={t} active={(i > 0 || !b.folder) && tags[t] === 1} />)}
+                    {shown.map((t, i) => <Pill key={t + i} label={t} active={(i > 0 || !b.folder) && tags['g:' + t] === 1} />)}
                     {extra > 0 ? <Pill label={`+${extra}`} /> : null}
                   </>
                 );
@@ -493,9 +526,15 @@ export default function App(): React.JSX.Element {
                   ))}
                 </>
               )}
-              <Text style={st.section}>Tags</Text>
-              {allTags.length === 0 ? (
-                <Text style={st.hint}>No tags yet. Open a book and tap Edit to add tags.</Text>
+              <View style={st.kindTabs}>
+                {(['g', 't'] as FilterKind[]).map(k => (
+                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); }} style={[st.kindTab, fKind === k && st.btnDark]}>
+                    <Text style={[st.kindTabText, fKind === k && {color: '#ffffff'}]}>{k === 'g' ? 'Genre' : 'Tags'}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {fNames.length === 0 ? (
+                <Text style={st.hint}>{`No ${fKind === 'g' ? 'genres' : 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
               ) : (
                 <>
                   <View style={st.modeRow}>
@@ -505,7 +544,7 @@ export default function App(): React.JSX.Element {
                   </View>
                   <Text style={st.hint}>Tap once to include, again to exclude.</Text>
                   <View style={{flex: 1}}>
-                    {tagChunk.map(t => <FilterRow key={t} label={t} count={tagCount(t)} state={tags[t] || 0} onPress={() => cycleTag(t)} />)}
+                    {tagChunk.map(t => <FilterRow key={t} label={t} count={tagCount(`${fKind}:${t}`)} state={tags[`${fKind}:${t}`] || 0} onPress={() => cycleTag(`${fKind}:${t}`)} />)}
                   </View>
                   <View style={st.gPager}>
                     <Pressable disabled={tp <= 1} onPress={() => setTPage(tp - 1)} hitSlop={px(8)} style={[st.arrow, tp <= 1 && st.dim]}>
@@ -542,6 +581,287 @@ export default function App(): React.JSX.Element {
         </View>
       </View>
     </>,
+  );
+}
+
+// ---------- book page: two columns, paged with arrows (or scrolling) ----------
+type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; name?: string; vol?: boolean};
+
+/** greedy word wrap by character count (a cautious guess of what fits) */
+function wrapWords(text: string, perLine: number): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    if (cur && (cur + ' ' + w).length > perLine) {
+      out.push(cur);
+      cur = w;
+    } else cur = cur ? cur + ' ' + w : w;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+const pillW = (t: string) => t.length * px(14) * 0.55 + px(25); // small pill incl. margin
+function pillLines(list: string[], width: number): string[][] {
+  // first fit: a short pill can slot into a gap on an earlier line
+  const lines: {pills: string[]; used: number}[] = [];
+  for (const t of list) {
+    const w = pillW(t);
+    const line = lines.find(l => l.used + w <= width);
+    if (line) {
+      line.pills.push(t);
+      line.used += w;
+    } else lines.push({pills: [t], used: w});
+  }
+  return lines.map(l => l.pills);
+}
+function pack(items: Item[], cap: number): Item[][] {
+  const pages: Item[][] = [[]];
+  let used = 0;
+  for (const it of items) {
+    const cur = pages[pages.length - 1];
+    if (cur.length && (it.brk || used + it.h > cap)) {
+      pages.push([]);
+      used = 0;
+    }
+    if (it.brk && !it.node) continue;
+    if (!pages[pages.length - 1].length && !it.node && !it.text) continue; // no spacer at the top of a page
+    pages[pages.length - 1].push(it);
+    used += it.h;
+  }
+  return pages;
+}
+function renderItems(items: Item[]) {
+  const out: React.ReactNode[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.group) {
+      const lines = [it.text];
+      let last = it.endPara;
+      while (i + 1 < items.length && items[i + 1].group === it.group) {
+        i++;
+        lines.push(items[i].text);
+        last = items[i].endPara;
+      }
+      out.push(<Text key={i} style={[st.bodyText, last && {marginBottom: px(10)}]}>{lines.join(' ')}</Text>);
+    } else if (it.node) out.push(<View key={i} style={{height: it.h, overflow: 'hidden'}}>{it.node}</View>);
+    else out.push(<View key={i} style={{height: it.h}} />);
+  }
+  return out;
+}
+function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPage: (p: number) => void; name?: string}) {
+  return (
+    <View style={st.gPager}>
+      <Pressable disabled={page <= 0} onPress={() => onPage(page - 1)} hitSlop={px(8)} style={[st.arrow, page <= 0 && st.dim]}>
+        <Text style={st.arrowText}>‹</Text>
+      </Pressable>
+      <View style={{alignItems: 'center', flex: 1}}>
+        {name ? <Text style={st.pagerName} numberOfLines={1}>{name}</Text> : null}
+        <Text style={st.small}>{`${page + 1} / ${pages}`}</Text>
+      </View>
+      <Pressable disabled={page >= pages - 1} onPress={() => onPage(page + 1)} hitSlop={px(8)} style={[st.arrow, page >= pages - 1 && st.dim]}>
+        <Text style={st.arrowText}>›</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function BookPage(props: {
+  book: Book;
+  meta: Meta;
+  title: string;
+  cover: string | null;
+  paging: Settings['paging'];
+  volGrid: boolean;
+  setVolGrid: (g: boolean) => void;
+  onRead: (path: string) => void;
+  onEdit: () => void;
+  onBack: () => void;
+  onFilter: (k: 'folder' | FilterKind, v: string) => void;
+}) {
+  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter} = props;
+  const [lp, setLp] = useState(0);
+  const [rp, setRp] = useState(0);
+  const scroll = paging === 'scroll';
+
+  const LW = Math.round(W * 0.37);
+  const RW = W - LW;
+  const lIn = LW - px(28);
+  const rIn = RW - px(32);
+  const titleLines = Math.min(2, wrapWords(title, Math.floor((W - px(32)) / (px(26) * 0.56))).length);
+  const titleH = px(14) + titleLines * px(34) + px(10);
+  const colH = H - px(64) - titleH;
+  const pagerH = px(56);
+
+  // ----- left: cover + start stay put; genre/tags and details turn with arrows -----
+  const coverW = Math.min(lIn, px(190));
+  const coverH = Math.round(coverW * 1.5);
+  const topH = coverH + px(12) + px(48) + px(14);
+  const left: Item[] = [];
+  const label = (t: string) => ({h: px(32), name: t, node: <Text style={st.infoLabel}>{t}</Text>});
+  const pills = (list: string[], k: FilterKind) =>
+    pillLines(list, lIn).map(line => ({
+      h: px(33),
+      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t} onPress={() => onFilter(k, t)} />)}</View>,
+    }));
+  left.push(label('Genre'));
+  if (m.genres?.length) left.push(...pills(m.genres, 'g'));
+  else left.push({h: px(28), node: <Text style={st.small}>None yet</Text>});
+  left.push({h: px(8)});
+  left.push(label('Tags'));
+  if (m.tags?.length) left.push(...pills(m.tags, 't'));
+  else left.push({h: px(28), node: <Text style={st.small}>None yet</Text>});
+  const field = (name: string, value: string | undefined, onPress?: () => void) => {
+    const v = value || 'Not set';
+    const lines = Math.min(3, wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length);
+    left.push(label(name));
+    left.push({
+      h: lines * px(24) + px(10),
+      node: (
+        <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]} numberOfLines={3}>
+          {v}
+        </Text>
+      ),
+    });
+  };
+  left.push({h: 0, brk: true});
+  field('Type', b.folder || undefined, b.folder ? () => onFilter('folder', b.folder) : undefined);
+  field('Language', m.language);
+  field('Status', m.status);
+  field('Completely translated', m.translated);
+
+  // ----- right: description, then volumes -----
+  const right: Item[] = [];
+  const perLine = Math.floor(rIn / (px(18) * 0.53));
+  right.push({h: px(40), node: <Text style={st.colHead}>Description</Text>});
+  const paras = (m.description || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
+  if (!paras.length) right.push({h: px(36), node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
+  paras.forEach((p, pi) => {
+    const lines = wrapWords(p, perLine);
+    lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1}));
+  });
+  if (b.vols.length) {
+    right.push({h: px(10)});
+    right.push({
+      h: px(56),
+      node: (
+        <View style={st.volHead}>
+          <Text style={st.colHead}>{`${b.vols.length} volumes`}</Text>
+          <View style={{flexDirection: 'row'}}>
+            <ViewIcon kind="list" on={!volGrid} onPress={() => setVolGrid(false)} />
+            <ViewIcon kind="grid" on={volGrid} onPress={() => setVolGrid(true)} />
+          </View>
+        </View>
+      ),
+    });
+    const vlabel = (v: Vol) => v.label.replace(/^\(|\)$/g, '');
+    if (!volGrid) {
+      b.vols.forEach(v =>
+        right.push({
+          h: px(50),
+          vol: true,
+          node: (
+            <Pressable style={st.volRow} onPress={() => onRead(v.path)}>
+              <Text style={st.volRowText}>{`▶  Vol ${v.n}`}</Text>
+              <Text style={[st.small, {flex: 1, textAlign: 'right'}]} numberOfLines={1}>{vlabel(v)}</Text>
+            </Pressable>
+          ),
+        }),
+      );
+    } else {
+      const per = 4;
+      const cw = Math.floor((rIn - (per - 1) * px(8)) / per);
+      for (let i = 0; i < b.vols.length; i += per) {
+        right.push({
+          h: px(72),
+          vol: true,
+          node: (
+            <View style={{flexDirection: 'row'}}>
+              {b.vols.slice(i, i + per).map((v, j) => (
+                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}]} onPress={() => onRead(v.path)}>
+                  <Text style={st.volCellText}>{`Vol ${v.n}`}</Text>
+                  {vlabel(v) ? <Text style={st.volCellSub} numberOfLines={1}>{vlabel(v)}</Text> : null}
+                </Pressable>
+              ))}
+            </View>
+          ),
+        });
+      }
+    }
+  }
+
+  const lPages = scroll ? [left] : pack(left, colH - topH - pagerH - px(6));
+  const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36)); // room for a "continued" line
+  rPages.forEach((pg, i) => {
+    if (i > 0 && pg[0]?.vol) pg.unshift({h: px(36), node: <Text style={[st.colHead, {fontSize: px(18)}]}>Volumes, continued</Text>});
+  });
+  const lName = (pg: Item[]) => {
+    const names = pg.map(x => x.name).filter(Boolean) as string[];
+    if (names.includes('Type')) return 'Details';
+    return names.length ? names.join(' & ') : 'More tags';
+  };
+  const lpg = Math.min(lp, lPages.length - 1);
+  const rpg = Math.min(rp, rPages.length - 1);
+
+  const top = (
+    <>
+      <Cover uri={cover} w={coverW} h={coverH} title={title} />
+      <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
+        <Text style={st.startText}>{b.vols.length ? `▶  Read Vol ${b.vols[0].n}` : '▶  Start reading'}</Text>
+      </Pressable>
+    </>
+  );
+  return (
+    <>
+      <View style={st.header}>
+        <Pressable onPress={onBack} hitSlop={px(10)} style={[st.headerBtn, {minWidth: px(130)}]}>
+          <Text style={st.headerBtnText}>‹ Back</Text>
+        </Pressable>
+        <View style={{flex: 1}} />
+        <Pressable onPress={onEdit} hitSlop={px(8)} style={st.editBtn}>
+          <Text style={st.editText}>✎ Edit</Text>
+        </Pressable>
+        <Pressable onPress={() => PluginManager.closePluginView()} hitSlop={px(10)} style={[st.headerBtn, {marginLeft: px(12)}]}>
+          <Text style={st.headerBtnText}>Close ✕</Text>
+        </Pressable>
+      </View>
+      <View style={{height: titleH, paddingHorizontal: px(16), justifyContent: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
+        <Text style={st.bookTitle} numberOfLines={2}>{title}</Text>
+      </View>
+      <View style={{flex: 1, flexDirection: 'row'}}>
+        <View style={[st.bookLeft, {width: LW}]}>
+          {scroll ? (
+            <ScrollView contentContainerStyle={{padding: px(14)}}>
+              {top}
+              <View style={{height: px(14)}} />
+              {renderItems(left)}
+            </ScrollView>
+          ) : (
+            <>
+              <View style={{flex: 1, paddingHorizontal: px(14), paddingTop: px(14), overflow: 'hidden'}}>
+                {top}
+                <View style={{height: px(14)}} />
+                {renderItems(lPages[lpg])}
+              </View>
+              <View style={{paddingHorizontal: px(10)}}>
+                <Arrows page={lpg} pages={lPages.length} onPage={setLp} name={lName(lPages[lpg])} />
+              </View>
+            </>
+          )}
+        </View>
+        <View style={{flex: 1}}>
+          {scroll ? (
+            <ScrollView contentContainerStyle={{padding: px(16)}}>{renderItems(right)}</ScrollView>
+          ) : (
+            <>
+              <View style={{flex: 1, paddingHorizontal: px(16), paddingTop: px(12), overflow: 'hidden'}}>{renderItems(rPages[rpg])}</View>
+              <View style={{paddingHorizontal: px(12)}}>
+                <Arrows page={rpg} pages={rPages.length} onPage={setRp} />
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </>
   );
 }
 
@@ -619,18 +939,46 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
 }
 
 // ---------- edit page ----------
-function EditPage({book, meta, allTags, cover, onSave, onCancel}: {book: Book; meta: Meta; allTags: string[]; cover: string | null; onSave: (m: Meta) => void; onCancel: () => void}) {
+function PillEditor({label, values, setValues, used, placeholder}: {label: string; values: string[]; setValues: (v: string[]) => void; used: string[]; placeholder: string}) {
+  const [text, setText] = useState('');
+  const add = () => {
+    const parts = text.split(',').map(x => x.trim()).filter(x => x && !values.includes(x));
+    if (parts.length) setValues([...values, ...parts]);
+    setText('');
+  };
+  const suggestions = used.filter(t => !values.includes(t));
+  return (
+    <>
+      <Text style={st.label}>{label}</Text>
+      <View style={st.pillWrap}>
+        {values.map(t => <Pill key={t} label={`${t}  ✕`} active onPress={() => setValues(values.filter(x => x !== t))} />)}
+        {!values.length && <Text style={st.small}>None yet.</Text>}
+      </View>
+      <View style={{flexDirection: 'row', alignItems: 'center'}}>
+        <TextInput style={[st.input, {flex: 1}]} value={text} onChangeText={setText} placeholder={placeholder} onSubmitEditing={add} />
+        <Btn small label="Add" onPress={add} style={{marginLeft: px(8)}} />
+      </View>
+      {suggestions.length > 0 && (
+        <>
+          <Text style={st.small}>Tap to add one you've used before:</Text>
+          <View style={st.pillWrap}>{suggestions.map(t => <Pill key={t} label={`+ ${t}`} onPress={() => setValues([...values, t])} />)}</View>
+        </>
+      )}
+    </>
+  );
+}
+
+function EditPage({book, meta, allGenres, allTags, cover, onSave, onCancel}: {book: Book; meta: Meta; allGenres: string[]; allTags: string[]; cover: string | null; onSave: (m: Meta) => void; onCancel: () => void}) {
   const [title, setTitle] = useState(meta.title || book.fileTitle);
+  const [genres, setGenres] = useState<string[]>(meta.genres || []);
   const [tags, setTags] = useState<string[]>(meta.tags || []);
-  const [newTag, setNewTag] = useState('');
   const [desc, setDesc] = useState(meta.description || '');
   const [img, setImg] = useState<string | undefined>(meta.cover);
-  const addTag = () => {
-    const t = newTag.trim();
-    if (t && !tags.includes(t)) setTags([...tags, t]);
-    setNewTag('');
-  };
-  const suggestions = allTags.filter(t => !tags.includes(t));
+  const [language, setLanguage] = useState(meta.language || '');
+  const [status, setStatus] = useState(meta.status || '');
+  const [translated, setTranslated] = useState<Meta['translated']>(meta.translated);
+  const guess = (book.folder.match(/^(\w+)\s+novels?$/i) || [])[1];
+  const langs = Array.from(new Set([guess, 'Chinese', 'Korean', 'Japanese', 'English'].filter(Boolean) as string[])).filter(l => l !== language);
   return (
     <>
       <Header title="Edit details" left="‹ Cancel" onLeft={onCancel} />
@@ -639,24 +987,23 @@ function EditPage({book, meta, allTags, cover, onSave, onCancel}: {book: Book; m
         <TextInput style={st.input} value={title} onChangeText={setTitle} />
         <Text style={st.small}>{`File name: ${book.fileTitle}`}</Text>
 
-        <Text style={st.label}>Tags</Text>
-        <View style={st.pillWrap}>
-          {tags.map(t => <Pill key={t} label={`${t}  ✕`} active onPress={() => setTags(tags.filter(x => x !== t))} />)}
-          {!tags.length && <Text style={st.small}>No tags yet.</Text>}
-        </View>
-        <View style={{flexDirection: 'row', alignItems: 'center'}}>
-          <TextInput style={[st.input, {flex: 1}]} value={newTag} onChangeText={setNewTag} placeholder="New tag, e.g. Romance" onSubmitEditing={addTag} />
-          <Btn small label="Add" onPress={addTag} style={{marginLeft: px(8)}} />
-        </View>
-        {suggestions.length > 0 && (
-          <>
-            <Text style={st.small}>Tap to add a tag you've used before:</Text>
-            <View style={st.pillWrap}>{suggestions.map(t => <Pill key={t} label={`+ ${t}`} onPress={() => setTags([...tags, t])} />)}</View>
-          </>
-        )}
+        <PillEditor label="Genre" values={genres} setValues={setGenres} used={allGenres} placeholder="e.g. Romance, Drama" />
+        <PillEditor label="Tags" values={tags} setValues={setTags} used={allTags} placeholder="e.g. Slow Romance, First Love" />
 
         <Text style={st.label}>Description</Text>
         <TextInput style={[st.input, {minHeight: px(180), textAlignVertical: 'top'}]} value={desc} onChangeText={setDesc} multiline placeholder="What's this book about?" />
+
+        <Text style={st.label}>Language</Text>
+        <TextInput style={st.input} value={language} onChangeText={setLanguage} placeholder="The language it was first written in" />
+        <View style={st.pillWrap}>{langs.map(l => <Pill key={l} label={l} onPress={() => setLanguage(l)} />)}</View>
+
+        <Text style={st.label}>Status</Text>
+        <TextInput style={st.input} value={status} onChangeText={setStatus} placeholder="e.g. 94 Chapters + 6 Extras (Completed)" />
+
+        <Text style={st.label}>Completely translated</Text>
+        <View style={st.pillWrap}>
+          {(['Yes', 'No'] as const).map(v => <Pill key={v} label={v} active={translated === v} onPress={() => setTranslated(translated === v ? undefined : v)} />)}
+        </View>
 
         <Text style={st.label}>Cover</Text>
         <View style={{flexDirection: 'row', alignItems: 'center'}}>
@@ -672,7 +1019,23 @@ function EditPage({book, meta, allTags, cover, onSave, onCancel}: {book: Book; m
           </View>
         </View>
 
-        <Btn dark label="Save" onPress={() => onSave({title: title.trim() && title.trim() !== book.fileTitle ? title.trim() : undefined, tags, description: desc.trim() || undefined, cover: img})} style={{marginTop: px(24)}} />
+        <Btn
+          dark
+          label="Save"
+          onPress={() =>
+            onSave({
+              title: title.trim() && title.trim() !== book.fileTitle ? title.trim() : undefined,
+              genres,
+              tags,
+              description: desc.trim() || undefined,
+              cover: img,
+              language: language.trim() || undefined,
+              status: status.trim() || undefined,
+              translated,
+            })
+          }
+          style={{marginTop: px(24)}}
+        />
         <View style={{height: px(200)}} />
       </ScrollView>
     </>
@@ -723,6 +1086,7 @@ const st = StyleSheet.create({
   pillWrap: {flexDirection: 'row', flexWrap: 'wrap', marginVertical: px(4)},
   pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(4), marginBottom: px(2), height: px(28)},
   pill: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(10), paddingVertical: px(2), marginRight: px(6), marginBottom: px(6)},
+  pillSmall: {paddingHorizontal: px(8), paddingVertical: px(1), marginRight: px(5), marginBottom: px(5)},
   pillActive: {backgroundColor: BLACK},
   pillText: {fontSize: px(15), color: BLACK},
   row: {flexDirection: 'row', borderBottomWidth: 1, borderColor: '#888888', paddingVertical: px(7), overflow: 'hidden'},
@@ -738,9 +1102,29 @@ const st = StyleSheet.create({
   dim: {opacity: 0.3},
   noCover: {borderWidth: 1.5, borderColor: BLACK, backgroundColor: '#f2f2f2', alignItems: 'center', justifyContent: 'center', padding: px(4)},
   noCoverText: {color: BLACK, textAlign: 'center', fontWeight: 'bold'},
-  bookTitle: {fontSize: px(30), fontWeight: 'bold', color: BLACK, textAlign: 'center', marginBottom: px(12)},
-  vol: {borderWidth: 2, borderColor: BLACK, borderRadius: px(10), paddingVertical: px(18), paddingHorizontal: px(16), marginBottom: px(14)},
-  volText: {fontSize: px(22), fontWeight: 'bold', color: BLACK},
+  bookTitle: {fontSize: px(26), lineHeight: px(34), fontWeight: 'bold', color: BLACK},
+  bookLeft: {borderRightWidth: 1.5, borderColor: '#888888'},
+  startBtn: {height: px(48), marginTop: px(12), backgroundColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  startText: {fontSize: px(18), fontWeight: 'bold', color: '#ffffff'},
+  editBtn: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(20), paddingHorizontal: px(14), paddingVertical: px(5)},
+  editText: {fontSize: px(17), color: BLACK},
+  infoLabel: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(4)},
+  infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
+  pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
+  colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
+  bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},
+  volHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(56)},
+  volRow: {height: px(42), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},
+  volRowText: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginRight: px(10)},
+  volCell: {height: px(62), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  volCellText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
+  volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2)},
+  kindTabs: {flexDirection: 'row', marginTop: px(10), marginBottom: px(6)},
+  kindTab: {flex: 1, borderWidth: 1.5, borderColor: BLACK, paddingVertical: px(5), alignItems: 'center', marginRight: px(4), borderRadius: px(6)},
+  kindTabText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
+  choice: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), padding: px(14), marginBottom: px(12)},
+  radio: {width: px(24), height: px(24), borderRadius: px(12), borderWidth: 2, borderColor: BLACK, marginRight: px(14)},
+  choiceText: {fontSize: px(20), fontWeight: 'bold', color: BLACK},
   overlay: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.88)', justifyContent: 'center', padding: px(40)},
   dialog: {backgroundColor: '#ffffff', borderWidth: 3, borderColor: BLACK, borderRadius: px(14), padding: px(24)},
 });

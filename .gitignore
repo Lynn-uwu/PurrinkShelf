@@ -77,3 +77,4 @@ yarn-error.log
 # preview build output
 tools/preview/bundle.js
 tools/preview/shots/
+tools/preview/__pycache__/
