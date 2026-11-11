@@ -57,6 +57,7 @@ NativeModules.InkShelf = {
   readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {...meta, seenFiles: undefined}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
   writeText: async (path, text) => { files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),
+  storageRoots: async () => (new URLSearchParams(location.search).get('nosd') ? {roots: [], how: 'none'} : {roots: [{path: SD, label: 'SD card', readable: true}], how: 'volume:' + SD}),
   copyText: async t => ((window.__copied = t), true),
   prepareImage: async (src, out) => out,
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },

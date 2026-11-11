@@ -10,7 +10,7 @@ import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, Met
 import {on} from './src/events';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
-import {Entry, copyText, hasNative, listDir, openBook, pasteIntoNote} from './src/native';
+import {Entry, copyText, hasNative, listDir, openBook, pasteIntoNote, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -336,6 +336,10 @@ function InkShelfApp(): React.JSX.Element {
     }
   }
 
+  // storage roots InkShelf has already seen (from libraries and books picked with Supernote's picker)
+  const rootOf = (p: string) => (p.match(/^\/storage\/(?!emulated|self)[^/]+/) || [])[0];
+  const knownRoots = Array.from(new Set([...(app.knownRoots || []), ...libs.map(l => rootOf(l.path))].filter(Boolean) as string[]));
+
   // ---------- adding a library: choose the folder (like adding a game folder) ----------
   function addLibrary() {
     setScreen({kind: 'browse', path: null});
@@ -349,11 +353,16 @@ function InkShelfApp(): React.JSX.Element {
         suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'],
         maxNum: 1,
         title: 'Pick any book in your library',
+        ...(knownRoots[0] ? {needSelectFolder: knownRoots[0]} : {}),
         rightButtonText: 'OK',
       });
       const list: any[] = Array.isArray(r) ? r : r?.result || [];
       log('picker returned', list);
-      if (list.length) setScreen({kind: 'pickroot', file: String(list[0])});
+      if (list.length) {
+        const root = rootOf(String(list[0]));
+        if (root && !(app.knownRoots || []).includes(root)) changeApp(a => ({...a, knownRoots: [...(a.knownRoots || []), root]}));
+        setScreen({kind: 'pickroot', file: String(list[0])});
+      }
     } catch (e) {
       log('picker failed', e);
       setScreen({kind: 'browse', path: null}); // fall back to InkShelf's own folder list
@@ -747,6 +756,7 @@ function InkShelfApp(): React.JSX.Element {
         onCancel={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})}
         onPick={useFolder}
         onBookPicker={addFromBook}
+        knownRoots={knownRoots}
       />,
     );
   }
@@ -2137,8 +2147,9 @@ function Home(props: {
 }
 
 // ---------- folder browser ----------
-function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker}: {path: string | null; onGo: (p: string | null) => void; onPick: (p: string) => void; onCancel: () => void; onBookPicker?: () => void}) {
+function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots}: {path: string | null; onGo: (p: string | null) => void; onPick: (p: string) => void; onCancel: () => void; onBookPicker?: () => void; knownRoots: string[]}) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [searched, setSearched] = useState(false);
   const [roots, setRoots] = useState<{label: string; path: string}[]>([]);
   const [pg, setPg] = useState(1);
   useEffect(() => {
@@ -2149,11 +2160,13 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker}: {path: stri
         setEntries((await listDir(path)).filter(e => e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt|docx)$/i.test(e.name)));
       } else {
         const r = [{label: 'Supernote (internal storage)', path: '/storage/emulated/0'}];
-        // SD cards show up as /storage/XXXX-XXXX (found directly, without asking the system)
-        const cards = (await listDir('/storage')).filter(e => e.isDir && !['emulated', 'self'].includes(e.name));
-        log('storage roots', cards.map(c => c.path));
-        cards.forEach((c, i) => r.push({label: `SD card${cards.length > 1 ? ' ' + (i + 1) : ''}`, path: c.path}));
+        // SD cards: Android's storage APIs, plus places InkShelf already knows (libraries, picked books)
+        const found = await storageRoots();
+        log('storage roots', found.how, found.roots);
+        const paths = Array.from(new Set([...found.roots.map(x => x.path), ...knownRoots]));
+        paths.forEach((p, i) => r.push({label: `SD card${paths.length > 1 ? ' ' + (i + 1) : ''}`, path: p}));
         setRoots(r);
+        setSearched(true);
       }
     })();
   }, [path]);
@@ -2181,7 +2194,15 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker}: {path: stri
                 <IconBtn name="check" label={`Use all of ${r.label}`} dark onPress={() => onPick(r.path)} style={{marginLeft: px(14)}} />
               </View>
             ))}
-            {onBookPicker ? <Btn small icon="search" label="Or pick a book with Supernote's file picker" onPress={onBookPicker} style={{marginTop: px(20)}} /> : null}
+            {searched && roots.length < 2 ? (
+              <View style={[st.welcome, {marginTop: px(16)}]}>
+                <Text style={[st.para, {fontSize: px(18), marginBottom: px(6)}]}>{"Can't see your SD card?"}</Text>
+                <Text style={[st.small, {marginBottom: px(12)}]}>{'Pick any one book on the card with Supernote\'s file picker. InkShelf then remembers where the card is, and it shows up here with a ✓ from then on.'}</Text>
+                {onBookPicker ? <Btn small dark icon="search" label="Find my SD card" onPress={onBookPicker} /> : null}
+              </View>
+            ) : onBookPicker ? (
+              <Btn small icon="search" label="Or pick a book with Supernote's file picker" onPress={onBookPicker} style={{marginTop: px(20)}} />
+            ) : null}
           </>
         ) : (
           <>

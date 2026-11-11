@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Build
+import android.os.storage.StorageManager
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -188,6 +190,63 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
             Log.w(TAG, "extractEpubCover failed for $epubPath", e)
             promise.resolve(null)
         }
+    }
+
+    /**
+     * Where books can live besides internal storage (SD cards, USB), found with Android's
+     * own storage APIs: [{path, label, how}]. Every method is tried; each is optional.
+     */
+    @ReactMethod
+    fun storageRoots(promise: Promise) {
+        val found = LinkedHashMap<String, String>() // path -> label
+        val how = ArrayList<String>()
+        fun add(path: String?, label: String, src: String) {
+            if (path.isNullOrBlank()) return
+            val p = path.trimEnd('/')
+            if (p.startsWith("/storage/emulated") || p == "/storage/self" || p == "/storage") return
+            if (!found.containsKey(p)) { found[p] = label; how.add("$src:$p") }
+        }
+        val ctx = reactApplicationContext
+        // 1. StorageManager volumes (the SD card's real mount point)
+        try {
+            val sm = ctx.getSystemService(Context.STORAGE_SERVICE) as StorageManager
+            if (Build.VERSION.SDK_INT >= 24) {
+                for (v in sm.storageVolumes) {
+                    if (v.isPrimary) continue
+                    var path: String? = null
+                    if (Build.VERSION.SDK_INT >= 30) path = v.directory?.absolutePath
+                    if (path == null) try { path = v.javaClass.getMethod("getPath").invoke(v) as? String } catch (e: Throwable) {}
+                    val label = try { v.getDescription(ctx) } catch (e: Throwable) { "SD card" }
+                    add(path, if (v.isRemovable) "SD card" else (label ?: "Storage"), "volume")
+                }
+            }
+        } catch (e: Throwable) { how.add("volume-failed:${e.javaClass.simpleName}") }
+        // 2. app folders on every volume: /storage/XXXX-XXXX/Android/data/... -> /storage/XXXX-XXXX
+        try {
+            for (d in ctx.getExternalFilesDirs(null)) {
+                val p = d?.absolutePath ?: continue
+                add(p.substringBefore("/Android/"), "SD card", "appdir")
+            }
+        } catch (e: Throwable) { how.add("appdir-failed:${e.javaClass.simpleName}") }
+        // 3. plain folder listing, in case the system allows it
+        for (base in listOf("/storage", "/mnt/media_rw", "/mnt/sdcard", "/sdcard1", "/mnt/extSdCard")) {
+            try {
+                File(base).listFiles()?.filter { it.isDirectory && it.canRead() }?.forEach { add(it.absolutePath, "SD card", "list") }
+            } catch (e: Throwable) {}
+        }
+        val arr = Arguments.createArray()
+        found.filter { File(it.key).let { f -> f.exists() } }.forEach { (p, l) ->
+            val m = Arguments.createMap()
+            m.putString("path", p)
+            m.putString("label", l)
+            m.putBoolean("readable", File(p).canRead() && File(p).listFiles() != null)
+            arr.pushMap(m)
+        }
+        Log.i(TAG, "storageRoots ${how.joinToString()}")
+        val out = Arguments.createMap()
+        out.putArray("roots", arr)
+        out.putString("how", how.joinToString("; "))
+        promise.resolve(out)
     }
 
     /** Add a line to a text file (InkShelf's trouble log). */

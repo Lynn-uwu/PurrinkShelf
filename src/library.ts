@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {paging: 'arrows', libraryGrid: false,
 
 /** a book remembered outside its library (recently read, bookmarks) */
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
-export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {
   version: 1;

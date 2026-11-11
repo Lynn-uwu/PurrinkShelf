@@ -126,3 +126,15 @@ export async function pasteIntoNote(opts: {cover?: string | null; coverOut: stri
     return e?.message || String(e);
   }
 }
+
+export type Root = {path: string; label: string; readable: boolean};
+/** SD cards etc., found with Android's storage APIs (never the plugin kit's call). */
+export async function storageRoots(): Promise<{roots: Root[]; how: string}> {
+  if (!N?.storageRoots) return {roots: [], how: 'no native'};
+  try {
+    const r = await N.storageRoots();
+    return {roots: r?.roots || [], how: r?.how || ''};
+  } catch (e: any) {
+    return {roots: [], how: 'failed: ' + (e?.message || e)};
+  }
+}

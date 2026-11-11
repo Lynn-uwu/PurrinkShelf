@@ -21,6 +21,10 @@ require('fs').mkdirSync(out, {recursive: true});
   await p.getByLabel('Open Novels').click(); await p.waitForTimeout(300); await shot('03-inside-novels');
   await p.getByText('Use this folder').click(); await p.waitForTimeout(400); await shot('04-library-list');
 
+  // SD card not found by the system
+  await p.goto(url('?nosd=1')); await p.waitForTimeout(300);
+  await p.getByText('Add your first library').click(); await p.waitForTimeout(300); await shot('02c-no-sd-card');
+
   // someone who has been using it
   await p.goto(url('?lib=2&state=1')); await p.waitForTimeout(600); await shot('05-home');
   await p.getByLabel('Search filters').click(); await p.getByPlaceholder('Search titles').fill('the'); await p.waitForTimeout(400); await shot('06-search-list');
