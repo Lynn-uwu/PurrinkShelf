@@ -49,8 +49,8 @@ function svgCover(title) {
 window.__opened = [];
 NativeModules.InkShelf = {
   listDir: async path => (tree[path] || []).map(n => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000})),
-  readText: async path => (path.endsWith('/.inkshelf/library.json') ? JSON.stringify(meta) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
-  writeText: async (path, text) => { files[path] = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
+  readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? JSON.stringify(meta) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
+  writeText: async (path, text) => { files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },
 };
@@ -60,8 +60,27 @@ if (new URLSearchParams(location.search).get('lib')) {
 
 export const PluginManager = {
   init() {}, registerButton() {}, closePluginView: async () => { window.__closed = 1; return true; },
-  hasPermission: async () => true, requestPermission: async () => 2, getPluginDirPath: async () => '/plugin',
+  hasPermission: async () => true, requestPermission: async () => 2, getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
 };
 export const FileUtils = {exists: async () => true, getExternalDirPath: async () => ['/storage/emulated/0', SD]};
 export const PluginFileAPI = {openFile: async () => ({success: true, result: true})};
 export const RattaFileSelector = {selectImage: async () => null};
+
+// ?state=1 : pretend some books were read, bookmarked and searched for
+if (new URLSearchParams(location.search).get('state')) {
+  const N = `${SD}/Novels`;
+  const snap = (key, title, folder, genres, file, vol) => ({lib: N, libName: 'Novels', key, title, folder, genres, cover: file ? svgCover(file) : null, vol, at: Date.now()});
+  const echoes = snap('Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols', 'Echoes of the Ninth Gate', 'Chinese Novels', ['Fantasy', 'Mystery', 'Romance'], 'Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 4);
+  const moon = snap('Chinese Novels/Moon Over the Jade Pavilion.epub', 'Moon Over the Jade Pavilion', 'Chinese Novels', ['Drama', 'Romance', 'Historical', 'Slice of Life'], 'Moon Over the Jade Pavilion.epub');
+  const rain = snap('Korean Novels/Rain Over Busan.epub', 'Rain Over Busan', 'Korean Novels', ['Romance', 'Drama'], 'Rain Over Busan.epub');
+  const fox = snap('Chinese Novels/The Fox Who Kept the Library.epub', 'The Fox Who Kept the Library', 'Chinese Novels', [], 'The Fox Who Kept the Library.epub');
+  const crane = snap('Chinese Novels/Crane and the Clockmaker.epub', 'Crane and the Clockmaker', 'Chinese Novels', [], null);
+  const tea = snap('Chinese Novels/The Tea House on Willow Street.epub', 'The Tea House on Willow Street', 'Chinese Novels', ['Slice of Life', 'Comedy'], 'The Tea House on Willow Street.epub');
+  const sword = snap('Chinese Novels/A Sword Without a Name.epub', 'A Sword Without a Name', 'Chinese Novels', ['Action', 'Fantasy', 'Martial Arts'], 'A Sword Without a Name.epub');
+  window.__state = JSON.stringify({
+    recent: [echoes, moon, rain, fox, crane, tea, sword],
+    bookmarks: [moon, echoes, rain],
+    searches: ['jade', 'fox', 'ninth gate', 'busan'],
+    lastLib: N,
+  });
+}

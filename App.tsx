@@ -6,7 +6,8 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {FileUtils, PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {Book, DEFAULT_SETTINGS, Lib, Meta, MetaStore, Settings, Vol, coverFor, loadLibraries, loadMeta, loadSettings, saveLibraries, saveMeta, saveSettings, scanLibrary} from './src/library';
+import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, Meta, MetaStore, Settings, Snap, Vol, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {on} from './src/events';
 import {Entry, hasNative, listDir, openBook} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
@@ -14,16 +15,18 @@ const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
 const px = (n: number) => Math.round(n * S);
 const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
+const TASK_H = px(66);
 const GRID_PER_PAGE = 12;
 const READ = 'plugin.permission.FILE:READ';
 const WRITE = 'plugin.permission.FILE:WRITE';
 
 type Screen =
+  | {kind: 'home'}
+  | {kind: 'bookmarks'}
   | {kind: 'libraries'}
-  | {kind: 'settings'}
   | {kind: 'browse'; path: string | null}
   | {kind: 'library'}
-  | {kind: 'book'; key: string}
+  | {kind: 'book'; key: string; from?: 'home' | 'bookmarks' | 'library'}
   | {kind: 'edit'; key: string};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre" or "t:Tag"
 type FilterKind = 'g' | 't';
@@ -125,7 +128,9 @@ function Header({left, title, onLeft}: {left?: string; title: string; onLeft?: (
 
 // ---------- the app ----------
 export default function App(): React.JSX.Element {
-  const [screen, setScreen] = useState<Screen>({kind: 'libraries'});
+  const [screen, setScreen] = useState<Screen>({kind: 'home'});
+  const [app, setApp] = useState<AppState>(EMPTY_STATE);
+  const [showSettings, setShowSettings] = useState(false);
   const [libs, setLibs] = useState<Lib[]>([]);
   const [lib, setLib] = useState<Lib | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -139,29 +144,48 @@ export default function App(): React.JSX.Element {
   const [folders, setFolders] = useState<string[]>([]);
   const [tags, setTags] = useState<TagState>({});
   const [mode, setMode] = useState<'all' | 'any'>('all');
-  const [grid, setGrid] = useState(false);
   const [page, setPage] = useState(1);
   const [tPage, setTPage] = useState(1);
-  const [showFilters, setShowFilters] = useState(true);
   const [fKind, setFKind] = useState<FilterKind>('g');
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [volGrid, setVolGrid] = useState(false);
+  const changeSettings = (patch: Partial<Settings>) => {
+    setSettings(cur => {
+      const n = {...cur, ...patch};
+      saveSettings(n);
+      return n;
+    });
+  };
+  const grid = settings.libraryGrid;
+  const setGrid = (v: boolean) => changeSettings({libraryGrid: v});
+  const showFilters = settings.showFilters;
+  const setShowFilters = (v: boolean) => changeSettings({showFilters: v});
+  const volGrid = settings.volumeGrid;
+  const setVolGrid = (v: boolean) => changeSettings({volumeGrid: v});
+  const changeApp = (f: (a: AppState) => AppState) => {
+    setApp(cur => {
+      const n = f(cur);
+      saveState(n);
+      return n;
+    });
+  };
 
   useEffect(() => {
     (async () => {
       await askPermissions();
       loadSettings().then(setSettings);
+      loadState().then(setApp);
       const l = await loadLibraries();
       setLibs(l);
-      if (l.length === 1) openLibrary(l[0]);
     })();
+    // Supernote's own settings entry for InkShelf opens the settings sheet
+    return on('settings', () => setShowSettings(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
   const titleOf = (b: Book) => metaOf(b).title || b.fileTitle;
 
-  async function openLibrary(l: Lib) {
+  async function openLibrary(l: Lib, then?: Screen) {
     setBusy(`Reading ${l.name}…`);
     setLib(l);
     coverCache.current = {};
@@ -173,8 +197,50 @@ export default function App(): React.JSX.Element {
     setBooks(bs);
     setMeta(m);
     setBusy(null);
-    setScreen({kind: 'library'});
+    setScreen(then || {kind: 'library'});
+    changeApp(a => ({...a, lastLib: l.path}));
   }
+
+  // ---------- recently read, bookmarks, moving between libraries ----------
+  const snap = (b: Book, extra?: Partial<Snap>): Snap => ({
+    lib: lib!.path, libName: lib!.name, key: b.key, title: titleOf(b), cover: coverUri(b), folder: b.folder, genres: metaOf(b).genres, at: Date.now(), ...extra,
+  });
+  const same = (x: Snap, l: string, key: string) => x.lib === l && x.key === key;
+  const isMarked = (b: Book) => !!lib && app.bookmarks.some(x => same(x, lib.path, b.key));
+  const toggleMark = (b: Book) => {
+    if (!lib) return;
+    changeApp(a => ({
+      ...a,
+      bookmarks: isMarked(b) ? a.bookmarks.filter(x => !same(x, lib.path, b.key)) : [snap(b), ...a.bookmarks],
+    }));
+  };
+  async function readBook(b: Book, path: string) {
+    if (lib) {
+      const v = b.vols.find(x => x.path === path);
+      const s1 = snap(b, {vol: v?.n});
+      changeApp(a => ({...a, recent: [s1, ...a.recent.filter(x => !same(x, s1.lib, s1.key))].slice(0, 12)}));
+    }
+    await read(path);
+  }
+  function goBook(x: Snap, from: 'home' | 'bookmarks') {
+    const l = libs.find(y => y.path === x.lib);
+    if (!l) {
+      setMessage(`"${x.libName}" isn't in your libraries any more.`);
+      return;
+    }
+    if (lib?.path === l.path) setScreen({kind: 'book', key: x.key, from});
+    else openLibrary(l, {kind: 'book', key: x.key, from});
+  }
+  function goLibrary() {
+    if (lib) return setScreen({kind: 'library'});
+    const l = libs.find(y => y.path === app.lastLib) || (libs.length === 1 ? libs[0] : null);
+    if (l) openLibrary(l);
+    else setScreen({kind: 'libraries'});
+  }
+  const rememberSearch = (q: string) => {
+    const t = q.trim();
+    if (t) changeApp(a => ({...a, searches: [t, ...a.searches.filter(x => x.toLowerCase() !== t.toLowerCase())].slice(0, 6)}));
+  };
 
   async function updateMeta(key: string, patch: Meta) {
     if (!lib) return;
@@ -237,6 +303,17 @@ export default function App(): React.JSX.Element {
   const shell = (body: React.ReactNode) => (
     <View style={st.screen}>
       {body}
+      {showSettings && (
+        <SettingsSheet
+          settings={settings}
+          change={changeSettings}
+          onClose={() => setShowSettings(false)}
+          onLibraries={() => { setShowSettings(false); setScreen({kind: 'libraries'}); }}
+          onClearSearches={() => changeApp(a => ({...a, searches: []}))}
+          onClearHistory={() => changeApp(a => ({...a, recent: []}))}
+          counts={{searches: app.searches.length, recent: app.recent.length}}
+        />
+      )}
       {(busy || message) && (
         <View style={st.overlay}>
           <View style={st.dialog}>
@@ -248,11 +325,62 @@ export default function App(): React.JSX.Element {
     </View>
   );
 
+  const taskbar = (tab: 'home' | 'library' | 'bookmarks') => (
+    <Taskbar
+      tab={tab}
+      onTab={t => {
+        if (t === 'home') setScreen({kind: 'home'});
+        else if (t === 'library') goLibrary();
+        else if (t === 'bookmarks') setScreen({kind: 'bookmarks'});
+        else setShowSettings(true);
+      }}
+    />
+  );
+
+  // ----- home: search, recent searches, recently read -----
+  if (screen.kind === 'home') {
+    return shell(
+      <>
+        <Header title="InkShelf" />
+        <Home
+          libs={libs}
+          lib={lib}
+          books={books}
+          meta={meta}
+          app={app}
+          paging={settings.paging}
+          onSearched={rememberSearch}
+          onForgetSearch={q => changeApp(a => ({...a, searches: a.searches.filter(x => x !== q)}))}
+          onOpen={x => goBook(x, 'home')}
+          onLibrary={l => openLibrary(l)}
+          onAddLibrary={() => setScreen({kind: 'browse', path: null})}
+        />
+        {taskbar('home')}
+      </>,
+    );
+  }
+
+  // ----- bookmarks -----
+  if (screen.kind === 'bookmarks') {
+    return shell(
+      <>
+        <Header title="Bookmarks" />
+        <SnapList
+          items={app.bookmarks}
+          empty="No bookmarks yet. Open a book and tap Bookmark to keep it here."
+          onOpen={x => goBook(x, 'bookmarks')}
+          onRemove={x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))}))}
+        />
+        {taskbar('bookmarks')}
+      </>,
+    );
+  }
+
   // ----- list of libraries -----
   if (screen.kind === 'libraries') {
     return shell(
       <>
-        <Header title="InkShelf" left={lib ? '‹ Back' : undefined} onLeft={lib ? () => setScreen({kind: 'library'}) : undefined} />
+        <Header title="Libraries" left="‹ Home" onLeft={() => setScreen({kind: 'home'})} />
         <ScrollView contentContainerStyle={st.pad}>
           <Text style={st.h1}>Your libraries</Text>
           {!hasNative() && <Text style={st.warn}>This copy of InkShelf is missing its native part, so it can't read folders or open books.</Text>}
@@ -276,40 +404,10 @@ export default function App(): React.JSX.Element {
             </View>
           ))}
           <Btn dark label="＋  Add a library folder" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(16)}} />
-          <Btn label="Settings" onPress={() => setScreen({kind: 'settings'})} style={{marginTop: px(12)}} />
           <Text style={[st.small, {marginTop: px(20)}]}>
             Removing a library only removes it from this list. Your books and saved details stay in the folder.
           </Text>
         </ScrollView>
-      </>,
-    );
-  }
-
-  // ----- settings -----
-  if (screen.kind === 'settings') {
-    const set = (n: Settings) => {
-      setSettings(n);
-      saveSettings(n);
-    };
-    const Choice = ({on, label, note, onPress}: {on: boolean; label: string; note: string; onPress: () => void}) => (
-      <Pressable onPress={onPress} style={[st.choice, on && {borderWidth: 3}]}>
-        <View style={[st.radio, on && st.btnDark]} />
-        <View style={{flex: 1}}>
-          <Text style={st.choiceText}>{label}</Text>
-          <Text style={st.small}>{note}</Text>
-        </View>
-      </Pressable>
-    );
-    return shell(
-      <>
-        <Header title="Settings" left="‹ Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'libraries'})} />
-        <View style={st.pad}>
-          <Text style={st.h2}>Long pages</Text>
-          <Text style={[st.para, {fontSize: px(18)}]}>How book pages show long descriptions, lots of tags and many volumes:</Text>
-          <Choice on={settings.paging === 'arrows'} label="Turn pages with ‹ › arrows" note="Everything fits on the screen. Best for e-ink." onPress={() => set({...settings, paging: 'arrows'})} />
-          <Choice on={settings.paging === 'scroll'} label="Scroll up and down" note="One long page you swipe through." onPress={() => set({...settings, paging: 'scroll'})} />
-          <Text style={[st.small, {marginTop: px(16)}]}>Saved automatically.</Text>
-        </View>
       </>,
     );
   }
@@ -320,7 +418,7 @@ export default function App(): React.JSX.Element {
       <FolderBrowser
         path={screen.path}
         onGo={p => setScreen({kind: 'browse', path: p})}
-        onCancel={() => setScreen({kind: 'libraries'})}
+        onCancel={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})}
         onPick={async p => {
           const name = p.split('/').filter(Boolean).pop() || 'Library';
           const n = [...libs.filter(x => x.path !== p), {name, path: p}];
@@ -376,9 +474,11 @@ export default function App(): React.JSX.Element {
         paging={settings.paging}
         volGrid={volGrid}
         setVolGrid={setVolGrid}
-        onRead={read}
+        onRead={path => readBook(b, path)}
+        marked={isMarked(b)}
+        onMark={() => toggleMark(b)}
         onEdit={() => setScreen({kind: 'edit', key: b.key})}
-        onBack={() => setScreen({kind: 'library'})}
+        onBack={() => setScreen({kind: screen.from || 'library'})}
         onFilter={goFilter}
       />,
     );
@@ -392,13 +492,13 @@ export default function App(): React.JSX.Element {
   scheduleCovers(chunk);
   const sideW = showFilters ? Math.round(W * 0.34) : 0;
   const resW = W - sideW;
-  const avail = H - px(64) - px(58) - px(64);
+  const avail = H - px(64) - px(58) - px(64) - TASK_H;
   const active = folders.length + Object.keys(tags).length;
   const folderCount = (f: string) => books.filter(b => b.folder === f && matches(b, [], tags)).length;
   const tagCount = (k: string) => books.filter(b => keysOf(b).includes(k) && matches(b, folders, tags, k)).length;
   const fNames = fKind === 'g' ? allGenres : allTags;
   const fixedTop = px(10) + px(36) + px(36) + Math.min(allFolders.length, 5) * px(40) + px(46) + px(40) + px(24);
-  const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64)) / px(40)));
+  const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64) - TASK_H) / px(40)));
   const tPages = Math.max(1, Math.ceil(fNames.length / perT));
   const tp = Math.min(tPage, tPages);
   const tagChunk = fNames.slice((tp - 1) * perT, tp * perT);
@@ -580,12 +680,13 @@ export default function App(): React.JSX.Element {
           </View>
         </View>
       </View>
+      {taskbar('library')}
     </>,
   );
 }
 
 // ---------- book page: two columns, paged with arrows (or scrolling) ----------
-type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; name?: string; vol?: boolean};
+type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean};
 
 /** greedy word wrap by character count (a cautious guess of what fits) */
 function wrapWords(text: string, perLine: number): string[] {
@@ -677,8 +778,10 @@ function BookPage(props: {
   onEdit: () => void;
   onBack: () => void;
   onFilter: (k: 'folder' | FilterKind, v: string) => void;
+  marked: boolean;
+  onMark: () => void;
 }) {
-  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter} = props;
+  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark} = props;
   const [lp, setLp] = useState(0);
   const [rp, setRp] = useState(0);
   const scroll = paging === 'scroll';
@@ -692,30 +795,26 @@ function BookPage(props: {
   const colH = H - px(64) - titleH;
   const pagerH = px(56);
 
-  // ----- left: cover + start stay put; genre/tags and details turn with arrows -----
+  // ----- left: cover, then Genre, Language, Status (arrows turn to Tags, then Details), then the button -----
   const coverW = Math.min(lIn, px(190));
   const coverH = Math.round(coverW * 1.5);
-  const topH = coverH + px(12) + px(48) + px(14);
+  const startH = px(48) + px(10);
   const left: Item[] = [];
-  const label = (t: string) => ({h: px(32), name: t, node: <Text style={st.infoLabel}>{t}</Text>});
+  let sec = 'Overview';
+  const label = (t: string) => ({h: px(32), sec, node: <Text style={st.infoLabel}>{t}</Text>});
   const pills = (list: string[], k: FilterKind) =>
     pillLines(list, lIn).map(line => ({
       h: px(33),
+      sec,
       node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
-  left.push(label('Genre'));
-  if (m.genres?.length) left.push(...pills(m.genres, 'g'));
-  else left.push({h: px(28), node: <Text style={st.small}>None yet</Text>});
-  left.push({h: px(8)});
-  left.push(label('Tags'));
-  if (m.tags?.length) left.push(...pills(m.tags, 't'));
-  else left.push({h: px(28), node: <Text style={st.small}>None yet</Text>});
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
     const lines = Math.min(3, wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length);
     left.push(label(name));
     left.push({
-      h: lines * px(24) + px(10),
+      h: lines * px(24) + px(8),
+      sec,
       node: (
         <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]} numberOfLines={3}>
           {v}
@@ -723,10 +822,20 @@ function BookPage(props: {
       ),
     });
   };
-  left.push({h: 0, brk: true});
-  field('Type', b.folder || undefined, b.folder ? () => onFilter('folder', b.folder) : undefined);
+  left.push(label('Genre'));
+  if (m.genres?.length) left.push(...pills(m.genres, 'g'));
+  else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
+  left.push({h: px(6), sec});
   field('Language', m.language);
   field('Status', m.status);
+  sec = 'Tags';
+  left.push({h: 0, brk: true});
+  left.push(label('Tags'));
+  if (m.tags?.length) left.push(...pills(m.tags, 't'));
+  else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
+  sec = 'Details';
+  left.push({h: 0, brk: true});
+  field('Type', b.folder || undefined, b.folder ? () => onFilter('folder', b.folder) : undefined);
   field('Completely translated', m.translated);
 
   // ----- right: description, then volumes -----
@@ -789,26 +898,23 @@ function BookPage(props: {
     }
   }
 
-  const lPages = scroll ? [left] : pack(left, colH - topH - pagerH - px(6));
+  const lPages = scroll ? [left] : pack(left, colH - coverH - px(28) - startH - pagerH - px(4));
   const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36)); // room for a "continued" line
   rPages.forEach((pg, i) => {
     if (i > 0 && pg[0]?.vol) pg.unshift({h: px(36), node: <Text style={[st.colHead, {fontSize: px(18)}]}>Volumes, continued</Text>});
   });
-  const lName = (pg: Item[]) => {
-    const names = pg.map(x => x.name).filter(Boolean) as string[];
-    if (names.includes('Type')) return 'Details';
-    return names.length ? names.join(' & ') : 'More tags';
+  const lName = (i: number) => {
+    const n = lPages[i][0]?.sec || '';
+    return n === 'Tags' && i > 0 && lPages[i - 1][0]?.sec === 'Tags' ? 'More tags' : n;
   };
   const lpg = Math.min(lp, lPages.length - 1);
   const rpg = Math.min(rp, rPages.length - 1);
 
-  const top = (
-    <>
-      <Cover uri={cover} w={coverW} h={coverH} title={title} />
-      <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
-        <Text style={st.startText}>{b.vols.length ? `▶  Read Vol ${b.vols[0].n}` : '▶  Start reading'}</Text>
-      </Pressable>
-    </>
+  const top = <Cover uri={cover} w={coverW} h={coverH} title={title} />;
+  const start = (
+    <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
+      <Text style={st.startText}>{b.vols.length ? `▶  Read Vol ${b.vols[0].n}` : '▶  Start reading'}</Text>
+    </Pressable>
   );
   return (
     <>
@@ -817,6 +923,10 @@ function BookPage(props: {
           <Text style={st.headerBtnText}>‹ Back</Text>
         </Pressable>
         <View style={{flex: 1}} />
+        <Pressable onPress={onMark} hitSlop={px(8)} style={[st.editBtn, {flexDirection: 'row', alignItems: 'center', marginRight: px(10)}, marked && st.btnDark]}>
+          <RibbonIcon color={marked ? '#ffffff' : BLACK} bg={marked ? BLACK : '#ffffff'} filled={marked} size={px(16)} />
+          <Text style={[st.editText, {marginLeft: px(6)}, marked && {color: '#ffffff'}]}>{marked ? 'Bookmarked' : 'Bookmark'}</Text>
+        </Pressable>
         <Pressable onPress={onEdit} hitSlop={px(8)} style={st.editBtn}>
           <Text style={st.editText}>✎ Edit</Text>
         </Pressable>
@@ -834,6 +944,7 @@ function BookPage(props: {
               {top}
               <View style={{height: px(14)}} />
               {renderItems(left)}
+              {start}
             </ScrollView>
           ) : (
             <>
@@ -842,8 +953,9 @@ function BookPage(props: {
                 <View style={{height: px(14)}} />
                 {renderItems(lPages[lpg])}
               </View>
+              <View style={{paddingHorizontal: px(14), paddingBottom: px(10)}}>{start}</View>
               <View style={{paddingHorizontal: px(10)}}>
-                <Arrows page={lpg} pages={lPages.length} onPage={setLp} name={lName(lPages[lpg])} />
+                <Arrows page={lpg} pages={lPages.length} onPage={setLp} name={lName(lpg)} />
               </View>
             </>
           )}
@@ -862,6 +974,456 @@ function BookPage(props: {
         </View>
       </View>
     </>
+  );
+}
+
+// ---------- taskbar + icons (drawn, so they look the same on every device) ----------
+function HomeIcon({c, size}: {c: string; size: number}) {
+  const u = size / 24;
+  return (
+    <View style={{width: size, height: size, alignItems: 'center', justifyContent: 'flex-end'}}>
+      <View style={{width: 0, height: 0, borderLeftWidth: 12 * u, borderRightWidth: 12 * u, borderBottomWidth: 10 * u, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: c}} />
+      <View style={{width: 17 * u, height: 12 * u, borderWidth: 2.5 * u, borderTopWidth: 0, borderColor: c, alignItems: 'center', justifyContent: 'flex-end'}}>
+        <View style={{width: 5 * u, height: 7 * u, backgroundColor: c}} />
+      </View>
+    </View>
+  );
+}
+function ShelfIcon({c, size}: {c: string; size: number}) {
+  const u = size / 24;
+  return (
+    <View style={{width: size, height: size, justifyContent: 'flex-end'}}>
+      <View style={{flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 2 * u}}>
+        {[20, 16, 20, 14].map((h, i) => (
+          <View key={i} style={{width: 4 * u, height: h * u, borderWidth: 2 * u, borderColor: c, marginRight: 1.5 * u, backgroundColor: i === 1 ? c : 'transparent', transform: i === 3 ? [{rotate: '-14deg'}] : []}} />
+        ))}
+      </View>
+      <View style={{height: 2.5 * u, backgroundColor: c}} />
+    </View>
+  );
+}
+function RibbonIcon({color, bg, filled, size}: {color: string; bg: string; filled?: boolean; size: number}) {
+  const w = Math.round(size * 0.75);
+  const d = size * 0.3; // depth of the notch
+  const t = Math.max(2, size / 10);
+  if (filled) {
+    return (
+      <View style={{width: w, height: size, backgroundColor: color}}>
+        <View style={{position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, borderLeftWidth: w / 2, borderRightWidth: w / 2, borderBottomWidth: d, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: bg}} />
+      </View>
+    );
+  }
+  // outline: three sides plus a "V" at the bottom
+  const L = Math.sqrt((w / 2) * (w / 2) + d * d);
+  const ang = (Math.atan2(d, w / 2) * 180) / Math.PI;
+  const line = (sign: number) => (
+    <View style={{position: 'absolute', width: L, height: t, backgroundColor: color, left: (sign < 0 ? w / 4 : (3 * w) / 4) - L / 2, top: size - d / 2 - t / 2, transform: [{rotate: `${sign * ang}deg`}]}} />
+  );
+  return (
+    <View style={{width: w, height: size}}>
+      <View style={{position: 'absolute', left: 0, top: 0, width: w, height: size - t / 2, borderWidth: t, borderBottomWidth: 0, borderColor: color}} />
+      {line(-1)}
+      {line(1)}
+    </View>
+  );
+}
+function SlidersIcon({c, size}: {c: string; size: number}) {
+  const u = size / 24;
+  return (
+    <View style={{width: size, height: size, justifyContent: 'space-around', paddingVertical: 2 * u}}>
+      {[14, 5, 11].map((x, i) => (
+        <View key={i} style={{height: 2.5 * u, backgroundColor: c, justifyContent: 'center'}}>
+          <View style={{position: 'absolute', left: x * u, width: 7 * u, height: 7 * u, borderRadius: 4 * u, borderWidth: 2.5 * u, borderColor: c, backgroundColor: c === '#ffffff' ? BLACK : '#ffffff'}} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function SearchIcon({c, size}: {c: string; size: number}) {
+  const u = size / 24;
+  return (
+    <View style={{width: size, height: size}}>
+      <View style={{position: 'absolute', left: 2 * u, top: 2 * u, width: 14 * u, height: 14 * u, borderRadius: 7 * u, borderWidth: 2.5 * u, borderColor: c}} />
+      <View style={{position: 'absolute', left: 13 * u, top: 17 * u, width: 10 * u, height: 3 * u, backgroundColor: c, transform: [{rotate: '45deg'}]}} />
+    </View>
+  );
+}
+function ClockIcon({c, size}: {c: string; size: number}) {
+  const u = size / 24;
+  return (
+    <View style={{width: size, height: size, borderRadius: size / 2, borderWidth: 2.5 * u, borderColor: c}}>
+      <View style={{position: 'absolute', left: 9.5 * u, top: 4 * u, width: 2.5 * u, height: 8 * u, backgroundColor: c}} />
+      <View style={{position: 'absolute', left: 9.5 * u, top: 9.5 * u, width: 6 * u, height: 2.5 * u, backgroundColor: c}} />
+    </View>
+  );
+}
+
+type Tab = 'home' | 'library' | 'bookmarks' | 'settings';
+function Taskbar({tab, onTab}: {tab: Tab; onTab: (t: Tab) => void}) {
+  const items: {t: Tab; label: string}[] = [
+    {t: 'home', label: 'Home'},
+    {t: 'library', label: 'Library'},
+    {t: 'bookmarks', label: 'Bookmarks'},
+    {t: 'settings', label: 'Settings'},
+  ];
+  return (
+    <View style={st.taskbar}>
+      {items.map(({t, label}) => {
+        const on = t === tab;
+        const c = on ? '#ffffff' : BLACK;
+        const sz = px(24);
+        return (
+          <Pressable key={t} onPress={() => onTab(t)} style={st.task} accessibilityRole="button" accessibilityLabel={label}>
+            <View style={[st.taskIcon, on && st.btnDark]}>
+              {t === 'home' ? <HomeIcon c={c} size={sz} /> : t === 'library' ? <ShelfIcon c={c} size={sz} /> : t === 'bookmarks' ? <RibbonIcon color={c} bg={on ? BLACK : '#ffffff'} size={sz} /> : <SlidersIcon c={c} size={sz} />}
+            </View>
+            <Text style={[st.taskText, on && {fontWeight: 'bold'}]}>{label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// ---------- settings: a sheet that slides over the page ----------
+function Seg({options}: {options: {label: React.ReactNode; on: boolean; onPress: () => void}[]}) {
+  return (
+    <View style={st.seg}>
+      {options.map((o, i) => (
+        <Pressable key={i} onPress={o.onPress} style={[st.segItem, o.on && st.segOn]}>
+          {typeof o.label === 'string' ? <Text style={[st.segText, o.on && {fontWeight: 'bold'}]}>{o.label}</Text> : o.label}
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+function Tile({label, children}: {label: string; children: React.ReactNode}) {
+  return (
+    <View style={{flex: 1, alignItems: 'center', marginHorizontal: px(6)}}>
+      <View style={st.tile}>{children}</View>
+      <Text style={st.tileLabel}>{label}</Text>
+    </View>
+  );
+}
+function RoundBtn({label, note, onPress, children, dim}: {label: string; note?: string; onPress: () => void; children: React.ReactNode; dim?: boolean}) {
+  return (
+    <Pressable onPress={onPress} disabled={dim} style={[{flex: 1, alignItems: 'center'}, dim && st.dim]}>
+      <View style={st.round}>{children}</View>
+      <Text style={st.tileLabel}>{label}</Text>
+      {note ? <Text style={[st.tileLabel, {marginTop: 0}]}>{note}</Text> : null}
+    </Pressable>
+  );
+}
+function MiniIcon({kind, on}: {kind: 'list' | 'grid'; on: boolean}) {
+  const c = BLACK;
+  const o = on ? 1 : 0.55;
+  return kind === 'list' ? (
+    <View style={{opacity: o}}>
+      {[0, 1, 2].map(i => <View key={i} style={{width: px(22), height: px(3), backgroundColor: c, marginVertical: px(2)}} />)}
+    </View>
+  ) : (
+    <View style={{width: px(20), flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', opacity: o}}>
+      {[0, 1, 2, 3].map(i => <View key={i} style={{width: px(8), height: px(8), backgroundColor: c, marginBottom: i < 2 ? px(3) : 0}} />)}
+    </View>
+  );
+}
+function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts}: {
+  settings: Settings;
+  change: (p: Partial<Settings>) => void;
+  onClose: () => void;
+  onLibraries: () => void;
+  onClearSearches: () => void;
+  onClearHistory: () => void;
+  counts: {searches: number; recent: number};
+}) {
+  const view = (key: 'libraryGrid' | 'volumeGrid') => (
+    <Seg
+      options={[
+        {label: <MiniIcon kind="list" on={!settings[key]} />, on: !settings[key], onPress: () => change({[key]: false})},
+        {label: <MiniIcon kind="grid" on={settings[key]} />, on: settings[key], onPress: () => change({[key]: true})},
+      ]}
+    />
+  );
+  return (
+    <View style={st.sheetWrap}>
+      <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel="Close settings" />
+      <View style={st.sheet}>
+        <Pressable onPress={onClose} hitSlop={px(12)} style={{alignItems: 'center'}}>
+          <View style={st.handle} />
+          <Text style={st.sheetTitle}>Settings</Text>
+        </Pressable>
+
+        <View style={{flexDirection: 'row', marginTop: px(16)}}>
+          <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
+            <Seg
+              options={[
+                {label: '‹ ›  Arrows', on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})},
+                {label: 'Scroll', on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})},
+              ]}
+            />
+            <Text style={st.tileLabel}>Long book pages</Text>
+          </View>
+          <View style={{flex: 1, alignItems: 'center', marginHorizontal: px(6)}}>
+            <Seg
+              options={[
+                {label: 'Show', on: settings.showFilters, onPress: () => change({showFilters: true})},
+                {label: 'Hide', on: !settings.showFilters, onPress: () => change({showFilters: false})},
+              ]}
+            />
+            <Text style={st.tileLabel}>Filters panel</Text>
+          </View>
+        </View>
+
+        <View style={{flexDirection: 'row', marginTop: px(18)}}>
+          <Tile label="Library view">{view('libraryGrid')}</Tile>
+          <Tile label="Volumes view">{view('volumeGrid')}</Tile>
+        </View>
+
+        <View style={{flexDirection: 'row', marginTop: px(18)}}>
+          <RoundBtn label="Libraries" note="Add or remove" onPress={onLibraries}>
+            <ShelfIcon c={BLACK} size={px(26)} />
+          </RoundBtn>
+          <RoundBtn label="Clear searches" note={`${counts.searches} saved`} onPress={onClearSearches} dim={!counts.searches}>
+            <SearchIcon c={BLACK} size={px(26)} />
+          </RoundBtn>
+          <RoundBtn label="Clear history" note={`${counts.recent} recent`} onPress={onClearHistory} dim={!counts.recent}>
+            <ClockIcon c={BLACK} size={px(26)} />
+          </RoundBtn>
+        </View>
+
+        <Btn dark label="Done" onPress={onClose} style={{marginTop: px(20)}} />
+      </View>
+    </View>
+  );
+}
+
+// ---------- rows for books remembered across libraries ----------
+function SnapRow({x, cover, onPress, right, h}: {x: Snap; cover?: string | null; onPress: () => void; right?: React.ReactNode; h: number}) {
+  const ch = h - px(14);
+  return (
+    <Pressable style={[st.row, {height: h, alignItems: 'center'}]} onPress={onPress}>
+      <Cover uri={cover !== undefined ? cover : x.cover} w={Math.round((ch * 2) / 3)} h={ch} title={x.title} />
+      <View style={[st.rowText, {alignSelf: 'stretch'}]}>
+        <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
+        <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{[x.libName, x.folder].filter(Boolean).join('  ·  ') + (x.vol ? `  ·  Vol ${x.vol}` : '')}</Text>
+        {x.genres?.length ? (
+          <View style={[st.pillLine, {marginTop: px(6)}]}>{x.genres.slice(0, 3).map(g => <Pill small key={g} label={g} />)}</View>
+        ) : null}
+      </View>
+      {right}
+    </Pressable>
+  );
+}
+
+function SnapList({items, empty, onOpen, onRemove}: {items: Snap[]; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void}) {
+  const [pg, setPg] = useState(0);
+  const rowH = px(122);
+  const per = Math.max(1, Math.floor((H - px(64) - TASK_H - px(64) - px(10)) / rowH));
+  const pages = Math.max(1, Math.ceil(items.length / per));
+  const p = Math.min(pg, pages - 1);
+  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>{empty}</Text></View>;
+  return (
+    <>
+      <View style={{flex: 1, paddingHorizontal: px(14), paddingTop: px(4)}}>
+        {items.slice(p * per, (p + 1) * per).map(x => (
+          <SnapRow key={x.lib + x.key} x={x} h={rowH} onPress={() => onOpen(x)} right={<Btn small label="Remove" onPress={() => onRemove(x)} style={{marginLeft: px(8)}} />} />
+        ))}
+      </View>
+      <View style={st.pager}>
+        <Pressable disabled={p <= 0} onPress={() => setPg(p - 1)} style={[st.pageBtn, p <= 0 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
+        <Text style={st.pageText}>{`${items.length} saved  ·  Page ${p + 1} of ${pages}`}</Text>
+        <Pressable disabled={p >= pages - 1} onPress={() => setPg(p + 1)} style={[st.pageBtn, p >= pages - 1 && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
+      </View>
+    </>
+  );
+}
+
+// ---------- home ----------
+type Found = {snap: Snap; book: Book; meta: Meta};
+function Home(props: {
+  libs: Lib[];
+  lib: Lib | null;
+  books: Book[];
+  meta: MetaStore;
+  app: AppState;
+  paging: Settings['paging'];
+  onSearched: (q: string) => void;
+  onForgetSearch: (q: string) => void;
+  onOpen: (x: Snap) => void;
+  onLibrary: (l: Lib) => void;
+  onAddLibrary: () => void;
+}) {
+  const {libs, lib, books, meta, app, onSearched, onForgetSearch, onOpen, onLibrary, onAddLibrary} = props;
+  const [q, setQ] = useState('');
+  const [index, setIndex] = useState<Found[] | null>(null);
+  const [pg, setPg] = useState(0);
+  const [, setTick] = useState(0);
+  const covers = useRef<{[lib: string]: {[k: string]: string | null}}>({});
+
+  // build a title index of every library the first time you search
+  useEffect(() => {
+    if (!q.trim() || index) return;
+    let alive = true;
+    (async () => {
+      const all: Found[] = [];
+      for (const l of libs) {
+        const [bs, m] = l.path === lib?.path ? [books, meta] : await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+        for (const b of bs) {
+          const bm = m.books[b.key] || {};
+          all.push({book: b, meta: bm, snap: {lib: l.path, libName: l.name, key: b.key, title: bm.title || b.fileTitle, folder: b.folder, genres: bm.genres, at: 0}});
+        }
+      }
+      if (alive) setIndex(all);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [q, index, libs, lib, books, meta]);
+  useEffect(() => setIndex(null), [libs, meta]);
+
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = (index || [])
+    .filter(f => words.every(w => f.snap.title.toLowerCase().includes(w) || f.book.fileTitle.toLowerCase().includes(w)))
+    .sort((a, b) => Number(!a.snap.title.toLowerCase().startsWith(words[0] || '')) - Number(!b.snap.title.toLowerCase().startsWith(words[0] || '')));
+  const rowH = px(112);
+  const listTop = px(64) + px(78);
+  const per = Math.max(1, Math.floor((H - listTop - TASK_H - px(64) - px(30)) / rowH));
+  const pages = Math.max(1, Math.ceil(found.length / per));
+  const p = Math.min(pg, pages - 1);
+  const shown = found.slice(p * per, (p + 1) * per);
+  const coverOf = (f: Found) => f.meta.cover || covers.current[f.snap.lib]?.[f.book.key] || null;
+  const sig = shown.map(f => f.snap.lib + f.book.key).join('|');
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      let changed = false;
+      for (const f of shown) {
+        const c = (covers.current[f.snap.lib] = covers.current[f.snap.lib] || {});
+        if (f.book.key in c || f.meta.cover) continue;
+        await coverFor(f.snap.lib, f.book, f.meta, c);
+        changed = true;
+      }
+      if (alive && changed) setTick(t => t + 1);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const search = (
+    <View style={st.searchRow}>
+      <View style={st.searchBox}>
+        <View style={{marginRight: px(10)}}><SearchIcon c={BLACK} size={px(22)} /></View>
+        <TextInput
+          style={st.searchInput}
+          value={q}
+          onChangeText={t => { setQ(t); setPg(0); }}
+          placeholder="Search titles"
+          placeholderTextColor="#777777"
+          returnKeyType="search"
+          onSubmitEditing={() => onSearched(q)}
+        />
+        {q ? (
+          <Pressable onPress={() => setQ('')} hitSlop={px(10)} accessibilityLabel="Clear search">
+            <Text style={st.searchClear}>✕</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+
+  if (q.trim()) {
+    return (
+      <View style={{flex: 1}}>
+        {search}
+        <Text style={[st.small, {paddingHorizontal: px(16), marginBottom: px(4)}]}>
+          {index === null ? 'Searching your libraries…' : `${found.length} title${found.length === 1 ? '' : 's'} found`}
+        </Text>
+        <View style={{flex: 1, paddingHorizontal: px(14)}}>
+          {shown.map(f => (
+            <SnapRow key={f.snap.lib + f.book.key} x={f.snap} cover={coverOf(f)} h={rowH} onPress={() => { onSearched(q); onOpen(f.snap); }} />
+          ))}
+          {index !== null && !found.length ? <Text style={st.para}>No titles match. Try fewer words.</Text> : null}
+        </View>
+        {pages > 1 ? (
+          <View style={st.pager}>
+            <Pressable disabled={p <= 0} onPress={() => setPg(p - 1)} style={[st.pageBtn, p <= 0 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
+            <Text style={st.pageText}>{`Page ${p + 1} of ${pages}`}</Text>
+            <Pressable disabled={p >= pages - 1} onPress={() => setPg(p + 1)} style={[st.pageBtn, p >= pages - 1 && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
+  const perRow = 5;
+  const cw = Math.floor((W - px(32) - (perRow - 1) * px(12)) / perRow);
+  const recent = app.recent.slice(0, perRow * 2);
+  return (
+    <View style={{flex: 1}}>
+      {search}
+      <View style={{paddingHorizontal: px(16)}}>
+        {app.searches.length ? (
+          <>
+            <Text style={st.homeLabel}>Recent searches</Text>
+            <View style={[st.pillWrap, {height: px(40), overflow: 'hidden'}]}>
+              {app.searches.map(t => (
+                <View key={t} style={st.chip}>
+                  <Pressable onPress={() => setQ(t)} hitSlop={px(4)}>
+                    <Text style={st.chipText}>{t}</Text>
+                  </Pressable>
+                  <Pressable onPress={() => onForgetSearch(t)} hitSlop={px(8)} accessibilityLabel={`Forget ${t}`}>
+                    <Text style={st.chipX}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          </>
+        ) : null}
+
+        {!libs.length ? (
+          <View style={st.welcome}>
+            <Text style={st.h2}>Welcome to InkShelf</Text>
+            <Text style={[st.para, {fontSize: px(18)}]}>Pick a folder with your books (EPUB, PDF and more) and it becomes a library you can filter, search and bookmark.</Text>
+            <Btn dark label="＋  Add your first library" onPress={onAddLibrary} />
+          </View>
+        ) : null}
+        <Text style={[st.homeLabel, {marginTop: px(12)}]}>Recently read</Text>
+        {recent.length ? (
+          [0, 1].map(r =>
+            recent.slice(r * perRow, (r + 1) * perRow).length ? (
+              <View key={r} style={{flexDirection: 'row', marginBottom: px(10)}}>
+                {recent.slice(r * perRow, (r + 1) * perRow).map((x, i) => (
+                  <Pressable key={x.lib + x.key} onPress={() => onOpen(x)} style={{width: cw, marginLeft: i ? px(12) : 0}}>
+                    <View>
+                      <Cover uri={x.cover} w={cw} h={Math.round(cw * 1.5)} title={x.title} />
+                      {x.vol ? <View style={st.volBadge}><Text style={st.volBadgeText}>{`Vol ${x.vol}`}</Text></View> : null}
+                    </View>
+                    <Text style={st.gridTitle} numberOfLines={2}>{x.title}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null,
+          )
+        ) : (
+          <Text style={[st.small, {marginBottom: px(12)}]}>Books you open will show up here.</Text>
+        )}
+
+        <Text style={[st.homeLabel, {marginTop: px(6)}]}>Libraries</Text>
+        <View style={st.pillWrap}>
+          {libs.map(l => (
+            <Pressable key={l.path} onPress={() => onLibrary(l)} style={st.libChip}>
+              <ShelfIcon c={BLACK} size={px(20)} />
+              <Text style={st.libChipText}>{l.name}</Text>
+            </Pressable>
+          ))}
+          <Pressable onPress={onAddLibrary} style={[st.libChip, {borderStyle: 'dashed'}]}>
+            <Text style={st.libChipText}>＋ Add library</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -1104,12 +1666,42 @@ const st = StyleSheet.create({
   noCoverText: {color: BLACK, textAlign: 'center', fontWeight: 'bold'},
   bookTitle: {fontSize: px(26), lineHeight: px(34), fontWeight: 'bold', color: BLACK},
   bookLeft: {borderRightWidth: 1.5, borderColor: '#888888'},
-  startBtn: {height: px(48), marginTop: px(12), backgroundColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  startBtn: {height: px(48), backgroundColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
   startText: {fontSize: px(18), fontWeight: 'bold', color: '#ffffff'},
   editBtn: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(20), paddingHorizontal: px(14), paddingVertical: px(5)},
   editText: {fontSize: px(17), color: BLACK},
   infoLabel: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(4)},
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
+  taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
+  task: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  taskIcon: {width: px(52), height: px(36), borderRadius: px(18), alignItems: 'center', justifyContent: 'center'},
+  taskText: {fontSize: px(13), color: BLACK, marginTop: px(1)},
+  sheetWrap: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)'},
+  sheet: {backgroundColor: '#ffffff', borderTopLeftRadius: px(28), borderTopRightRadius: px(28), borderWidth: 2, borderBottomWidth: 0, borderColor: BLACK, paddingHorizontal: px(22), paddingTop: px(10), paddingBottom: px(26)},
+  handle: {width: px(56), height: px(5), borderRadius: px(3), backgroundColor: '#999999', marginBottom: px(8)},
+  sheetTitle: {fontSize: px(17), color: '#555555'},
+  seg: {flexDirection: 'row', alignSelf: 'stretch', backgroundColor: '#ececec', borderRadius: px(30), padding: px(4), height: px(58)},
+  segItem: {flex: 1, borderRadius: px(26), alignItems: 'center', justifyContent: 'center'},
+  segOn: {backgroundColor: '#ffffff', borderWidth: 2, borderColor: BLACK},
+  segText: {fontSize: px(17), color: BLACK},
+  tile: {alignSelf: 'stretch', backgroundColor: '#ececec', borderRadius: px(22), padding: px(10)},
+  tileLabel: {fontSize: px(14), color: '#555555', marginTop: px(6), textAlign: 'center'},
+  round: {width: px(66), height: px(66), borderRadius: px(33), backgroundColor: '#ececec', alignItems: 'center', justifyContent: 'center'},
+  roundText: {fontSize: px(28), color: BLACK},
+  searchRow: {paddingHorizontal: px(16), paddingTop: px(14), paddingBottom: px(10)},
+  searchBox: {height: px(54), flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(27), paddingHorizontal: px(16)},
+  searchGlyph: {fontSize: px(24), color: BLACK, marginRight: px(8)},
+  searchInput: {flex: 1, fontSize: px(19), color: BLACK, paddingVertical: 0},
+  searchClear: {fontSize: px(20), color: BLACK, paddingHorizontal: px(6)},
+  welcome: {borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(18), marginTop: px(6)},
+  homeLabel: {fontSize: px(19), fontWeight: 'bold', color: BLACK, marginBottom: px(8)},
+  chip: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#ececec', borderRadius: px(18), paddingLeft: px(14), paddingRight: px(10), height: px(34), marginRight: px(8), marginBottom: px(6)},
+  chipText: {fontSize: px(16), color: BLACK},
+  chipX: {fontSize: px(14), color: '#555555', marginLeft: px(10)},
+  volBadge: {position: 'absolute', left: px(4), bottom: px(4), backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(6), paddingVertical: px(1)},
+  volBadgeText: {fontSize: px(12), color: '#ffffff', fontWeight: 'bold'},
+  libChip: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(14), height: px(48), marginRight: px(10), marginBottom: px(10)},
+  libChipText: {fontSize: px(18), color: BLACK, marginLeft: px(8)},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},

@@ -18,3 +18,14 @@ PluginManager.registerButton(1, ['DOC', 'NOTE'], {
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
   showType: 1,
 });
+
+// A settings entry for InkShelf in Supernote's own plugin settings.
+// Tapping it opens InkShelf with the settings sheet showing.
+import {emit} from './src/events';
+PluginManager.registerConfigButton().catch(() => {});
+PluginManager.registerConfigButtonListener({
+  onClick() {
+    emit('settings');
+    PluginManager.showPluginView().catch(() => {});
+  },
+});

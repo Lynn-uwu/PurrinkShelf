@@ -22,8 +22,18 @@ export type Meta = {
   status?: string; // e.g. "94 Chapters + 6 Extras (Completed)"
   translated?: 'Yes' | 'No';
 };
-export type Settings = {paging: 'arrows' | 'scroll'};
-export const DEFAULT_SETTINGS: Settings = {paging: 'arrows'};
+export type Settings = {
+  paging: 'arrows' | 'scroll'; // long book pages: turn with arrows, or scroll
+  libraryGrid: boolean;
+  volumeGrid: boolean;
+  showFilters: boolean;
+};
+export const DEFAULT_SETTINGS: Settings = {paging: 'arrows', libraryGrid: false, volumeGrid: false, showFilters: true};
+
+/** a book remembered outside its library (recently read, bookmarks) */
+export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string};
+export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {version: 1; books: {[key: string]: Meta}};
 
 const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'];
@@ -62,6 +72,19 @@ export async function loadSettings(): Promise<Settings> {
 
 export async function saveSettings(s: Settings) {
   await writeText(`${await pluginDir()}/settings.json`, JSON.stringify(s, null, 1));
+}
+
+export async function loadState(): Promise<AppState> {
+  const t = await readText(`${await pluginDir()}/state.json`);
+  try {
+    return {...EMPTY_STATE, ...(t ? JSON.parse(t) : {})};
+  } catch (e) {
+    return EMPTY_STATE;
+  }
+}
+
+export async function saveState(s: AppState) {
+  await writeText(`${await pluginDir()}/state.json`, JSON.stringify(s));
 }
 
 // ---------- scanning a library folder ----------
