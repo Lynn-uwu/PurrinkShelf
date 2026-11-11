@@ -11,6 +11,6 @@ d = ImageDraw.Draw(sheet)
 for i, (fn, label) in enumerate(items):
     x, y = pad + (i % cols) * (w + pad), pad + (i // cols) * (h + lab + pad)
     d.text((x, y), f'{i + 1}. {label}', fill='black', font=f)
-    sheet.paste(Image.open(f'shots/{fn}.png').convert('RGB').resize((w, h), Image.LANCZOS), (x, y + lab))
+    sheet.paste(Image.open((fn if '/' in fn else 'shots/' + fn) + '.png').convert('RGB').resize((w, h), Image.LANCZOS), (x, y + lab))
     d.rectangle([x - 1, y + lab - 1, x + w, y + lab + h], outline='black')
 sheet.save(out)
