@@ -198,16 +198,31 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
      */
     @ReactMethod
     fun storageRoots(promise: Promise) {
-        val found = LinkedHashMap<String, String>() // path -> label
+        // One entry per card. The same card shows up under several paths
+        // (/storage/ID, /mnt/media_rw/ID, app folders...), so they are merged by the card's ID.
+        val idRe = Regex("^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$|^[0-9A-Fa-f]{8,16}$")
+        val cards = LinkedHashMap<String, String>() // id -> best path
+        val labels = HashMap<String, String>()
         val how = ArrayList<String>()
-        fun add(path: String?, label: String, src: String) {
+        fun readable(p: String) = try { File(p).canRead() && File(p).listFiles() != null } catch (e: Throwable) { false }
+        fun add(path: String?, label: String, src: String, trusted: Boolean) {
             if (path.isNullOrBlank()) return
             val p = path.trimEnd('/')
             if (p.startsWith("/storage/emulated") || p == "/storage/self" || p == "/storage") return
-            if (!found.containsKey(p)) { found[p] = label; how.add("$src:$p") }
+            val id = p.substringAfterLast('/')
+            if (!trusted && !idRe.matches(id)) return
+            if (!File(p).exists()) return
+            val key = id.uppercase()
+            val have = cards[key]
+            // keep the /storage/ID path if we can read it; otherwise any readable one
+            val better = have == null ||
+                (!readable(have) && readable(p)) ||
+                (readable(p) && p.startsWith("/storage/") && !have.startsWith("/storage/"))
+            if (better) cards[key] = p
+            if (!labels.containsKey(key) || src == "volume") labels[key] = label
+            how.add("$src:$p")
         }
         val ctx = reactApplicationContext
-        // 1. StorageManager volumes (the SD card's real mount point)
         try {
             val sm = ctx.getSystemService(Context.STORAGE_SERVICE) as StorageManager
             if (Build.VERSION.SDK_INT >= 24) {
@@ -216,30 +231,31 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                     var path: String? = null
                     if (Build.VERSION.SDK_INT >= 30) path = v.directory?.absolutePath
                     if (path == null) try { path = v.javaClass.getMethod("getPath").invoke(v) as? String } catch (e: Throwable) {}
-                    val label = try { v.getDescription(ctx) } catch (e: Throwable) { "SD card" }
-                    add(path, if (v.isRemovable) "SD card" else (label ?: "Storage"), "volume")
+                    if (path == null && v.uuid != null) path = "/storage/" + v.uuid
+                    add(path, if (v.isRemovable) "SD card" else ((try { v.getDescription(ctx) } catch (e: Throwable) { null }) ?: "Storage"), "volume", true)
                 }
             }
         } catch (e: Throwable) { how.add("volume-failed:${e.javaClass.simpleName}") }
-        // 2. app folders on every volume: /storage/XXXX-XXXX/Android/data/... -> /storage/XXXX-XXXX
         try {
             for (d in ctx.getExternalFilesDirs(null)) {
                 val p = d?.absolutePath ?: continue
-                add(p.substringBefore("/Android/"), "SD card", "appdir")
+                if (p.contains("/Android/")) add(p.substringBefore("/Android/"), "SD card", "appdir", false)
             }
         } catch (e: Throwable) { how.add("appdir-failed:${e.javaClass.simpleName}") }
-        // 3. plain folder listing, in case the system allows it
-        for (base in listOf("/storage", "/mnt/media_rw", "/mnt/sdcard", "/sdcard1", "/mnt/extSdCard")) {
+        for (base in listOf("/storage", "/mnt/media_rw")) {
             try {
-                File(base).listFiles()?.filter { it.isDirectory && it.canRead() }?.forEach { add(it.absolutePath, "SD card", "list") }
+                File(base).listFiles()?.filter { it.isDirectory }?.forEach { add(it.absolutePath, "SD card", "list", false) }
             } catch (e: Throwable) {}
         }
         val arr = Arguments.createArray()
-        found.filter { File(it.key).let { f -> f.exists() } }.forEach { (p, l) ->
+        var n = 0
+        for ((key, p) in cards) {
+            n++
             val m = Arguments.createMap()
             m.putString("path", p)
-            m.putString("label", l)
-            m.putBoolean("readable", File(p).canRead() && File(p).listFiles() != null)
+            m.putString("id", key)
+            m.putString("label", if (cards.size > 1) "${labels[key] ?: "SD card"} $n" else (labels[key] ?: "SD card"))
+            m.putBoolean("readable", readable(p))
             arr.pushMap(m)
         }
         Log.i(TAG, "storageRoots ${how.joinToString()}")

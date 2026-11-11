@@ -7,18 +7,21 @@ const SD = '/storage/ABCD-1234';
 const tree = {
   '/storage': ['emulated/', 'self/', 'ABCD-1234/'],
   [`${SD}`]: ['Novels/', 'Books/', 'Music/'],
-  '/storage/emulated/0': ['Document/', 'Note/', 'MyStyle/'],
+  '/storage/emulated/0': ['Document/', 'Note/', 'MyStyle/', 'SCREENSHOT/'],
+  '/storage/emulated/0/SCREENSHOT': ['20261110_201533.png'],
   '/storage/emulated/0/Document': ['Welcome.pdf'],
   [`${SD}/Books`]: ['Garden Notes.epub'],
   [`${SD}/Music`]: [],
   [`${SD}/Novels`]: ['Chinese Novels/', 'Korean Novels/', '_Library Data/'],
-  [`${SD}/Novels/Korean Novels`]: ['The Lighthouse Keeper - Min Seo.epub', 'Rain Over Busan.epub'],
+  [`${SD}/Novels/Korean Novels`]: ['The Lighthouse Keeper - Min Seo.epub', 'Rain Over Busan.epub', 'Salt and Honey.epub', 'Salt and Honey Side Stories.epub'],
   [`${SD}/Novels/Chinese Novels`]: [
     'Moon Over the Jade Pavilion.epub', 'The Tea House on Willow Street.epub', 'A Sword Without a Name.epub',
     'Paper Lanterns in Winter.epub', 'The Fox Who Kept the Library.epub', 'Ten Thousand Steps to the Summit.epub',
     'Starlight Courier.epub', 'The Quiet Alchemist.epub', 'River of Small Lights.epub', 'Crane and the Clockmaker.epub',
-    'Echoes of the Ninth Gate/',
+    'Echoes of the Ninth Gate/', 'Historical/',
   ],
+  [`${SD}/Novels/Chinese Novels/Historical`]: ['Lotus Court/', 'The Last Imperial Tailor.epub'],
+  [`${SD}/Novels/Chinese Novels/Historical/Lotus Court`]: ['Lotus Court 1-50.epub', 'Lotus Court 51-100.epub', 'Lotus Court 101-152 (End).epub'],
   [`${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate`]: ['Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 'Echoes of the Ninth Gate Vol 2 (Ch 41-80).epub', 'Echoes of the Ninth Gate Vol 3 (Ch 81-120).epub', 'Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub', 'Echoes of the Ninth Gate Vol 5 (Ch 161-200).epub', 'Echoes of the Ninth Gate Vol 6 (Ch 201-240).epub', 'Echoes of the Ninth Gate Vol 7 (Ch 241-280).epub', 'Echoes of the Ninth Gate Vol 8 (Ch 281-320).epub', 'Echoes of the Ninth Gate Vol 9 (Ch 321-360).epub', 'Echoes of the Ninth Gate Vol 10 (Ch 361-400).epub', 'Echoes of the Ninth Gate Vol 11 (Ch 401-440).epub', 'Echoes of the Ninth Gate Vol 12 (Ch 441-480).epub'],
 };
 const files = {};
@@ -35,6 +38,9 @@ const meta = {
     'Chinese Novels/A Sword Without a Name.epub': {genres: ['Action', 'Fantasy', 'Martial Arts'], tags: ['Sects', 'Weapon Spirits'], language: 'Chinese', description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
     'Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols': {title: 'Echoes of the Ninth Gate', genres: ['Fantasy', 'Mystery', 'Romance'], tags: ['Exorcists', 'Contracts', 'Rivals to Lovers'], language: 'Chinese', status: '480 Chapters (Completed)', translated: 'No', description: 'Two rival exorcists are bound by a contract neither remembers signing. Nine gates, nine debts, one very long road.'},
     'Korean Novels/Rain Over Busan.epub': {genres: ['Romance', 'Drama'], tags: ['Photography', 'Weather'], language: 'Korean', status: '45 Chapters (Completed)', translated: 'Yes', description: 'A weather forecaster who is always wrong meets a photographer who only shoots storms.'},
+    'Korean Novels/Winter Ferry.epub': {genres: ['Romance', 'Slice of Life'], tags: ['Islands', 'Letters'], language: 'Korean', status: '30 Chapters (Completed)', description: 'A ferry captain carries the same passenger every winter. This year she does not get off.'},
+    'Korean Novels/The Lighthouse Keeper.epub': {genres: ['Drama', 'Mystery'], tags: ['Lighthouses', 'Small Town'], language: 'Korean', description: 'Moved here after a rename: the details come back on their own.'},
+    'Chinese Novels/Historical/Lotus Court/Lotus Court 1-50.epub': {genres: ['Historical', 'Romance'], tags: ['Court Politics', 'Embroidery'], language: 'Chinese', status: '152 Chapters (Completed)', description: 'Three files in one folder, shown as one book with three parts.'},
     'Chinese Novels/Starlight Courier.epub': {genres: ['Sci-fi', 'Comedy'], tags: ['Space', 'Delivery'], description: 'The galaxy\'s most punctual delivery driver is assigned a parcel that keeps trying to escape.'},
   },
 };
@@ -54,12 +60,15 @@ function svgCover(title) {
 window.__opened = [];
 NativeModules.InkShelf = {
   listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})),
-  readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {...meta, seenFiles: undefined}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
+  readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
   writeText: async (path, text) => { files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),
-  storageRoots: async () => (new URLSearchParams(location.search).get('nosd') ? {roots: [], how: 'none'} : {roots: [{path: SD, label: 'SD card', readable: true}], how: 'volume:' + SD}),
+  // the same card reported under several paths (what showed up as "10 SD cards")
+  storageRoots: async () => (new URLSearchParams(location.search).get('nosd') ? {roots: [], how: 'none'} : {roots: [
+    {path: '/mnt/media_rw/ABCD-1234', label: 'SD card', readable: false}, {path: SD, label: 'SD card', readable: true}, {path: '/storage/abcd-1234', label: 'SD card', readable: true},
+  ], how: 'volume:' + SD}),
   copyText: async t => ((window.__copied = t), true),
-  prepareImage: async (src, out) => out,
+  prepareImage: async (src, out) => (out.includes('/covers/own-') ? svgCover('Lotus Court Screenshot Cover') : out),
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },
 };
 if (new URLSearchParams(location.search).get('lib')) {
@@ -93,7 +102,7 @@ export const PluginFileAPI = {openFile: async () => ({success: true, result: tru
 export const RattaFileSelector = {
   selectImage: async () => null,
   // Supernote's own file picker: pretend the reader picked a book inside Novels/Chinese Novels
-  selectFile: async () => [`${SD}/Novels/Chinese Novels/Moon Over the Jade Pavilion.epub`],
+  selectFile: async o => ((window.__picker = o), o?.suffixList?.includes('png') ? [`${o.needSelectFolder}/20261110_201533.png`] : [`${SD}/Novels/Chinese Novels/Moon Over the Jade Pavilion.epub`]),
 };
 
 // ?state=1 : pretend some books were read, bookmarked and searched for

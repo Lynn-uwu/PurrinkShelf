@@ -138,3 +138,21 @@ export async function storageRoots(): Promise<{roots: Root[]; how: string}> {
     return {roots: [], how: 'failed: ' + (e?.message || e)};
   }
 }
+
+/** Shrink and copy a picture (PNG out), so a chosen cover stays even if the original is deleted. */
+export async function copyImage(src: string, out: string, maxSide = 900): Promise<string | null> {
+  if (!N?.prepareImage) return null;
+  try {
+    return (await N.prepareImage(src, out, maxSide)) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Supernote's screenshot folder (where pictures for covers usually are). */
+export async function screenshotDir(): Promise<string> {
+  const home = '/storage/emulated/0';
+  const names = (await listDir(home)).filter(e => e.isDir).map(e => e.name);
+  const hit = names.find(n => /^screenshots?$/i.test(n)) || names.find(n => /^(pictures|export)$/i.test(n));
+  return hit ? `${home}/${hit}` : `${home}/SCREENSHOT`;
+}
