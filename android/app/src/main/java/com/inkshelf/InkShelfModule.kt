@@ -75,7 +75,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
         }
     }
 
-    /** List a folder: [{name, path, isDir, size}] (hidden entries skipped). */
+    /** List a folder: [{name, path, isDir, size, mtime}] (hidden entries skipped). */
     @ReactMethod
     fun listDir(path: String, promise: Promise) {
         try {
@@ -94,6 +94,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                     m.putString("path", it.absolutePath)
                     m.putBoolean("isDir", it.isDirectory)
                     m.putDouble("size", it.length().toDouble())
+                    m.putDouble("mtime", it.lastModified().toDouble())
                     arr.pushMap(m)
                 }
             promise.resolve(arr)

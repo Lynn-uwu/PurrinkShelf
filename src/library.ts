@@ -11,7 +11,11 @@ export type Book = {
   files: string[]; // absolute paths (one, or one per volume)
   vols: Vol[];
   ext: string;
+  added: number; // newest file date (ms), for "newly added"
 };
+export type NoteColor = 'lemon' | 'rose' | 'sky' | 'mint' | 'paper';
+export type Note = {id: string; title?: string; text: string; color: NoteColor; at: number};
+export const MAX_NOTES = 5;
 export type Meta = {
   title?: string;
   genres?: string[];
@@ -21,7 +25,10 @@ export type Meta = {
   language?: string;
   status?: string; // e.g. "94 Chapters + 6 Extras (Completed)"
   translated?: 'Yes' | 'No';
+  notes?: Note[];
 };
+/** still waiting for a genre/tag or a summary */
+export const needsDetails = (m: Meta) => !(m.genres?.length || m.tags?.length) || !m.description;
 export type Settings = {
   paging: 'arrows' | 'scroll'; // long book pages: turn with arrows, or scroll
   libraryGrid: boolean;
@@ -100,6 +107,7 @@ export async function scanLibrary(root: string): Promise<Book[]> {
   const walk = async (dir: string, rel: string, depth: number) => {
     const entries = await listDir(dir);
     const files = entries.filter(e => !e.isDir && BOOK_EXT.includes(extOf(e.name)));
+    const mt = (path: string) => entries.find(e => e.path === path)?.mtime || 0;
     // group volumes of the same title in this folder
     const groups: {[t: string]: {n: number; label: string; path: string}[]} = {};
     const singles: typeof files = [];
@@ -126,10 +134,11 @@ export async function scanLibrary(root: string): Promise<Book[]> {
         files: vols.map(v => v.path),
         vols: vols.map(v => ({n: v.n, label: v.label, path: v.path})),
         ext: extOf(vols[0].path),
+        added: Math.max(...vols.map(v => mt(v.path))),
       });
     }
     for (const f of singles) {
-      books.push({key: `${rel}/${f.name}`, fileTitle: stripExt(f.name), folder, files: [f.path], vols: [], ext: extOf(f.name)});
+      books.push({key: `${rel}/${f.name}`, fileTitle: stripExt(f.name), folder, files: [f.path], vols: [], ext: extOf(f.name), added: f.mtime || 0});
     }
     if (depth < 6) {
       for (const d of entries.filter(e => e.isDir && !e.name.startsWith('_') && !e.name.startsWith('.'))) {

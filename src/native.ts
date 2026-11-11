@@ -2,7 +2,7 @@
 import {NativeModules} from 'react-native';
 import {PluginFileAPI, PluginManager} from 'sn-plugin-lib';
 
-export type Entry = {name: string; path: string; isDir: boolean; size: number};
+export type Entry = {name: string; path: string; isDir: boolean; size: number; mtime?: number};
 
 const N: any = NativeModules.InkShelf;
 

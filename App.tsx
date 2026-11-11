@@ -6,7 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {FileUtils, PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, Meta, MetaStore, Settings, Snap, Vol, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, Vol, needsDetails, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {Entry, hasNative, listDir, openBook} from './src/native';
 
@@ -23,11 +23,16 @@ const WRITE = 'plugin.permission.FILE:WRITE';
 type Screen =
   | {kind: 'home'}
   | {kind: 'bookmarks'}
+  | {kind: 'new'}
+  | {kind: 'gallery'; what: 'recent' | 'genres'}
   | {kind: 'libraries'}
   | {kind: 'browse'; path: string | null}
   | {kind: 'library'}
-  | {kind: 'book'; key: string; from?: 'home' | 'bookmarks' | 'library'}
-  | {kind: 'edit'; key: string};
+  | {kind: 'book'; key: string; from?: From}
+  | {kind: 'edit'; key: string; from?: From};
+type From = 'home' | 'bookmarks' | 'library' | 'new';
+/** one book anywhere in any library */
+type Found = {lib: Lib; book: Book; meta: Meta};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre" or "t:Tag"
 type FilterKind = 'g' | 't';
 
@@ -185,7 +190,7 @@ export default function App(): React.JSX.Element {
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
   const titleOf = (b: Book) => metaOf(b).title || b.fileTitle;
 
-  async function openLibrary(l: Lib, then?: Screen) {
+  async function openLibrary(l: Lib, then?: Screen, filter?: TagState) {
     setBusy(`Reading ${l.name}…`);
     setLib(l);
     coverCache.current = {};
@@ -196,9 +201,83 @@ export default function App(): React.JSX.Element {
     const [bs, m] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
     setBooks(bs);
     setMeta(m);
+    setLibData(d => ({...d, [l.path]: {books: bs, meta: m}}));
+    if (filter) {
+      setTags(filter);
+      setFKind('g');
+    }
     setBusy(null);
     setScreen(then || {kind: 'library'});
     changeApp(a => ({...a, lastLib: l.path}));
+  }
+
+  // ---------- every library at once (Home, search, Newly added, genres) ----------
+  const [libData, setLibData] = useState<{[path: string]: {books: Book[]; meta: MetaStore}}>({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      for (const l of libs) {
+        if (libData[l.path]) continue;
+        const [bs, m] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+        if (!alive) return;
+        setLibData(d => ({...d, [l.path]: {books: bs, meta: m}}));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [libs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const index: Found[] = useMemo(
+    () =>
+      libs.flatMap(l => {
+        const d = l.path === lib?.path && books.length ? {books, meta} : libData[l.path];
+        return d ? d.books.map(b => ({lib: l, book: b, meta: d.meta.books[b.key] || {}})) : [];
+      }),
+    [libs, lib, books, meta, libData],
+  );
+  const indexReady = libs.every(l => libData[l.path] || (l.path === lib?.path && books.length));
+  const xCache = useRef<{[lib: string]: {[k: string]: string | null}}>({});
+  const [, setXTick] = useState(0);
+  const xCover = (f: Found) => f.meta.cover || (f.lib.path === lib?.path ? covers[f.book.key] : undefined) || xCache.current[f.lib.path]?.[f.book.key] || null;
+  const xPending = useRef('');
+  const wantCovers = (list: Found[]) => {
+    const sig = list.map(f => f.lib.path + f.book.key).join('|');
+    if (!sig || sig === xPending.current) return;
+    xPending.current = sig;
+    setTimeout(async () => {
+      let changed = false;
+      for (const f of list) {
+        const c = (xCache.current[f.lib.path] = xCache.current[f.lib.path] || {});
+        if (f.book.key in c || f.meta.cover) continue;
+        await coverFor(f.lib.path, f.book, f.meta, c);
+        changed = true;
+      }
+      if (changed) setXTick(t => t + 1);
+    }, 0);
+  };
+  const snapOf = (f: Found, extra?: Partial<Snap>): Snap => ({
+    lib: f.lib.path, libName: f.lib.name, key: f.book.key, title: f.meta.title || f.book.fileTitle, cover: xCover(f), folder: f.book.folder, genres: f.meta.genres, at: f.book.added, ...extra,
+  });
+  const fresh = useMemo(() => index.filter(f => needsDetails(f.meta)).sort((a, b) => b.book.added - a.book.added), [index]);
+  function goEdit(f: Found) {
+    if (lib?.path === f.lib.path) setScreen({kind: 'edit', key: f.book.key, from: 'new'});
+    else openLibrary(f.lib, {kind: 'edit', key: f.book.key, from: 'new'});
+  }
+  function goGenre(g: string) {
+    const count: {[p: string]: number} = {};
+    index.forEach(f => {
+      if (f.meta.genres?.includes(g)) count[f.lib.path] = (count[f.lib.path] || 0) + 1;
+    });
+    const best = Object.keys(count).sort((a, b) => count[b] - count[a])[0];
+    const l = libs.find(x => x.path === best);
+    if (!l) return;
+    if (lib?.path === l.path) {
+      setTags({[`g:${g}`]: 1});
+      setFolders([]);
+      setFKind('g');
+      setPage(1);
+      setScreen({kind: 'library'});
+    } else openLibrary(l, undefined, {[`g:${g}`]: 1});
   }
 
   // ---------- recently read, bookmarks, moving between libraries ----------
@@ -222,7 +301,7 @@ export default function App(): React.JSX.Element {
     }
     await read(path);
   }
-  function goBook(x: Snap, from: 'home' | 'bookmarks') {
+  function goBook(x: Snap, from: From) {
     const l = libs.find(y => y.path === x.lib);
     if (!l) {
       setMessage(`"${x.libName}" isn't in your libraries any more.`);
@@ -325,33 +404,59 @@ export default function App(): React.JSX.Element {
     </View>
   );
 
-  const taskbar = (tab: 'home' | 'library' | 'bookmarks') => (
+  const taskbar = (tab: Tab) => (
     <Taskbar
       tab={tab}
+      newCount={fresh.length}
       onTab={t => {
         if (t === 'home') setScreen({kind: 'home'});
         else if (t === 'library') goLibrary();
         else if (t === 'bookmarks') setScreen({kind: 'bookmarks'});
+        else if (t === 'new') setScreen({kind: 'new'});
         else setShowSettings(true);
       }}
     />
   );
+  const recentFound = (): {x: Snap; f?: Found}[] =>
+    app.recent.map(x => {
+      const f = index.find(y => y.lib.path === x.lib && y.book.key === x.key);
+      return {x: f ? snapOf(f, {vol: x.vol, at: x.at}) : x, f};
+    });
+  const genreCards = (): {name: string; count: number; f?: Found}[] => {
+    const m: {[g: string]: Found[]} = {};
+    index.forEach(f => (f.meta.genres || []).forEach(g => (m[g] = m[g] || []).push(f)));
+    const used = new Set<string>(); // give each genre a different book's cover where possible
+    return Object.keys(m)
+      .sort((a, b) => m[b].length - m[a].length || a.localeCompare(b))
+      .map(g => {
+        const id = (f: Found) => f.lib.path + f.book.key;
+        const f = m[g].find(x => xCover(x) && !used.has(id(x))) || m[g].find(x => !used.has(id(x))) || m[g][0];
+        used.add(id(f));
+        return {name: g, count: m[g].length, f};
+      });
+  };
 
-  // ----- home: search, recent searches, recently read -----
+  // ----- home: search, recent searches, recently read, genres -----
   if (screen.kind === 'home') {
     return shell(
       <>
         <Header title="InkShelf" />
         <Home
           libs={libs}
-          lib={lib}
-          books={books}
-          meta={meta}
-          app={app}
+          index={index}
+          ready={indexReady}
+          recent={recentFound()}
+          genres={genreCards()}
+          searches={app.searches}
           paging={settings.paging}
+          cover={xCover}
+          wantCovers={wantCovers}
           onSearched={rememberSearch}
-          onForgetSearch={q => changeApp(a => ({...a, searches: a.searches.filter(x => x !== q)}))}
+          onForgetSearch={q => changeApp(a => ({...a, searches: q ? a.searches.filter(x => x !== q) : []}))}
           onOpen={x => goBook(x, 'home')}
+          onFound={f => goBook(snapOf(f), 'home')}
+          onGenre={goGenre}
+          onViewAll={what => setScreen({kind: 'gallery', what})}
           onLibrary={l => openLibrary(l)}
           onAddLibrary={() => setScreen({kind: 'browse', path: null})}
         />
@@ -360,13 +465,41 @@ export default function App(): React.JSX.Element {
     );
   }
 
+  // ----- "view all" pages for Home rows -----
+  if (screen.kind === 'gallery') {
+    const items =
+      screen.what === 'recent'
+        ? recentFound().map(r => ({key: r.x.lib + r.x.key, title: r.x.title, sub: r.x.vol ? `Vol ${r.x.vol}` : r.x.libName, cover: r.x.cover, f: r.f, onPress: () => goBook(r.x, 'home')}))
+        : genreCards().map(g => ({key: g.name, title: g.name, sub: `${g.count} book${g.count === 1 ? '' : 's'}`, cover: g.f ? xCover(g.f) : null, f: g.f, onPress: () => goGenre(g.name)}));
+    return shell(
+      <>
+        <Header title={screen.what === 'recent' ? 'Recently read' : 'Explore by genre'} left="‹ Home" onLeft={() => setScreen({kind: 'home'})} />
+        <Gallery items={items} paging={settings.paging} wantCovers={wantCovers} />
+        {taskbar('home')}
+      </>,
+    );
+  }
+
+  // ----- newly added: books still waiting for a genre/tag or a summary -----
+  if (screen.kind === 'new') {
+    return shell(
+      <>
+        <Header title="Newly added" />
+        <NewList items={fresh} libs={libs} ready={indexReady} paging={settings.paging} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
+        {taskbar('new')}
+      </>,
+    );
+  }
+
   // ----- bookmarks -----
   if (screen.kind === 'bookmarks') {
     return shell(
       <>
-        <Header title="Bookmarks" />
+        <Header title="My Bookmarks" />
         <SnapList
           items={app.bookmarks}
+          libs={libs}
+          paging={settings.paging}
           empty="No bookmarks yet. Open a book and tap Bookmark to keep it here."
           onOpen={x => goBook(x, 'bookmarks')}
           onRemove={x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))}))}
@@ -449,10 +582,10 @@ export default function App(): React.JSX.Element {
           allGenres={allGenres}
           allTags={allTags}
           cover={coverUri(b)}
-          onCancel={() => setScreen({kind: 'book', key: b.key})}
+          onCancel={() => setScreen(screen.from === 'new' ? {kind: 'new'} : {kind: 'book', key: b.key})}
           onSave={async m => {
             await updateMeta(b.key, m);
-            setScreen({kind: 'book', key: b.key});
+            setScreen(screen.from === 'new' ? {kind: 'new'} : {kind: 'book', key: b.key});
           }}
         />,
       );
@@ -476,6 +609,7 @@ export default function App(): React.JSX.Element {
         setVolGrid={setVolGrid}
         onRead={path => readBook(b, path)}
         marked={isMarked(b)}
+        onNotes={notes => updateMeta(b.key, {notes})}
         onMark={() => toggleMark(b)}
         onEdit={() => setScreen({kind: 'edit', key: b.key})}
         onBack={() => setScreen({kind: screen.from || 'library'})}
@@ -780,8 +914,10 @@ function BookPage(props: {
   onFilter: (k: 'folder' | FilterKind, v: string) => void;
   marked: boolean;
   onMark: () => void;
+  onNotes: (notes: Note[]) => void;
 }) {
-  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark} = props;
+  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes} = props;
+  const [notesOpen, setNotesOpen] = useState(false);
   const [lp, setLp] = useState(0);
   const [rp, setRp] = useState(0);
   const scroll = paging === 'scroll';
@@ -910,7 +1046,12 @@ function BookPage(props: {
   const lpg = Math.min(lp, lPages.length - 1);
   const rpg = Math.min(rp, rPages.length - 1);
 
-  const top = <Cover uri={cover} w={coverW} h={coverH} title={title} />;
+  const top = (
+    <View style={{width: coverW + px(14), height: coverH + px(10)}}>
+      <Cover uri={cover} w={coverW} h={coverH} title={title} />
+      <PostIt notes={m.notes || []} onPress={() => setNotesOpen(true)} style={{position: 'absolute', right: 0, bottom: 0}} />
+    </View>
+  );
   const start = (
     <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
       <Text style={st.startText}>{b.vols.length ? `▶  Read Vol ${b.vols[0].n}` : '▶  Start reading'}</Text>
@@ -973,7 +1114,145 @@ function BookPage(props: {
           )}
         </View>
       </View>
+      {notesOpen ? <NotesSheet title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
     </>
+  );
+}
+
+// ---------- post-it notes on a book ----------
+const NOTE_COLORS: {id: NoteColor; label: string; bg: string}[] = [
+  {id: 'lemon', label: 'Lemon', bg: '#fbf0a0'},
+  {id: 'rose', label: 'Rose', bg: '#f8cdd6'},
+  {id: 'sky', label: 'Sky', bg: '#cde2f6'},
+  {id: 'mint', label: 'Mint', bg: '#cfeed6'},
+  {id: 'paper', label: 'Paper', bg: '#f2f2f2'},
+];
+const noteBg = (c: NoteColor) => (NOTE_COLORS.find(x => x.id === c) || NOTE_COLORS[0]).bg;
+
+/** the little sticky note on the cover's bottom-right corner */
+function PostIt({notes, onPress, style}: {notes: Note[]; onPress: () => void; style?: any}) {
+  const n = notes.length;
+  const sz = px(52);
+  return (
+    <Pressable onPress={onPress} hitSlop={px(6)} accessibilityLabel={n ? `${n} notes` : 'Add a note'} style={style}>
+      <View style={[st.postit, {width: sz, height: sz, backgroundColor: n ? noteBg(notes[0].color) : '#fbf0a0'}]}>
+        <View style={st.postitFold} />
+        {n ? (
+          <>
+            <Text style={st.postitNum}>{n}</Text>
+            <Text style={st.postitLabel}>{n === 1 ? 'note' : 'notes'}</Text>
+          </>
+        ) : (
+          <>
+            <Text style={st.postitNum}>+</Text>
+            <Text style={st.postitLabel}>note</Text>
+          </>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
+function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: Note[]; onChange: (n: Note[]) => void; onClose: () => void}) {
+  const [sel, setSel] = useState(0);
+  const [editing, setEditing] = useState<Note | null>(notes.length ? null : null);
+  const [confirm, setConfirm] = useState(false);
+  const cur = notes[Math.min(sel, notes.length - 1)];
+  const startNew = () => setEditing({id: Date.now().toString(36), text: '', color: NOTE_COLORS[notes.length % NOTE_COLORS.length].id, at: Date.now()});
+  const save = () => {
+    if (!editing) return;
+    const n = {...editing, title: editing.title?.trim() || undefined, text: editing.text.trim(), at: Date.now()};
+    if (!n.text && !n.title) return setEditing(null);
+    const i = notes.findIndex(x => x.id === n.id);
+    const next = i >= 0 ? notes.map(x => (x.id === n.id ? n : x)) : [...notes, n];
+    onChange(next);
+    setSel(i >= 0 ? i : next.length - 1);
+    setEditing(null);
+  };
+  const remove = () => {
+    if (!confirm) return setConfirm(true);
+    const next = notes.filter(x => x.id !== cur.id);
+    onChange(next);
+    setSel(Math.max(0, sel - 1));
+    setConfirm(false);
+  };
+  const boxW = W - px(60) - px(36);
+  const boxH = Math.round(H * 0.46);
+  return (
+    <View style={st.modalWrap}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={editing ? undefined : onClose} />
+      <View style={st.modal}>
+        <View style={st.modalHead}>
+          <View style={{flex: 1}}>
+            <Text style={st.modalTitle}>Notes</Text>
+            <Text style={st.small} numberOfLines={1}>{title}</Text>
+          </View>
+          <Text style={[st.small, {marginRight: px(14)}]}>{`${notes.length} / ${MAX_NOTES}`}</Text>
+          <Pressable onPress={onClose} hitSlop={px(10)} accessibilityLabel="Close notes"><Text style={st.headerBtnText}>✕</Text></Pressable>
+        </View>
+
+        {/* one tab per note, plus "+" while there is room */}
+        <View style={{flexDirection: 'row', marginBottom: px(14)}}>
+          {notes.map((x, i) => (
+            <Pressable key={x.id} onPress={() => { setSel(i); setEditing(null); setConfirm(false); }} style={[st.noteTab, {backgroundColor: noteBg(x.color)}, i === sel && !editing && st.noteTabOn]}>
+              <Text style={st.noteTabText} numberOfLines={1}>{x.title || `Note ${i + 1}`}</Text>
+            </Pressable>
+          ))}
+          {notes.length < MAX_NOTES ? (
+            <Pressable onPress={startNew} style={[st.noteTab, {borderStyle: 'dashed', backgroundColor: '#ffffff', flex: 0, paddingHorizontal: px(14)}]} accessibilityLabel="New note">
+              <Text style={[st.noteTabText, {fontSize: px(22)}]}>+</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {editing ? (
+          <>
+            <View style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: noteBg(editing.color)}]}>
+              <TextInput style={st.noteTitleInput} value={editing.title || ''} onChangeText={t => setEditing({...editing, title: t})} placeholder="Title (optional)" placeholderTextColor="#666666" maxLength={40} />
+              <TextInput
+                style={st.noteTextInput}
+                value={editing.text}
+                onChangeText={t => setEditing({...editing, text: t})}
+                placeholder="Your thoughts, a favourite line, where you stopped…"
+                placeholderTextColor="#666666"
+                multiline
+                maxLength={500}
+              />
+              <Text style={[st.small, {textAlign: 'right'}]}>{`${editing.text.length} / 500`}</Text>
+            </View>
+            <View style={{flexDirection: 'row', marginTop: px(14), alignItems: 'center'}}>
+              {NOTE_COLORS.map(c => (
+                <Pressable key={c.id} onPress={() => setEditing({...editing, color: c.id})} style={{alignItems: 'center', marginRight: px(14)}} accessibilityLabel={c.label}>
+                  <View style={[st.swatch, {backgroundColor: c.bg}, editing.color === c.id && {borderWidth: 3}]} />
+                  <Text style={st.cardSub}>{c.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={{flexDirection: 'row', marginTop: px(16)}}>
+              <Btn small label="Cancel" onPress={() => setEditing(null)} style={{flex: 1, marginRight: px(10)}} />
+              <Btn small dark label="Save note" onPress={save} style={{flex: 1}} />
+            </View>
+          </>
+        ) : cur ? (
+          <>
+            <View style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: noteBg(cur.color)}]}>
+              {cur.title ? <Text style={st.noteTitle} numberOfLines={1}>{cur.title}</Text> : null}
+              <Text style={st.noteText} numberOfLines={cur.title ? 12 : 13}>{cur.text}</Text>
+              <Text style={[st.small, {position: 'absolute', right: px(16), bottom: px(12)}]}>{dateText(cur.at)}</Text>
+            </View>
+            <View style={{flexDirection: 'row', marginTop: px(16)}}>
+              <Btn small label={confirm ? 'Tap again to delete' : 'Delete'} onPress={remove} style={{flex: 1, marginRight: px(10)}} />
+              <Btn small dark label="✎  Edit" onPress={() => { setEditing(cur); setConfirm(false); }} style={{flex: 1}} />
+            </View>
+          </>
+        ) : (
+          <View style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: '#fbf0a0', justifyContent: 'center', alignItems: 'center'}]}>
+            <Text style={[st.para, {textAlign: 'center'}]}>{'No notes yet.\nKeep up to five notes on this book: your thoughts, a quote, where you stopped.'}</Text>
+            <Btn dark label="Write a note" onPress={startNew} style={{marginTop: px(10), paddingHorizontal: px(30)}} />
+          </View>
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -1059,11 +1338,24 @@ function ClockIcon({c, size}: {c: string; size: number}) {
   );
 }
 
-type Tab = 'home' | 'library' | 'bookmarks' | 'settings';
-function Taskbar({tab, onTab}: {tab: Tab; onTab: (t: Tab) => void}) {
+function NewIcon({c, size}: {c: string; size: number}) {
+  const u = size / 24;
+  return (
+    <View style={{width: size, height: size, alignItems: 'center', justifyContent: 'center'}}>
+      <View style={{width: 17 * u, height: 22 * u, borderWidth: 2.5 * u, borderColor: c, borderRadius: 2 * u, alignItems: 'center', justifyContent: 'center'}}>
+        <View style={{position: 'absolute', width: 9 * u, height: 2.5 * u, backgroundColor: c}} />
+        <View style={{position: 'absolute', width: 2.5 * u, height: 9 * u, backgroundColor: c}} />
+      </View>
+    </View>
+  );
+}
+
+type Tab = 'library' | 'new' | 'home' | 'bookmarks' | 'settings';
+function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; newCount: number}) {
   const items: {t: Tab; label: string}[] = [
-    {t: 'home', label: 'Home'},
     {t: 'library', label: 'Library'},
+    {t: 'new', label: 'New'},
+    {t: 'home', label: 'Home'},
     {t: 'bookmarks', label: 'Bookmarks'},
     {t: 'settings', label: 'Settings'},
   ];
@@ -1075,8 +1367,13 @@ function Taskbar({tab, onTab}: {tab: Tab; onTab: (t: Tab) => void}) {
         const sz = px(24);
         return (
           <Pressable key={t} onPress={() => onTab(t)} style={st.task} accessibilityRole="button" accessibilityLabel={label}>
-            <View style={[st.taskIcon, on && st.btnDark]}>
-              {t === 'home' ? <HomeIcon c={c} size={sz} /> : t === 'library' ? <ShelfIcon c={c} size={sz} /> : t === 'bookmarks' ? <RibbonIcon color={c} bg={on ? BLACK : '#ffffff'} size={sz} /> : <SlidersIcon c={c} size={sz} />}
+            <View style={[st.taskIcon, t === 'home' && st.taskHome, on && st.btnDark]}>
+              {t === 'home' ? <HomeIcon c={c} size={sz} /> : t === 'library' ? <ShelfIcon c={c} size={sz} /> : t === 'bookmarks' ? <RibbonIcon color={c} bg={on ? BLACK : '#ffffff'} size={sz} /> : t === 'new' ? <NewIcon c={c} size={sz} /> : <SlidersIcon c={c} size={sz} />}
+              {t === 'new' && newCount > 0 ? (
+                <View style={[st.badge, on && {backgroundColor: '#ffffff', borderColor: BLACK}]}>
+                  <Text style={[st.badgeText, on && {color: BLACK}]}>{newCount > 99 ? '99+' : newCount}</Text>
+                </View>
+              ) : null}
             </View>
             <Text style={[st.taskText, on && {fontWeight: 'bold'}]}>{label}</Text>
           </Pressable>
@@ -1216,213 +1513,393 @@ function SnapRow({x, cover, onPress, right, h}: {x: Snap; cover?: string | null;
   );
 }
 
-function SnapList({items, empty, onOpen, onRemove}: {items: Snap[]; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void}) {
+function Chips({options, value, onChange}: {options: {id: string; label: string}[]; value: string; onChange: (id: string) => void}) {
+  return (
+    <View style={st.chipsRow}>
+      {options.map(o => (
+        <Pressable key={o.id} onPress={() => onChange(o.id)} style={[st.fchip, value === o.id && st.btnDark]}>
+          <Text style={[st.fchipText, value === o.id && {color: '#ffffff'}]} numberOfLines={1}>{o.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function Pager({p, pages, setP, note}: {p: number; pages: number; setP: (n: number) => void; note?: string}) {
+  return (
+    <View style={st.pager}>
+      <Pressable disabled={p <= 0} onPress={() => setP(p - 1)} style={[st.pageBtn, p <= 0 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
+      <Text style={st.pageText}>{`${note ? note + '  ·  ' : ''}Page ${p + 1} of ${pages}`}</Text>
+      <Pressable disabled={p >= pages - 1} onPress={() => setP(p + 1)} style={[st.pageBtn, p >= pages - 1 && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
+    </View>
+  );
+}
+
+/** Rows that turn pages with arrows by default, or scroll when the setting says so. */
+function Paged<T>({items, rowH, top, paging, render, note}: {items: T[]; rowH: number; top: number; paging: Settings['paging']; render: (x: T) => React.ReactNode; note?: string}) {
   const [pg, setPg] = useState(0);
-  const rowH = px(122);
-  const per = Math.max(1, Math.floor((H - px(64) - TASK_H - px(64) - px(10)) / rowH));
+  if (paging === 'scroll') return <ScrollView style={{flex: 1}} contentContainerStyle={{paddingHorizontal: px(14), paddingBottom: px(20)}}>{items.map(render)}</ScrollView>;
+  const per = Math.max(1, Math.floor((H - top - TASK_H - px(64) - px(8)) / rowH));
   const pages = Math.max(1, Math.ceil(items.length / per));
   const p = Math.min(pg, pages - 1);
-  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>{empty}</Text></View>;
   return (
     <>
-      <View style={{flex: 1, paddingHorizontal: px(14), paddingTop: px(4)}}>
-        {items.slice(p * per, (p + 1) * per).map(x => (
-          <SnapRow key={x.lib + x.key} x={x} h={rowH} onPress={() => onOpen(x)} right={<Btn small label="Remove" onPress={() => onRemove(x)} style={{marginLeft: px(8)}} />} />
-        ))}
-      </View>
-      <View style={st.pager}>
-        <Pressable disabled={p <= 0} onPress={() => setPg(p - 1)} style={[st.pageBtn, p <= 0 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
-        <Text style={st.pageText}>{`${items.length} saved  ·  Page ${p + 1} of ${pages}`}</Text>
-        <Pressable disabled={p >= pages - 1} onPress={() => setPg(p + 1)} style={[st.pageBtn, p >= pages - 1 && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
-      </View>
+      <View style={{flex: 1, paddingHorizontal: px(14)}}>{items.slice(p * per, (p + 1) * per).map(render)}</View>
+      <Pager p={p} pages={pages} setP={setPg} note={note} />
     </>
   );
 }
 
+function SnapList({items, libs, paging, empty, onOpen, onRemove}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void}) {
+  const [which, setWhich] = useState('all');
+  const opts = [{id: 'all', label: 'All'}, ...libs.filter(l => items.some(x => x.lib === l.path)).map(l => ({id: l.path, label: l.name}))];
+  const shown = items.filter(x => which === 'all' || x.lib === which);
+  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>{empty}</Text></View>;
+  return (
+    <>
+      {opts.length > 2 ? <Chips options={opts} value={which} onChange={setWhich} /> : <View style={{height: px(8)}} />}
+      <Paged
+        key={which}
+        items={shown}
+        rowH={px(122)}
+        top={px(64) + (opts.length > 2 ? px(62) : px(8))}
+        paging={paging}
+        note={`${shown.length} saved`}
+        render={x => <SnapRow key={x.lib + x.key} x={x} h={px(122)} onPress={() => onOpen(x)} right={<Btn small label="Remove" onPress={() => onRemove(x)} style={{marginLeft: px(8)}} />} />}
+      />
+    </>
+  );
+}
+
+// ---------- newly added ----------
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dateText = (ms: number) => {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+};
+function NewList({items, libs, ready, paging, cover, wantCovers, onEdit, onOpen}: {
+  items: Found[];
+  libs: Lib[];
+  ready: boolean;
+  paging: Settings['paging'];
+  cover: (f: Found) => string | null;
+  wantCovers: (l: Found[]) => void;
+  onEdit: (f: Found) => void;
+  onOpen: (f: Found) => void;
+}) {
+  const [which, setWhich] = useState('all');
+  const noGenre = (f: Found) => !(f.meta.genres?.length || f.meta.tags?.length);
+  const noSum = (f: Found) => !f.meta.description;
+  const shown = items.filter(f => which === 'all' || (which === 'genre' ? noGenre(f) : which === 'summary' ? noSum(f) : f.lib.path === which));
+  const opts = [
+    {id: 'all', label: `All (${items.length})`},
+    {id: 'genre', label: 'No genre'},
+    {id: 'summary', label: 'No summary'},
+    ...(libs.length > 1 ? libs.map(l => ({id: l.path, label: l.name})) : []),
+  ];
+  const rowH = px(122);
+  if (!items.length) {
+    return (
+      <View style={[st.pad, {flex: 1}]}>
+        <Text style={st.para}>{ready ? 'All caught up. Every book has a genre and a summary.' : 'Looking through your libraries…'}</Text>
+      </View>
+    );
+  }
+  return (
+    <>
+      <Text style={[st.small, {paddingHorizontal: px(16), paddingTop: px(10)}]}>Newest first. Books leave this list once they have a genre (or tag) and a summary.</Text>
+      <Chips options={opts} value={which} onChange={setWhich} />
+      <Paged
+        key={which}
+        items={shown}
+        rowH={rowH}
+        top={px(64) + px(34) + px(62)}
+        paging={paging}
+        note={`${shown.length} to do`}
+        render={f => {
+          wantCovers([f]);
+          const ch = rowH - px(14);
+          return (
+            <Pressable key={f.lib.path + f.book.key} style={[st.row, {height: rowH, alignItems: 'center'}]} onPress={() => onOpen(f)}>
+              <Cover uri={cover(f)} w={Math.round((ch * 2) / 3)} h={ch} title={f.meta.title || f.book.fileTitle} />
+              <View style={[st.rowText, {alignSelf: 'stretch'}]}>
+                <Text style={st.rowTitle} numberOfLines={2}>{f.meta.title || f.book.fileTitle}</Text>
+                <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{[f.lib.name, f.book.folder, f.book.added ? `Added ${dateText(f.book.added)}` : ''].filter(Boolean).join('  ·  ')}</Text>
+                <View style={[st.pillLine, {marginTop: px(6)}]}>
+                  {noGenre(f) ? <Pill small active label="No genre" /> : null}
+                  {noSum(f) ? <Pill small active label="No summary" /> : null}
+                </View>
+              </View>
+              <Btn small dark label="Add details" onPress={() => onEdit(f)} style={{marginLeft: px(8)}} />
+            </Pressable>
+          );
+        }}
+      />
+    </>
+  );
+}
+
+// ---------- "view all" grid ----------
+type GItem = {key: string; title: string; sub: string; cover: string | null | undefined; f?: Found; onPress: () => void};
+function Gallery({items, paging, wantCovers}: {items: GItem[]; paging: Settings['paging']; wantCovers: (l: Found[]) => void}) {
+  const [pg, setPg] = useState(0);
+  const cols = 4;
+  const cw = Math.floor((W - px(32) - (cols - 1) * px(14)) / cols);
+  const cellH = Math.round(cw * 1.5) + px(64);
+  const rows = Math.max(1, Math.floor((H - px(64) - TASK_H - px(64) - px(16)) / cellH));
+  const per = paging === 'scroll' ? items.length : rows * cols;
+  const pages = Math.max(1, Math.ceil(items.length / per));
+  const p = Math.min(pg, pages - 1);
+  const shown = items.slice(p * per, (p + 1) * per);
+  wantCovers(shown.map(x => x.f).filter(Boolean) as Found[]);
+  const grid = (
+    <View style={{flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: px(16), paddingTop: px(12)}}>
+      {shown.map((x, i) => (
+        <Pressable key={x.key} onPress={x.onPress} style={{width: cw, height: cellH, marginLeft: i % cols ? px(14) : 0}}>
+          <Card uri={x.cover} w={cw} title={x.title} />
+          <Text style={st.cardTitle} numberOfLines={1}>{x.title}</Text>
+          <Text style={st.cardSub} numberOfLines={1}>{x.sub}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>Nothing here yet.</Text></View>;
+  return paging === 'scroll' ? (
+    <ScrollView style={{flex: 1}}>{grid}</ScrollView>
+  ) : (
+    <>
+      <View style={{flex: 1}}>{grid}</View>
+      <Pager p={p} pages={pages} setP={setPg} />
+    </>
+  );
+}
+
+/** a cover sitting in a soft rounded card, as on the Home page */
+function Card({uri, w, title}: {uri: string | null | undefined; w: number; title: string}) {
+  const inner = w - px(16);
+  return (
+    <View style={[st.card, {width: w, height: Math.round(inner * 1.5) + px(16)}]}>
+      <Cover uri={uri} w={inner} h={Math.round(inner * 1.5)} title={title} />
+    </View>
+  );
+}
+
 // ---------- home ----------
-type Found = {snap: Snap; book: Book; meta: Meta};
 function Home(props: {
   libs: Lib[];
-  lib: Lib | null;
-  books: Book[];
-  meta: MetaStore;
-  app: AppState;
+  index: Found[];
+  ready: boolean;
+  recent: {x: Snap; f?: Found}[];
+  genres: {name: string; count: number; f?: Found}[];
+  searches: string[];
   paging: Settings['paging'];
+  cover: (f: Found) => string | null;
+  wantCovers: (l: Found[]) => void;
   onSearched: (q: string) => void;
   onForgetSearch: (q: string) => void;
   onOpen: (x: Snap) => void;
+  onFound: (f: Found) => void;
+  onGenre: (g: string) => void;
+  onViewAll: (what: 'recent' | 'genres') => void;
   onLibrary: (l: Lib) => void;
   onAddLibrary: () => void;
 }) {
-  const {libs, lib, books, meta, app, onSearched, onForgetSearch, onOpen, onLibrary, onAddLibrary} = props;
+  const {libs, index, ready, recent, genres, searches, paging, cover, wantCovers, onSearched, onForgetSearch, onOpen, onFound, onGenre, onViewAll, onAddLibrary} = props;
   const [q, setQ] = useState('');
-  const [index, setIndex] = useState<Found[] | null>(null);
-  const [pg, setPg] = useState(0);
-  const [, setTick] = useState(0);
-  const covers = useRef<{[lib: string]: {[k: string]: string | null}}>({});
-
-  // build a title index of every library the first time you search
-  useEffect(() => {
-    if (!q.trim() || index) return;
-    let alive = true;
-    (async () => {
-      const all: Found[] = [];
-      for (const l of libs) {
-        const [bs, m] = l.path === lib?.path ? [books, meta] : await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
-        for (const b of bs) {
-          const bm = m.books[b.key] || {};
-          all.push({book: b, meta: bm, snap: {lib: l.path, libName: l.name, key: b.key, title: bm.title || b.fileTitle, folder: b.folder, genres: bm.genres, at: 0}});
-        }
-      }
-      if (alive) setIndex(all);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [q, index, libs, lib, books, meta]);
-  useEffect(() => setIndex(null), [libs, meta]);
-
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  const found = (index || [])
-    .filter(f => words.every(w => f.snap.title.toLowerCase().includes(w) || f.book.fileTitle.toLowerCase().includes(w)))
-    .sort((a, b) => Number(!a.snap.title.toLowerCase().startsWith(words[0] || '')) - Number(!b.snap.title.toLowerCase().startsWith(words[0] || '')));
-  const rowH = px(112);
-  const listTop = px(64) + px(78);
-  const per = Math.max(1, Math.floor((H - listTop - TASK_H - px(64) - px(30)) / rowH));
-  const pages = Math.max(1, Math.ceil(found.length / per));
-  const p = Math.min(pg, pages - 1);
-  const shown = found.slice(p * per, (p + 1) * per);
-  const coverOf = (f: Found) => f.meta.cover || covers.current[f.snap.lib]?.[f.book.key] || null;
-  const sig = shown.map(f => f.snap.lib + f.book.key).join('|');
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      let changed = false;
-      for (const f of shown) {
-        const c = (covers.current[f.snap.lib] = covers.current[f.snap.lib] || {});
-        if (f.book.key in c || f.meta.cover) continue;
-        await coverFor(f.snap.lib, f.book, f.meta, c);
-        changed = true;
-      }
-      if (alive && changed) setTick(t => t + 1);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [scope, setScope] = useState('all');
+  const [rp, setRp] = useState(0);
+  const [gp, setGp] = useState(0);
+  const scroll = paging === 'scroll';
 
   const search = (
-    <View style={st.searchRow}>
-      <View style={st.searchBox}>
-        <View style={{marginRight: px(10)}}><SearchIcon c={BLACK} size={px(22)} /></View>
-        <TextInput
-          style={st.searchInput}
-          value={q}
-          onChangeText={t => { setQ(t); setPg(0); }}
-          placeholder="Search titles"
-          placeholderTextColor="#777777"
-          returnKeyType="search"
-          onSubmitEditing={() => onSearched(q)}
-        />
-        {q ? (
-          <Pressable onPress={() => setQ('')} hitSlop={px(10)} accessibilityLabel="Clear search">
-            <Text style={st.searchClear}>✕</Text>
-          </Pressable>
-        ) : null}
+    <>
+      <View style={[st.searchRow, {flexDirection: 'row', alignItems: 'center'}]}>
+        <View style={[st.searchBox, {flex: 1}]}>
+          <View style={{marginRight: px(10)}}><SearchIcon c={BLACK} size={px(22)} /></View>
+          <TextInput
+            style={st.searchInput}
+            value={q}
+            onChangeText={setQ}
+            placeholder="Search titles"
+            placeholderTextColor="#777777"
+            returnKeyType="search"
+            onSubmitEditing={() => onSearched(q)}
+          />
+          {q ? (
+            <Pressable onPress={() => setQ('')} hitSlop={px(10)} accessibilityLabel="Clear search">
+              <Text style={st.searchClear}>✕</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable onPress={() => setScopeOpen(!scopeOpen)} style={[st.filterBtn, (scopeOpen || scope !== 'all') && st.btnDark]} accessibilityLabel="Search filters">
+          <SlidersIcon c={scopeOpen || scope !== 'all' ? '#ffffff' : BLACK} size={px(24)} />
+        </Pressable>
       </View>
-    </View>
+      {scopeOpen ? (
+        <Chips options={[{id: 'all', label: 'All libraries'}, ...libs.map(l => ({id: l.path, label: l.name}))]} value={scope} onChange={setScope} />
+      ) : null}
+    </>
   );
 
+  // ----- searching -----
   if (q.trim()) {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const title = (f: Found) => f.meta.title || f.book.fileTitle;
+    const found = index
+      .filter(f => scope === 'all' || f.lib.path === scope)
+      .filter(f => words.every(w => title(f).toLowerCase().includes(w) || f.book.fileTitle.toLowerCase().includes(w)))
+      .sort((a, b) => Number(!title(a).toLowerCase().startsWith(words[0])) - Number(!title(b).toLowerCase().startsWith(words[0])) || title(a).localeCompare(title(b)));
+    const rowH = px(112);
     return (
       <View style={{flex: 1}}>
         {search}
         <Text style={[st.small, {paddingHorizontal: px(16), marginBottom: px(4)}]}>
-          {index === null ? 'Searching your libraries…' : `${found.length} title${found.length === 1 ? '' : 's'} found`}
+          {!ready && !found.length ? 'Searching your libraries…' : `${found.length} title${found.length === 1 ? '' : 's'} found`}
         </Text>
-        <View style={{flex: 1, paddingHorizontal: px(14)}}>
-          {shown.map(f => (
-            <SnapRow key={f.snap.lib + f.book.key} x={f.snap} cover={coverOf(f)} h={rowH} onPress={() => { onSearched(q); onOpen(f.snap); }} />
-          ))}
-          {index !== null && !found.length ? <Text style={st.para}>No titles match. Try fewer words.</Text> : null}
-        </View>
-        {pages > 1 ? (
-          <View style={st.pager}>
-            <Pressable disabled={p <= 0} onPress={() => setPg(p - 1)} style={[st.pageBtn, p <= 0 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
-            <Text style={st.pageText}>{`Page ${p + 1} of ${pages}`}</Text>
-            <Pressable disabled={p >= pages - 1} onPress={() => setPg(p + 1)} style={[st.pageBtn, p >= pages - 1 && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
-          </View>
+        {found.length ? (
+          <Paged
+            key={q + scope}
+            items={found}
+            rowH={rowH}
+            top={px(64) + px(78) + (scopeOpen ? px(62) : 0) + px(24)}
+            paging={paging}
+            render={f => {
+              wantCovers([f]);
+              return (
+                <SnapRow
+                  key={f.lib.path + f.book.key}
+                  x={{lib: f.lib.path, libName: f.lib.name, key: f.book.key, title: title(f), folder: f.book.folder, genres: f.meta.genres, at: 0}}
+                  cover={cover(f)}
+                  h={rowH}
+                  onPress={() => { onSearched(q); onFound(f); }}
+                />
+              );
+            }}
+          />
+        ) : ready ? (
+          <Text style={[st.para, st.pad]}>No titles match. Try fewer words.</Text>
         ) : null}
       </View>
     );
   }
 
-  const perRow = 5;
-  const cw = Math.floor((W - px(32) - (perRow - 1) * px(12)) / perRow);
-  const recent = app.recent.slice(0, perRow * 2);
+  // ----- browsing -----
+  const head = (label: string, sub: string, page: number, pages: number, setPage: (n: number) => void, what: 'recent' | 'genres') => (
+    <View style={st.secHead}>
+      <Text style={st.secTitle}>
+        {label}
+        <Text style={st.secSub}>{` ${sub}`}</Text>
+      </Text>
+      <View style={{flexDirection: 'row', alignItems: 'center'}}>
+        {!scroll && pages > 1 ? (
+          <>
+            <Pressable disabled={page <= 0} onPress={() => setPage(page - 1)} hitSlop={px(8)} style={[st.miniArrow, page <= 0 && st.dim]}><Text style={st.miniArrowText}>‹</Text></Pressable>
+            <Pressable disabled={page >= pages - 1} onPress={() => setPage(page + 1)} hitSlop={px(8)} style={[st.miniArrow, page >= pages - 1 && st.dim]}><Text style={st.miniArrowText}>›</Text></Pressable>
+          </>
+        ) : null}
+        <Pressable onPress={() => onViewAll(what)} hitSlop={px(8)}>
+          <Text style={st.viewAll}>View all</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+  const row = (nodes: React.ReactNode[]) =>
+    scroll ? (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{paddingHorizontal: px(16)}}>{nodes}</ScrollView>
+    ) : (
+      <View style={{flexDirection: 'row', paddingHorizontal: px(16)}}>{nodes}</View>
+    );
+
+  const rPer = 4;
+  const rw = Math.floor((W - px(32) - (rPer - 1) * px(14)) / rPer);
+  const rPages = Math.max(1, Math.ceil(recent.length / rPer));
+  const rpg = Math.min(rp, rPages - 1);
+  const rShown = scroll ? recent : recent.slice(rpg * rPer, (rpg + 1) * rPer);
+  const gPer = 5;
+  const gw = Math.floor((W - px(32) - px(20) - (gPer - 1) * px(10)) / gPer);
+  const gPages = Math.max(1, Math.ceil(genres.length / gPer));
+  const gpg = Math.min(gp, gPages - 1);
+  const gShown = scroll ? genres : genres.slice(gpg * gPer, (gpg + 1) * gPer);
+  wantCovers([...rShown.map(r => r.f), ...gShown.map(g => g.f)].filter(Boolean) as Found[]);
+
+  const body = (
+    <>
+      {!libs.length ? (
+        <View style={[st.welcome, {marginHorizontal: px(16)}]}>
+          <Text style={st.h2}>Welcome to InkShelf</Text>
+          <Text style={[st.para, {fontSize: px(18)}]}>Pick a folder with your books (EPUB, PDF and more) and it becomes a library you can filter, search and bookmark.</Text>
+          <Btn dark label="＋  Add your first library" onPress={onAddLibrary} />
+        </View>
+      ) : null}
+
+      {searches.length ? (
+        <View style={{paddingHorizontal: px(16)}}>
+          <View style={st.secHead}>
+            <Text style={st.secTitle}>Recent searches</Text>
+            <Pressable onPress={() => onForgetSearch('')} hitSlop={px(8)}><Text style={st.viewAll}>Clear all</Text></Pressable>
+          </View>
+          <View style={[st.pillWrap, {maxHeight: px(84), overflow: 'hidden'}]}>
+            {searches.map(t => (
+              <View key={t} style={st.chip}>
+                <Pressable onPress={() => setQ(t)} hitSlop={px(4)}>
+                  <Text style={st.chipText}>{t}</Text>
+                </Pressable>
+                <Pressable onPress={() => onForgetSearch(t)} hitSlop={px(8)} accessibilityLabel={`Forget ${t}`}>
+                  <Text style={st.chipX}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {libs.length ? (
+        <>
+          <View style={{paddingHorizontal: px(16), marginTop: px(10)}}>{head('Recently', 'read', rpg, rPages, setRp, 'recent')}</View>
+          {recent.length ? (
+            row(
+              rShown.map((r, i) => (
+                <Pressable key={r.x.lib + r.x.key} onPress={() => onOpen(r.x)} style={{width: rw, marginLeft: i ? px(14) : 0}}>
+                  <View>
+                    <Card uri={(r.f && cover(r.f)) || r.x.cover} w={rw} title={r.x.title} />
+                    {r.x.vol ? <View style={st.volBadge}><Text style={st.volBadgeText}>{`Vol ${r.x.vol}`}</Text></View> : null}
+                  </View>
+                  <Text style={st.cardTitle} numberOfLines={1}>{r.x.title}</Text>
+                  <Text style={st.cardSub} numberOfLines={1}>{r.x.folder || r.x.libName}</Text>
+                </Pressable>
+              )),
+            )
+          ) : (
+            <Text style={[st.small, {paddingHorizontal: px(16)}]}>Books you open will show up here.</Text>
+          )}
+
+          <View style={{paddingHorizontal: px(16), marginTop: px(16)}}>{head('Explore', 'by genre', gpg, gPages, setGp, 'genres')}</View>
+          {genres.length ? (
+            <View style={[st.genrePanel, {marginHorizontal: px(16)}]}>
+              {(scroll ? [<ScrollView key="s" horizontal showsHorizontalScrollIndicator={false}><View style={{flexDirection: 'row'}}>{gTiles()}</View></ScrollView>] : [<View key="r" style={{flexDirection: 'row'}}>{gTiles()}</View>])}
+            </View>
+          ) : (
+            <Text style={[st.small, {paddingHorizontal: px(16)}]}>{ready ? 'Add genres to your books and they will show up here.' : 'Looking through your libraries…'}</Text>
+          )}
+        </>
+      ) : null}
+    </>
+  );
+  function gTiles() {
+    return gShown.map((g, i) => (
+      <Pressable key={g.name} onPress={() => onGenre(g.name)} style={{width: gw, marginLeft: i ? px(10) : 0, alignItems: 'center'}}>
+        <Cover uri={g.f ? cover(g.f) : null} w={gw} h={Math.round(gw * 1.45)} title={g.name} />
+        <Text style={[st.cardTitle, {textAlign: 'center'}]} numberOfLines={1}>{g.name}</Text>
+        <Text style={[st.cardSub, {textAlign: 'center'}]}>{`${g.count} book${g.count === 1 ? '' : 's'}`}</Text>
+      </Pressable>
+    ));
+  }
   return (
     <View style={{flex: 1}}>
       {search}
-      <View style={{paddingHorizontal: px(16)}}>
-        {app.searches.length ? (
-          <>
-            <Text style={st.homeLabel}>Recent searches</Text>
-            <View style={[st.pillWrap, {height: px(40), overflow: 'hidden'}]}>
-              {app.searches.map(t => (
-                <View key={t} style={st.chip}>
-                  <Pressable onPress={() => setQ(t)} hitSlop={px(4)}>
-                    <Text style={st.chipText}>{t}</Text>
-                  </Pressable>
-                  <Pressable onPress={() => onForgetSearch(t)} hitSlop={px(8)} accessibilityLabel={`Forget ${t}`}>
-                    <Text style={st.chipX}>✕</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          </>
-        ) : null}
-
-        {!libs.length ? (
-          <View style={st.welcome}>
-            <Text style={st.h2}>Welcome to InkShelf</Text>
-            <Text style={[st.para, {fontSize: px(18)}]}>Pick a folder with your books (EPUB, PDF and more) and it becomes a library you can filter, search and bookmark.</Text>
-            <Btn dark label="＋  Add your first library" onPress={onAddLibrary} />
-          </View>
-        ) : null}
-        <Text style={[st.homeLabel, {marginTop: px(12)}]}>Recently read</Text>
-        {recent.length ? (
-          [0, 1].map(r =>
-            recent.slice(r * perRow, (r + 1) * perRow).length ? (
-              <View key={r} style={{flexDirection: 'row', marginBottom: px(10)}}>
-                {recent.slice(r * perRow, (r + 1) * perRow).map((x, i) => (
-                  <Pressable key={x.lib + x.key} onPress={() => onOpen(x)} style={{width: cw, marginLeft: i ? px(12) : 0}}>
-                    <View>
-                      <Cover uri={x.cover} w={cw} h={Math.round(cw * 1.5)} title={x.title} />
-                      {x.vol ? <View style={st.volBadge}><Text style={st.volBadgeText}>{`Vol ${x.vol}`}</Text></View> : null}
-                    </View>
-                    <Text style={st.gridTitle} numberOfLines={2}>{x.title}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null,
-          )
-        ) : (
-          <Text style={[st.small, {marginBottom: px(12)}]}>Books you open will show up here.</Text>
-        )}
-
-        <Text style={[st.homeLabel, {marginTop: px(6)}]}>Libraries</Text>
-        <View style={st.pillWrap}>
-          {libs.map(l => (
-            <Pressable key={l.path} onPress={() => onLibrary(l)} style={st.libChip}>
-              <ShelfIcon c={BLACK} size={px(20)} />
-              <Text style={st.libChipText}>{l.name}</Text>
-            </Pressable>
-          ))}
-          <Pressable onPress={onAddLibrary} style={[st.libChip, {borderStyle: 'dashed'}]}>
-            <Text style={st.libChipText}>＋ Add library</Text>
-          </Pressable>
-        </View>
-      </View>
+      {scroll ? <ScrollView style={{flex: 1}}>{body}</ScrollView> : <View style={{flex: 1, overflow: 'hidden'}}>{body}</View>}
     </View>
   );
 }
@@ -1702,6 +2179,40 @@ const st = StyleSheet.create({
   volBadgeText: {fontSize: px(12), color: '#ffffff', fontWeight: 'bold'},
   libChip: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(14), height: px(48), marginRight: px(10), marginBottom: px(10)},
   libChipText: {fontSize: px(18), color: BLACK, marginLeft: px(8)},
+  taskHome: {width: px(60), height: px(40), borderRadius: px(20), borderWidth: 1.5, borderColor: BLACK},
+  badge: {position: 'absolute', top: -px(4), right: -px(2), minWidth: px(20), height: px(20), borderRadius: px(10), backgroundColor: BLACK, borderWidth: 1.5, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  badgeText: {fontSize: px(11), fontWeight: 'bold', color: '#ffffff'},
+  chipsRow: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', paddingHorizontal: px(16), paddingVertical: px(12)},
+  fchip: {borderWidth: 1.5, borderColor: '#bbbbbb', borderRadius: px(20), paddingHorizontal: px(16), height: px(38), justifyContent: 'center', marginRight: px(8), backgroundColor: '#f4f4f4'},
+  fchipText: {fontSize: px(16), color: BLACK},
+  card: {backgroundColor: '#efefef', borderRadius: px(14), padding: px(8), borderWidth: 1, borderColor: '#dddddd'},
+  cardTitle: {fontSize: px(16), fontWeight: 'bold', color: BLACK, marginTop: px(6)},
+  cardSub: {fontSize: px(13), color: '#666666', marginTop: px(1)},
+  filterBtn: {width: px(54), height: px(54), borderRadius: px(27), borderWidth: 2, borderColor: BLACK, alignItems: 'center', justifyContent: 'center', marginLeft: px(10)},
+  secHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(40)},
+  secTitle: {fontSize: px(20), fontWeight: 'bold', color: BLACK},
+  secSub: {fontWeight: 'normal', color: '#777777'},
+  viewAll: {fontSize: px(16), color: '#444444', textDecorationLine: 'underline', marginLeft: px(12)},
+  miniArrow: {width: px(38), height: px(32), borderRadius: px(16), borderWidth: 1.5, borderColor: BLACK, alignItems: 'center', justifyContent: 'center', marginLeft: px(6)},
+  miniArrowText: {fontSize: px(22), lineHeight: px(26), fontWeight: 'bold', color: BLACK},
+  genrePanel: {backgroundColor: '#f2f2f2', borderRadius: px(18), padding: px(10), borderWidth: 1, borderColor: '#dddddd'},
+  postit: {borderWidth: 1, borderColor: '#555555', alignItems: 'center', justifyContent: 'center', transform: [{rotate: '-5deg'}]},
+  postitFold: {position: 'absolute', right: 0, bottom: 0, width: 0, height: 0, borderLeftWidth: px(12), borderTopWidth: px(12), borderLeftColor: 'transparent', borderTopColor: '#999999'},
+  postitNum: {fontSize: px(20), lineHeight: px(22), fontWeight: 'bold', color: BLACK},
+  postitLabel: {fontSize: px(11), color: BLACK},
+  modalWrap: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)', justifyContent: 'center', alignItems: 'center'},
+  modal: {width: W - px(60), backgroundColor: '#ffffff', borderRadius: px(22), borderWidth: 2, borderColor: BLACK, padding: px(18)},
+  modalHead: {flexDirection: 'row', alignItems: 'center', marginBottom: px(14)},
+  modalTitle: {fontSize: px(22), fontWeight: 'bold', color: BLACK},
+  noteTab: {flex: 1, height: px(44), borderWidth: 1.5, borderColor: '#777777', borderRadius: px(6), alignItems: 'center', justifyContent: 'center', marginRight: px(6), paddingHorizontal: px(4)},
+  noteTabOn: {borderWidth: 3, borderColor: BLACK},
+  noteTabText: {fontSize: px(14), color: BLACK, fontWeight: 'bold'},
+  noteBig: {borderWidth: 1, borderColor: '#555555', padding: px(18), borderRadius: px(4)},
+  noteTitle: {fontSize: px(21), fontWeight: 'bold', color: BLACK, marginBottom: px(8)},
+  noteText: {fontSize: px(19), lineHeight: px(28), color: BLACK},
+  noteTitleInput: {fontSize: px(20), fontWeight: 'bold', color: BLACK, borderBottomWidth: 1.5, borderColor: '#555555', paddingVertical: px(6), marginBottom: px(8)},
+  noteTextInput: {flex: 1, fontSize: px(19), lineHeight: px(28), color: BLACK, textAlignVertical: 'top'},
+  swatch: {width: px(40), height: px(40), borderRadius: px(20), borderWidth: 1.5, borderColor: BLACK},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},

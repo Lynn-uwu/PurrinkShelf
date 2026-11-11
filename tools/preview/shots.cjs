@@ -15,27 +15,28 @@ require('fs').mkdirSync(out, {recursive: true});
 
   // first open, adding a library
   await p.goto(url('')); await shot('01-home-first-open');
-  await p.getByText('＋ Add library').click(); await shot('02-choose-storage');
+  await p.getByText('＋  Add your first library').click(); await shot('02-choose-storage');
   await p.getByText('SD card', {exact: false}).click();
   await p.getByText('▸  Novels').click(); await shot('03-inside-novels');
   await p.getByText('✓  Use this folder').click(); await shot('04-library-list');
 
   // someone who has been using it
-  await p.goto(url('?lib=2&state=1')); await p.waitForTimeout(400); await shot('05-home');
-  await p.getByPlaceholder('Search titles').fill('the'); await p.waitForTimeout(400); await shot('06-home-search');
-  await p.getByPlaceholder('Search titles').fill('');
-  await tab('Bookmarks').click(); await shot('07-bookmarks');
+  await p.goto(url('?lib=2&state=1')); await p.waitForTimeout(600); await shot('05-home');
+  await p.getByLabel('Search filters').click(); await p.getByPlaceholder('Search titles').fill('the'); await p.waitForTimeout(400); await shot('06-home-search');
+  await p.getByPlaceholder('Search titles').fill(''); await p.getByLabel('Search filters').click();
+  await p.getByText('View all').nth(1).click(); await shot('06b-genres-view-all');
+  await tab('New').click(); await p.waitForTimeout(300); await shot('07-newly-added');
+  await p.getByText('Add details').first().click(); await shot('07b-add-details');
+  await p.getByText('‹ Cancel').click();
+  await tab('Bookmarks').click(); await shot('07c-bookmarks');
   await p.getByText('Moon Over the Jade Pavilion').first().click(); await p.waitForTimeout(500); await shot('08-book');
-  await arrow(0).click(); await shot('08b-book-tags');
-  await arrow(0).click(); await arrow(0).click().catch(() => {}); await shot('08c-book-details');
-  await p.getByText('Bookmarked').click(); await shot('08d-book-unbookmarked');
+  await p.getByLabel('3 notes').click(); await shot('08b-notes');
+  await p.getByText('Favourite line').click(); await shot('08c-note-2');
+  await p.getByText('✎  Edit', {exact: true}).last().click(); await shot('08d-note-edit');
+  await p.getByText('Cancel', {exact: true}).click(); await p.getByLabel('Close notes').click();
   await p.getByText('‹ Back').click(); await p.waitForTimeout(200);
   await tab('Library').click(); await p.waitForTimeout(400); await shot('09-library');
-  await tab('Settings').click(); await shot('10-settings-sheet');
-  await p.getByText('Done').click();
-  await p.getByText('Echoes of the Ninth Gate').first().click(); await shot('11-series');
-  await p.getByText('▶  Vol 2').click(); await p.waitForTimeout(200);
-  console.log('opened:', await p.evaluate(() => window.__opened.join(' | ')));
-  await p.getByText('‹ Back').click(); await tab('Home').click(); await shot('12-home-after-reading');
+  await p.getByText('Crane and the Clockmaker').first().click(); await p.getByLabel('Add a note').click(); await shot('10-notes-empty');
+  await p.getByText('Write a note').click(); await shot('10b-note-new');
   await b.close();
 })();
