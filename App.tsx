@@ -7,8 +7,9 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
-import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
+import {HELP, HelpTopic, searchHelp} from './src/help';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {Entry, copyImage, copyText, hasNative, listDir, openBook, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
@@ -36,6 +37,7 @@ type Screen =
   | {kind: 'book'; key: string; from?: From}
   | {kind: 'edit'; key: string; from?: From; viaBook?: boolean}
   | {kind: 'coledit'; id: string | null}
+  | {kind: 'help'; topic?: string}
   | {kind: 'exclude'; lib: string; path: string};
 type From = 'home' | 'bookmarks' | 'library' | 'new';
 /** one book anywhere in any library */
@@ -43,12 +45,21 @@ type Found = {lib: Lib; book: Book; meta: Meta; isNew?: boolean};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre", "t:Tag", "c:Category" or "f:flag"
 type FilterKind = 'g' | 't' | 'c';
 
-async function askPermissions() {
-  for (const p of [READ, WRITE]) {
+const PERMS: {id: string; icon: IconName; label: string; why: string}[] = [
+  {id: READ, icon: 'library', label: 'Read files', why: 'Find the books in your library folders'},
+  {id: WRITE, icon: 'save', label: 'Write files', why: 'Save tags, notes, covers and the backup'},
+];
+/** 0 = not allowed, 1 = this time only, 2 = always */
+async function permStatus(): Promise<{[p: string]: number}> {
+  const r: {[p: string]: number} = {};
+  for (const p of PERMS) {
     try {
-      if (!(await PluginManager.hasPermission(p))) await PluginManager.requestPermission(p, 'InkShelf reads your book folders and saves your tags and descriptions.');
-    } catch (e) {}
+      r[p.id] = Number(await PluginManager.hasPermission(p.id)) || 0;
+    } catch (e) {
+      r[p.id] = 2; // this Supernote doesn't use plugin permissions
+    }
   }
+  return r;
 }
 
 // ---------- small building blocks ----------
@@ -140,11 +151,12 @@ function FilterRow({label, count, state, onPress}: {label: string; count: number
   );
 }
 
-function Header({left, title, onLeft, right}: {left?: string; title: string; onLeft?: () => void; right?: React.ReactNode}) {
+function Header({left, title, onLeft, right, onHelp}: {left?: string; title: string; onLeft?: () => void; right?: React.ReactNode; onHelp?: () => void}) {
   return (
     <View style={st.header}>
       <View style={{minWidth: px(110), flexDirection: 'row'}}>
         {left && onLeft ? <IconBtn bare name="back" label={left} onPress={onLeft} iconSize={px(30)} /> : null}
+        {onHelp ? <IconBtn bare name="help" label="How to use InkShelf" onPress={onHelp} iconSize={px(30)} /> : null}
       </View>
       <Text style={st.headerTitle} numberOfLines={1}>{title}</Text>
       <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
@@ -263,11 +275,33 @@ function InkShelfApp(): React.JSX.Element {
     });
   };
 
+  // ---------- permissions: one card that asks for everything InkShelf needs ----------
+  const [perm, setPerm] = useState<{[p: string]: number}>({});
+  const [permOpen, setPermOpen] = useState(false);
+  const saveWarned = useRef(false);
+  async function allowAll() {
+    for (const p of PERMS) {
+      if ((perm[p.id] || 0) >= 2) continue;
+      try {
+        await PluginManager.requestPermission(p.id, `InkShelf needs this to ${p.why.toLowerCase()}.`);
+      } catch (e) {}
+    }
+    const r = await permStatus();
+    setPerm(r);
+    log('permissions after asking', r);
+    if (Object.values(r).every(v => v >= 1)) {
+      setPermOpen(false);
+      await loadAll();
+    }
+  }
+
   useEffect(() => {
     (async () => {
       log('InkShelf started', hasNative() ? 'native ok' : 'NO NATIVE MODULE');
-      await askPermissions();
-      log('permissions asked');
+      const pr = await permStatus();
+      setPerm(pr);
+      log('permissions', pr);
+      if (Object.values(pr).some(v => v < 1)) setPermOpen(true); // one InkShelf card asks for all of them
       // a fresh install: bring everything back from the backup file, if there is one
       if (!(await isSetUp())) {
         const bk = await readBackup(DEFAULT_BACKUP_DIR);
@@ -637,6 +671,7 @@ function InkShelfApp(): React.JSX.Element {
   // ---------- collections ----------
   const collections = app.collections || STARTER_COLLECTIONS;
   const [colSel, setColSel] = useState<string>('bookmarks');
+  const [helpQ, setHelpQ] = useState('');
   const changeCollections = (f: (c: Coll[]) => Coll[]) => changeApp(a => ({...a, collections: f(a.collections || STARTER_COLLECTIONS)}));
   const factsOf = (f: Found) => ({lib: f.lib, book: f.book, meta: f.meta});
   const toggleIn = (c: Coll, l: Lib, key: string, on: boolean) => {
@@ -659,7 +694,10 @@ function InkShelfApp(): React.JSX.Element {
     setMeta(next);
     setLibData(d => ({...d, [lib.path]: {books, meta: next}}));
     const ok = await saveMeta(lib.path, next);
-    if (!ok) setMessage("Couldn't save to the library folder. Check InkShelf is allowed to write files (Settings › Apps › Plugins).");
+    if (!ok && !saveWarned.current) {
+      saveWarned.current = true;
+      setPermOpen(true); // nothing could be saved anywhere: show the permissions card once
+    }
   }
 
   async function read(path: string) {
@@ -799,7 +837,7 @@ function InkShelfApp(): React.JSX.Element {
       if (!list.length) return null;
       const src = String(list[0]).replace(/^file:\/\//, '');
       // keep a copy in the library, so the cover stays if the screenshot is deleted
-      return (await copyImage(src, `${lib.path}/.inkshelf/covers/own-${Date.now().toString(36)}.png`)) || src;
+      return (await copyImage(src, `${DEFAULT_BACKUP_DIR}/covers/own-${Date.now().toString(36)}.png`)) || src;
     } catch (e) {
       log('cover picker failed', String(e));
       setMessage("Supernote's file picker didn't open. Try again, or put the picture in the SCREENSHOT folder.");
@@ -819,6 +857,9 @@ function InkShelfApp(): React.JSX.Element {
           onClose={() => setShowSettings(false)}
           onLibraries={() => { setShowSettings(false); setScreen({kind: 'libraries'}); }}
           missing={settings.missing}
+          onHelp={() => { setShowSettings(false); setScreen({kind: 'help'}); }}
+          onPerms={async () => { setShowSettings(false); setPerm(await permStatus()); setPermOpen(true); }}
+          permNote={`${Object.values(perm).filter(v => v >= 2).length} of ${PERMS.length} always`}
           onClearSearches={() => changeApp(a => ({...a, searches: []}))}
           onClearHistory={() => changeApp(a => ({...a, recent: []}))}
           counts={{searches: app.searches.length, recent: app.recent.length}}
@@ -828,6 +869,40 @@ function InkShelfApp(): React.JSX.Element {
         <Pressable style={st.toast} onPress={() => setToast(null)} accessibilityLabel="Dismiss">
           <Text style={st.toastText} numberOfLines={3}>{toast}</Text>
         </Pressable>
+      ) : null}
+      {permOpen ? (
+        <View style={st.overlay}>
+          <View style={st.dialog}>
+            <Text style={[st.h2, {marginTop: 0}]}>Let InkShelf use your files</Text>
+            <Text style={[st.para, {fontSize: px(18)}]}>{'Supernote asks once for each of these. Choose "Always allow" so it never asks again.'}</Text>
+            {PERMS.map(p => {
+              const v = perm[p.id] || 0;
+              return (
+                <View key={p.id} style={st.permRow}>
+                  <Icon name={p.icon} size={px(30)} />
+                  <View style={{flex: 1, marginLeft: px(12)}}>
+                    <Text style={st.choiceTitle}>{p.label}</Text>
+                    <Text style={st.small}>{p.why}</Text>
+                  </View>
+                  <View style={[st.permState, v >= 2 && st.btnDark]}>
+                    <Text style={[st.small, {fontWeight: 'bold', color: v >= 2 ? '#ffffff' : BLACK}]}>{v >= 2 ? 'Always' : v === 1 ? 'This time' : 'Not yet'}</Text>
+                  </View>
+                </View>
+              );
+            })}
+            {Object.values(perm).every(v => v >= 2) && Object.keys(perm).length ? (
+              <Btn dark icon="check" label="All allowed" onPress={() => setPermOpen(false)} style={{marginTop: px(14)}} />
+            ) : (
+              <>
+                <Btn dark icon="check" label="Allow all" onPress={allowAll} style={{marginTop: px(14)}} />
+                <Btn small label="Not now" onPress={() => setPermOpen(false)} style={{marginTop: px(10)}} />
+              </>
+            )}
+            {readOnlyLibs.size ? (
+              <Text style={[st.small, {marginTop: px(12)}]}>{"Note: plugins can't write on this SD card, so InkShelf keeps your details on the Supernote itself (and in the backup). Nothing to change."}</Text>
+            ) : null}
+          </View>
+        </View>
       ) : null}
       {message ? (
         <View style={st.overlay}>
@@ -955,7 +1030,7 @@ function InkShelfApp(): React.JSX.Element {
           }
           const err = await pasteIntoNote({
             cover: what === 'details' ? null : coverUri(b),
-            coverOut: `${lib.path}/.inkshelf/paste.png`,
+            coverOut: await pluginFile('paste.png'),
             text: what === 'cover' ? undefined : text,
           });
           if (err) setMessage(err);
@@ -977,11 +1052,47 @@ function InkShelfApp(): React.JSX.Element {
   }
 
 
+  // ----- how to use InkShelf: guides you can search -----
+  if (view.kind === 'help') {
+    const tid = view.topic;
+    const topic = HELP.find(t => t.id === tid);
+    return shell(
+      <>
+        <Header title="How to use InkShelf" left="Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'home'})} />
+        <HelpPage q={helpQ} setQ={setHelpQ} onOpen={t => setScreen({kind: 'help', topic: t.id})} />
+        {topic ? (
+          <ModalCard onOutside={() => setScreen({kind: 'help'})}>
+            <CardHeader title="" onBack={() => setScreen({kind: 'help'})} onClose={() => setScreen({kind: 'help'})} />
+            <ScrollView contentContainerStyle={{padding: px(24)}}>
+              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(16)}}>
+                <View style={st.libIcon}><Icon name={topic.icon as IconName} size={px(32)} /></View>
+                <Text style={[st.h2, {flex: 1, marginTop: 0, marginBottom: 0}]}>{topic.title}</Text>
+              </View>
+              {topic.steps.map((t, i) => (
+                <View key={i} style={st.helpStep}>
+                  <View style={st.helpNum}><Text style={st.helpNumText}>{i + 1}</Text></View>
+                  <Text style={[st.para, {flex: 1, fontSize: px(19), marginBottom: 0}]}>{t}</Text>
+                </View>
+              ))}
+              <Text style={[st.small, {marginTop: px(18)}]}>Related</Text>
+              <View style={st.pillWrap}>
+                {searchHelp(topic.words.split(' ').slice(0, 2).join(' ')).concat(HELP).filter((x, i, a) => x.id !== topic.id && a.indexOf(x) === i).slice(0, 3).map(x => (
+                  <Pill key={x.id} label={x.title} onPress={() => setScreen({kind: 'help', topic: x.id})} />
+                ))}
+              </View>
+            </ScrollView>
+          </ModalCard>
+        ) : null}
+        {taskbar('home')}
+      </>,
+    );
+  }
+
   // ----- home: search, recent searches, recently read, genres -----
   if (view.kind === 'home') {
     return shell(
       <>
-        <Header title="" right={<IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />} />
+        <Header title="" onHelp={() => setScreen({kind: 'help'})} right={<IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />} />
         <View style={st.brand} pointerEvents="none">
           <Icon name="logo" size={px(34)} />
           <Text style={st.brandText}>InkShelf</Text>
@@ -1180,7 +1291,7 @@ function InkShelfApp(): React.JSX.Element {
             const miss = d ? Object.keys(d.meta.missing || {}).length : 0;
             return {
               books: d ? d.books.length : null,
-              line: d ? [`${d.books.length} book${d.books.length === 1 ? '' : 's'}`, n ? `${n} new` : '', miss ? `${miss} missing link${miss === 1 ? '' : 's'}` : ''].filter(Boolean).join('  ·  ') : 'Not read yet',
+              line: d ? [`${d.books.length} book${d.books.length === 1 ? '' : 's'}`, n ? `${n} new` : '', miss ? `${miss} missing link${miss === 1 ? '' : 's'}` : '', readOnlyLibs.has(l.path) ? 'details kept on Supernote' : ''].filter(Boolean).join('  ·  ') : 'Not read yet',
               when: d?.meta.lastScan ? ago(d.meta.lastScan) : '',
               busy: !!scanning[l.path],
             };
@@ -1204,7 +1315,7 @@ function InkShelfApp(): React.JSX.Element {
           backup={{
             dir: settings.backupDir || DEFAULT_BACKUP_DIR,
             when: lastBackup,
-            onNow: async () => say((await backupNow()) ? 'Backed up' : "Couldn't write the backup there. Check InkShelf may write files."),
+            onNow: async () => { if (await backupNow()) say('Backed up'); else setPermOpen(true); },
             onMove: () => setScreen({kind: 'browse', path: '/storage/emulated/0/Document', for: 'backup'}),
             onRestore: async () => {
               const dir = settings.backupDir || DEFAULT_BACKUP_DIR;
@@ -1437,6 +1548,7 @@ function InkShelfApp(): React.JSX.Element {
           {libs.length > 1 && lib ? <Text style={[st.small, {marginTop: -px(2)}]} numberOfLines={1}>{lib.name}</Text> : null}
         </Pressable>
         <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
+          <IconBtn bare name="help" label="How to use InkShelf" onPress={() => setScreen({kind: 'help'})} iconSize={px(30)} />
           <IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />
           <CloseBtn />
         </View>
@@ -2235,8 +2347,11 @@ function RoundBtn({label, note, onPress, children, dim}: {label: string; note?: 
 function MiniIcon({kind, on}: {kind: 'list' | 'grid'; on: boolean}) {
   return <View style={{opacity: on ? 1 : 0.5}}><Icon name={kind} size={px(28)} /></View>;
 }
-function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts}: {
+function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote}: {
   missing?: Settings['missing'];
+  onHelp: () => void;
+  onPerms: () => void;
+  permNote: string;
   settings: Settings;
   change: (p: Partial<Settings>) => void;
   onClose: () => void;
@@ -2289,6 +2404,15 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <RoundBtn label="Clear history" note={`${counts.recent} recent`} onPress={onClearHistory} dim={!counts.recent}>
             <Icon name="clock" size={px(30)} />
           </RoundBtn>
+        </View>
+        <View style={{flexDirection: 'row', marginTop: px(14)}}>
+          <RoundBtn label="How to use" onPress={onHelp}>
+            <Icon name="help" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Permissions" note={permNote} onPress={onPerms}>
+            <Icon name="save" size={px(30)} />
+          </RoundBtn>
+          <View style={{flex: 1}} />
         </View>
 
         <Btn dark icon="check" a11y="Done" onPress={onClose} style={{marginTop: px(20)}} />
@@ -2701,6 +2825,46 @@ function ExcludePage({lib, path, onGo, setExclude, onDone}: {lib: Lib; path: str
       </View>
       <View style={[st.pad, {paddingTop: 0}]}>
         <Btn dark icon="check" label="Done" onPress={onDone} />
+      </View>
+    </>
+  );
+}
+
+
+// ---------- how to use: search the guides ----------
+function HelpPage({q, setQ, onOpen}: {q: string; setQ: (q: string) => void; onOpen: (t: HelpTopic) => void}) {
+  const [pg, setPg] = useState(0);
+  const found = searchHelp(q);
+  const rowH = px(86);
+  const per = Math.max(3, Math.floor((H - px(64) - px(84) - px(64) - TASK_H - px(10)) / rowH));
+  const pages = Math.max(1, Math.ceil(found.length / per));
+  const p = Math.min(pg, pages - 1);
+  return (
+    <>
+      <View style={[st.pad, {paddingBottom: px(6)}]}>
+        <View style={st.helpSearch}>
+          <Icon name="search" size={px(26)} />
+          <TextInput style={st.helpInput} value={q} onChangeText={t => { setQ(t); setPg(0); }} placeholder="Search the guides, e.g. cover, backup, series" />
+          {q ? <IconBtn bare name="close" label="Clear search" onPress={() => setQ('')} size={px(40)} /> : null}
+        </View>
+      </View>
+      <View style={{flex: 1, paddingHorizontal: px(16)}}>
+        {!found.length ? <Text style={st.para}>{`Nothing about "${q}". Try another word.`}</Text> : null}
+        {found.slice(p * per, (p + 1) * per).map(t => (
+          <Pressable key={t.id} style={[st.row, {height: rowH, alignItems: 'center'}]} onPress={() => onOpen(t)} accessibilityLabel={t.title}>
+            <View style={st.libIcon}><Icon name={t.icon as IconName} size={px(30)} /></View>
+            <View style={{flex: 1}}>
+              <Text style={st.rowTitle} numberOfLines={1}>{t.title}</Text>
+              <Text style={st.small} numberOfLines={2}>{t.steps[0]}</Text>
+            </View>
+            <Icon name="forward" size={px(24)} />
+          </Pressable>
+        ))}
+      </View>
+      <View style={st.pager}>
+        <IconBtn name="back" label="Previous page" disabled={p <= 0} onPress={() => setPg(p - 1)} />
+        <Text style={st.pageText}>{q ? `${found.length} found  ·  ${p + 1} / ${pages}` : `${p + 1} / ${pages}`}</Text>
+        <IconBtn name="forward" label="Next page" disabled={p >= pages - 1} onPress={() => setPg(p + 1)} />
       </View>
     </>
   );
@@ -3751,6 +3915,13 @@ const st = StyleSheet.create({
   ruleRow: {flexDirection: 'row', alignItems: 'center', marginBottom: px(8)},
   ruleBit: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(10), height: px(46), paddingHorizontal: px(10), marginRight: px(6)},
   ruleText: {fontSize: px(17), fontWeight: 'bold', color: BLACK, marginRight: px(4), flexShrink: 1},
+  permRow: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(12), padding: px(12), marginTop: px(10)},
+  permState: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), paddingHorizontal: px(10), paddingVertical: px(4), marginLeft: px(8)},
+  helpSearch: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(28), height: px(56), paddingHorizontal: px(16)},
+  helpInput: {flex: 1, fontSize: px(19), color: BLACK, marginLeft: px(10)},
+  helpStep: {flexDirection: 'row', alignItems: 'flex-start', marginBottom: px(16)},
+  helpNum: {width: px(34), height: px(34), borderRadius: px(17), backgroundColor: BLACK, alignItems: 'center', justifyContent: 'center', marginRight: px(14), marginTop: px(2)},
+  helpNumText: {color: '#ffffff', fontWeight: 'bold', fontSize: px(17)},
   cardWrap: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.28)', paddingHorizontal: CARD_X, paddingVertical: CARD_Y},
   pageCard: {flex: 1, backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: BLACK, borderRadius: px(20), overflow: 'hidden'},
   screen: {flex: 1, backgroundColor: '#ffffff'},

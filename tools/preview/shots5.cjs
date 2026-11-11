@@ -1,0 +1,26 @@
+const {chromium} = require('playwright');
+const path = require('path');
+const dir = __dirname, out = path.join(dir, 'shots5');
+require('fs').mkdirSync(out, {recursive: true});
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const shot = async n => { await p.waitForTimeout(400); await p.screenshot({path: path.join(out, n + '.png')}); console.log('shot', n); };
+  const url = q => 'file://' + path.join(dir, 'index.html') + q;
+  const L = s => p.getByLabel(s, {exact: true}).first();
+  const tab = name => p.getByRole('button', {name, exact: true}).last();
+  await p.goto(url('?lib=2&state=1&perm=1&ro=1')); await p.waitForTimeout(900); await shot('01-permissions-card');
+  await p.getByText('Allow all').click(); await p.waitForTimeout(600); await shot('02-after-allow');
+  await L('How to use InkShelf').click(); await shot('03-help');
+  await p.getByPlaceholder('Search the guides, e.g. cover, backup, series').fill('cover'); await shot('04-help-search-cover');
+  await L('Edit details and the cover').click(); await shot('05-help-topic');
+  await p.mouse.click(8, 450); await p.waitForTimeout(300);
+  await p.getByPlaceholder('Search the guides, e.g. cover, backup, series').fill('reinstall backup'); await shot('06-help-search-backup');
+  await tab('Settings').click(); await shot('07-settings');
+  await p.getByText('Permissions').click(); await shot('08-perm-from-settings');
+  await p.getByText('All allowed').click();
+  await tab('Library').click(); await p.waitForTimeout(800); await shot('09-library-header');
+  await L('Data and storage').click(); await shot('10-data-readonly');
+  await b.close();
+})();

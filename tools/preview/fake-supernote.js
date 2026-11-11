@@ -61,7 +61,7 @@ window.__opened = [];
 NativeModules.InkShelf = {
   listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})),
   readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
-  writeText: async (path, text) => { files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
+  writeText: async (path, text) => { if (new URLSearchParams(location.search).get('ro') && path.startsWith(SD)) return false; files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),
   // the same card reported under several paths (what showed up as "10 SD cards")
   storageRoots: async () => (new URLSearchParams(location.search).get('nosd') ? {roots: [], how: 'none'} : {roots: [
@@ -77,7 +77,7 @@ if (new URLSearchParams(location.search).get('lib')) {
 
 export const PluginManager = {
   init() {}, registerButton() {}, closePluginView: async () => { window.__closed = 1; return true; },
-  hasPermission: async () => true, requestPermission: async () => 2, getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
+  hasPermission: async p => (window.__perm?.[p] ?? (new URLSearchParams(location.search).get('perm') ? 0 : 2)), requestPermission: async p => { window.__perm = {...(window.__perm || {}), [p]: 2}; return 2; }, getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
 };
 export const FileUtils = {exists: async () => true, getExternalDirPath: async () => ['/storage/emulated/0', SD]};
 // ?state=1: the reader added two books since InkShelf last looked (they show as NEW)

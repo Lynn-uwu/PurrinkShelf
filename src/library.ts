@@ -157,6 +157,7 @@ export type MetaStore = {
   series?: {[dir: string]: boolean}; // folder -> one book (true) or never combine (false)
   groups?: {[id: string]: {title: string; files: string[]}}; // books combined by hand
   missing?: {[key: string]: number}; // books whose file disappeared (since when)
+  savedAt?: number;
 };
 
 // ---------- names ----------
@@ -470,22 +471,36 @@ export function arrange(root: string, raw: Book[], meta: MetaStore): Book[] {
 // ---------- saved details, kept inside the library folder (and a copy with InkShelf) ----------
 const copyPath = async (root: string) => `${await pluginDir()}/libraries/${hash(root)}.json`;
 
+/** libraries whose folder plugins can't write to (often an SD card): details live with InkShelf instead */
+export const readOnlyLibs = new Set<string>();
+
 export async function loadMeta(root: string): Promise<MetaStore> {
   const t = await readText(`${root}/${DATA_DIR}/library.json`);
+  let own: MetaStore | null = null;
   try {
     const m = t ? JSON.parse(t) : null;
-    if (m && m.books) return m;
+    if (m && m.books) own = m;
   } catch (e) {}
-  // the library's own copy is gone (card swapped, folder wiped): use InkShelf's copy
+  // InkShelf's own copy wins when it is newer (the folder can be read-only, or the card was swapped)
   const c = await loadCache(root);
-  return c?.meta || {version: 1, books: {}};
+  if (c?.meta && (!own || (c.meta.savedAt || 0) > (own.savedAt || 0))) return c.meta;
+  return own || {version: 1, books: {}};
 }
 
+/** Saves to the library folder when allowed, and always to InkShelf's own copy. False only if neither worked. */
 export async function saveMeta(root: string, meta: MetaStore, books?: Book[]): Promise<boolean> {
-  const ok = await writeText(`${root}/${DATA_DIR}/library.json`, JSON.stringify(meta, null, 1));
+  const m = {...meta, savedAt: Date.now()};
+  const inFolder = await writeText(`${root}/${DATA_DIR}/library.json`, JSON.stringify(m, null, 1));
+  if (inFolder) readOnlyLibs.delete(root);
+  else readOnlyLibs.add(root);
   const old = books ? null : await loadCache(root);
-  await writeText(await copyPath(root), JSON.stringify({root, at: Date.now(), meta, books: books || old?.books || []}));
-  return ok;
+  const inCopy = await writeText(await copyPath(root), JSON.stringify({root, at: Date.now(), meta: m, books: books || old?.books || []}));
+  return inFolder || inCopy;
+}
+
+/** a file kept with the plugin (covers found in EPUBs, the picture pasted into notes) */
+export async function pluginFile(name: string): Promise<string> {
+  return `${await pluginDir()}/${name}`;
 }
 
 /** what InkShelf saw last time, so a library opens at once and refreshes quietly */
@@ -511,7 +526,8 @@ export async function coverFor(root: string, b: Book, meta: Meta | undefined, ca
   if (b.key in cache) return cache[b.key];
   let p: string | null = null;
   if (b.ext === 'epub') {
-    p = await extractEpubCover(b.files[0], `${root}/${DATA_DIR}/covers/${hash(b.key)}.img`);
+    // kept with InkShelf (the library folder may be read-only)
+    p = await extractEpubCover(b.files[0], await pluginFile(`covers/${hash(root)}/${hash(b.key)}.img`));
   }
   cache[b.key] = p;
   return p;

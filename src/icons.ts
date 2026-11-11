@@ -23,6 +23,7 @@ export const ICONS = {
   'grid': require('../assets/icons/grid.png'),
   'heart': require('../assets/icons/heart.png'),
   'heart-on': require('../assets/icons/heart-on.png'),
+  'help': require('../assets/icons/help.png'),
   'hide': require('../assets/icons/hide.png'),
   'home': require('../assets/icons/home.png'),
   'image': require('../assets/icons/image.png'),
