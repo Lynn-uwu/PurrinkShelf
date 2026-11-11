@@ -4,7 +4,7 @@ await esbuild.build({
   entryPoints: ['entry.jsx'], bundle: true, outfile: 'bundle.js',
   loader: {'.jpg': 'dataurl', '.png': 'dataurl', '.js': 'jsx'},
   resolveExtensions: ['.web.js', '.tsx', '.ts', '.jsx', '.js', '.json'],
-  define: {'process.env.NODE_ENV': '"production"', __DEV__: 'false'},
+  define: {'process.env.NODE_ENV': '"production"', __DEV__: 'false', global: 'globalThis'},
   plugins: [{name: 'alias', setup(b) {
     const map = {
       'react-native': P + '/node_modules/react-native-web/dist/index.js',
