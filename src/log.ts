@@ -1,7 +1,7 @@
 // A small trouble log the user can find and send: Document/InkShelf-log.txt on the Supernote.
 import {NativeModules} from 'react-native';
 
-export const LOG_PATH = '/storage/emulated/0/Document/InkShelf-log.txt';
+export const LOG_PATH = '/storage/emulated/0/Document/InkShelf/InkShelf-log.txt';
 const N: any = NativeModules.InkShelf;
 const recent: string[] = [];
 

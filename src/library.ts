@@ -2,7 +2,7 @@
 import {PluginManager} from 'sn-plugin-lib';
 import {extractEpubCover, listDir, readText, writeText} from './native';
 
-export type Lib = {name: string; path: string};
+export type Lib = {name: string; path: string; exclude?: string[]}; // exclude: folders/files inside it to leave out
 export type Vol = {n: number; label: string; path: string};
 export type Book = {
   key: string; // stable id inside the library (relative path or series id)
@@ -30,11 +30,97 @@ export type Meta = {
   translated?: 'Yes' | 'No';
   notes?: Note[];
   categories?: string[]; // when set, replaces the categories taken from folder names
+  fav?: boolean;
+  reading?: Reading; // your reading status, with dates
   seen?: string[]; // files (inside the library) this book was last found as, to reconnect it
 };
+// ---------- reading status (like review states: each change is dated) ----------
+export type ReadState = 'plan' | 'reading' | 'completed' | 'rereading' | 'hold' | 'dropped';
+export const READ_STATES: {id: ReadState; label: string}[] = [
+  {id: 'plan', label: 'Plan to read'},
+  {id: 'reading', label: 'Reading'},
+  {id: 'completed', label: 'Completed'},
+  {id: 'rereading', label: 'Rereading'},
+  {id: 'hold', label: 'On hold'},
+  {id: 'dropped', label: 'Dropped'},
+];
+export type Reading = {state: ReadState; at: number; history: {state: ReadState; at: number}[]};
+export const readLabel = (s?: ReadState) => READ_STATES.find(x => x.id === s)?.label || 'No status';
+export function setReading(r: Reading | undefined, state: ReadState | null): Reading | undefined {
+  if (!state) return undefined;
+  const at = Date.now();
+  return {state, at, history: [...(r?.history || []), {state, at}].slice(-40)};
+}
+/** how many times a book was finished */
+export const timesRead = (r?: Reading) => (r?.history || []).filter(h => h.state === 'completed').length;
+
+// ---------- collections: hand-picked books, plus books that match rules ----------
+export type RuleField = 'genre' | 'tag' | 'category' | 'status' | 'language' | 'fav' | 'library' | 'title';
+export type Rule = {field: RuleField; op: 'has' | 'not'; value: string};
+export type Collection = {
+  id: string;
+  name: string;
+  rules: Rule[];
+  match: 'all' | 'any';
+  add: string[]; // "lib|key" added by hand
+  remove: string[]; // "lib|key" taken out by hand (even if the rules match)
+};
+export const RULE_FIELDS: {id: RuleField; label: string}[] = [
+  {id: 'status', label: 'Reading status'},
+  {id: 'fav', label: 'Favourite'},
+  {id: 'genre', label: 'Genre'},
+  {id: 'tag', label: 'Tag'},
+  {id: 'category', label: 'Category'},
+  {id: 'language', label: 'Language'},
+  {id: 'library', label: 'Library'},
+  {id: 'title', label: 'Title has'},
+];
+/** the collections everyone starts with (they can be changed or removed) */
+export const STARTER_COLLECTIONS: Collection[] = [
+  {id: 'fav', name: 'Favourites', rules: [{field: 'fav', op: 'has', value: 'Yes'}], match: 'all', add: [], remove: []},
+  {id: 'reading', name: 'In progress', rules: [{field: 'status', op: 'has', value: 'Reading'}, {field: 'status', op: 'has', value: 'Rereading'}], match: 'any', add: [], remove: []},
+  {id: 'completed', name: 'Completed', rules: [{field: 'status', op: 'has', value: 'Completed'}], match: 'all', add: [], remove: []},
+];
+export const COLLECTION_TEMPLATES: Collection[] = [
+  ...STARTER_COLLECTIONS,
+  {id: 'plan', name: 'Plan to read', rules: [{field: 'status', op: 'has', value: 'Plan to read'}], match: 'all', add: [], remove: []},
+  {id: 'reread', name: 'Rereading', rules: [{field: 'status', op: 'has', value: 'Rereading'}], match: 'all', add: [], remove: []},
+  {id: 'hold', name: 'On hold', rules: [{field: 'status', op: 'has', value: 'On hold'}], match: 'all', add: [], remove: []},
+];
+export type BookFacts = {lib: Lib; book: Book; meta: Meta};
+function valuesOf(f: RuleField, x: BookFacts): string[] {
+  const m = x.meta;
+  if (f === 'genre') return m.genres || [];
+  if (f === 'tag') return m.tags || [];
+  if (f === 'category') return catsOf(x.book, m);
+  if (f === 'status') return [readLabel(m.reading?.state)];
+  if (f === 'language') return m.language ? [m.language] : [];
+  if (f === 'fav') return [m.fav ? 'Yes' : 'No'];
+  if (f === 'library') return [x.lib.name];
+  return [m.title || x.book.fileTitle];
+}
+export function inCollection(c: Collection, x: BookFacts): boolean {
+  const id = `${x.lib.path}|${x.book.key}`;
+  if (c.remove.includes(id)) return false;
+  if (c.add.includes(id)) return true;
+  if (!c.rules.length) return false;
+  const test = (r: Rule) => {
+    const vals = valuesOf(r.field, x).map(v => v.toLowerCase());
+    const v = r.value.toLowerCase();
+    const hit = r.field === 'title' ? vals.some(t => t.includes(v)) : vals.includes(v);
+    return r.op === 'has' ? hit : !hit;
+  };
+  // "not" rules always have to hold; "has" rules follow match all / any
+  const nots = c.rules.filter(r => r.op === 'not');
+  const has = c.rules.filter(r => r.op === 'has');
+  if (!nots.every(test)) return false;
+  if (!has.length) return true;
+  return c.match === 'all' ? has.every(test) : has.some(test);
+}
+
 /** anything worth keeping when the file disappears */
 export const hasDetails = (m?: Meta) =>
-  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length);
+  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading);
 /** still waiting for a genre/tag or a summary */
 export const needsDetails = (m: Meta) => !(m.genres?.length || m.tags?.length) || !m.description;
 export type Settings = {
@@ -60,7 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 /** a book remembered outside its library (recently read, bookmarks) */
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
-export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {
   version: 1;
@@ -266,10 +352,14 @@ const extOf = (n: string) => (n.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
 // "Title Vol 2 (Ch 35-66)", "Title - Volume 02", "Title Part 3", "Title Book 1"
 const VOL_RE = /^(.*?)[\s._-]*\b(?:vol(?:ume)?|part|book|tome)\.?[\s._-]*0*(\d+)\b(.*)$/i;
 
-export async function scanLibrary(root: string): Promise<Book[]> {
+/** never shown as books: InkShelf's own files (its log, its backup folder) */
+export const isOwnFile = (path: string) => /(^|\/)inkshelf[- ]?log[^/]*$/i.test(path) || /\/Document\/InkShelf(\/|$)/i.test(path);
+
+export async function scanLibrary(root: string, exclude: string[] = []): Promise<Book[]> {
   const books: Book[] = [];
+  const skip = new Set(exclude);
   const walk = async (dir: string, rel: string, depth: number) => {
-    const entries = await listDir(dir);
+    const entries = (await listDir(dir)).filter(e => !isOwnFile(e.path) && !skip.has(rel ? `${rel}/${e.name}` : e.name));
     const files = entries.filter(e => !e.isDir && BOOK_EXT.includes(extOf(e.name)));
     const mt = (path: string) => entries.find(e => e.path === path)?.mtime || 0;
     // group volumes of the same title in this folder

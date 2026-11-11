@@ -6,6 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
+import {Collection, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
@@ -33,7 +34,9 @@ type Screen =
   | {kind: 'pickroot'; file: string}
   | {kind: 'library'}
   | {kind: 'book'; key: string; from?: From}
-  | {kind: 'edit'; key: string; from?: From};
+  | {kind: 'edit'; key: string; from?: From; viaBook?: boolean}
+  | {kind: 'coledit'; id: string | null}
+  | {kind: 'exclude'; lib: string; path: string};
 type From = 'home' | 'bookmarks' | 'library' | 'new';
 /** one book anywhere in any library */
 type Found = {lib: Lib; book: Book; meta: Meta; isNew?: boolean};
@@ -394,7 +397,7 @@ function InkShelfApp(): React.JSX.Element {
     setScanning(x => ({...x, [l.path]: true}));
     lastScanAt.current[l.path] = Date.now();
     try {
-      const [raw, m0] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+      const [raw, m0] = await Promise.all([scanLibrary(l.path, l.exclude), loadMeta(l.path)]);
       if (!raw.length && !(await listDir(l.path)).length) {
         // the folder isn't there (card out?): keep everything as it was
         log('library offline', l.path);
@@ -444,9 +447,13 @@ function InkShelfApp(): React.JSX.Element {
       await scanLib(l);
     }
   }
+  const metaRef = useRef(meta);
+  metaRef.current = meta;
   const markSeen = (b: Book) => {
-    if (!lib || !meta.newKeys?.includes(b.key)) return;
-    const m = {...meta, newKeys: meta.newKeys.filter(k => k !== b.key)};
+    const cur = metaRef.current;
+    if (!lib || !cur.newKeys?.includes(b.key)) return;
+    const m = {...cur, newKeys: cur.newKeys.filter(k => k !== b.key)};
+    metaRef.current = m;
     setMeta(m);
     setLibData(d => ({...d, [lib.path]: {books, meta: m}}));
     saveMeta(lib.path, m);
@@ -602,6 +609,9 @@ function InkShelfApp(): React.JSX.Element {
   };
   async function readBook(b: Book, path: string) {
     markSeen(b);
+    // opening a book you haven't started marks it Reading (with today's date)
+    const r = metaOf(b).reading;
+    if (!r || r.state === 'plan') await updateMeta(b.key, {reading: setReading(r, 'reading')});
     if (lib) {
       const v = b.vols.find(x => x.path === path);
       const s1 = snap(b, {vol: v?.n});
@@ -624,6 +634,18 @@ function InkShelfApp(): React.JSX.Element {
     if (l) openLibrary(l);
     else setScreen({kind: 'libraries'});
   }
+  // ---------- collections ----------
+  const collections = app.collections || STARTER_COLLECTIONS;
+  const [colSel, setColSel] = useState<string>('bookmarks');
+  const changeCollections = (f: (c: Collection[]) => Collection[]) => changeApp(a => ({...a, collections: f(a.collections || STARTER_COLLECTIONS)}));
+  const factsOf = (f: Found) => ({lib: f.lib, book: f.book, meta: f.meta});
+  const toggleIn = (c: Collection, l: Lib, key: string, on: boolean) => {
+    const id = `${l.path}|${key}`;
+    changeCollections(list => list.map(x => x.id !== c.id ? x : on
+      ? {...x, add: [...x.add.filter(y => y !== id), id], remove: x.remove.filter(y => y !== id)}
+      : {...x, add: x.add.filter(y => y !== id), remove: [...x.remove.filter(y => y !== id), id]}));
+  };
+
   const rememberSearch = (q: string) => {
     const t = q.trim();
     if (t) changeApp(a => ({...a, searches: [t, ...a.searches.filter(x => x.toLowerCase() !== t.toLowerCase())].slice(0, 6)}));
@@ -631,8 +653,11 @@ function InkShelfApp(): React.JSX.Element {
 
   async function updateMeta(key: string, patch: Meta) {
     if (!lib) return;
-    const next: MetaStore = {...meta, books: {...meta.books, [key]: {...meta.books[key], ...patch}}};
+    const cur = metaRef.current;
+    const next: MetaStore = {...cur, books: {...cur.books, [key]: {...cur.books[key], ...patch}}};
+    metaRef.current = next;
     setMeta(next);
+    setLibData(d => ({...d, [lib.path]: {books, meta: next}}));
     const ok = await saveMeta(lib.path, next);
     if (!ok) setMessage("Couldn't save to the library folder. Check InkShelf is allowed to write files (Settings › Apps › Plugins).");
   }
@@ -685,6 +710,9 @@ function InkShelfApp(): React.JSX.Element {
     f.push(readKeys[b.key] ? 'f:started' : 'f:unread');
     if (lib && app.bookmarks.some(x => x.lib === lib.path && x.key === b.key)) f.push('f:bookmarked');
     if (m.notes?.length) f.push('f:notes');
+    if (m.fav) f.push('f:fav');
+    if (m.reading?.state === 'reading' || m.reading?.state === 'rereading') f.push('f:inprogress');
+    if (timesRead(m.reading) > 0) f.push('f:finished');
     if (meta.newKeys?.includes(b.key)) f.push('f:new');
     if (/(^|[^n])complete/i.test(m.status || '')) f.push('f:completed');
     if (m.translated === 'Yes') f.push('f:translated');
@@ -783,6 +811,7 @@ function InkShelfApp(): React.JSX.Element {
   const shell = (body: React.ReactNode) => (
     <View style={st.screen}>
       {body}
+      {card}
       {showSettings && (
         <SettingsSheet
           settings={settings}
@@ -795,7 +824,7 @@ function InkShelfApp(): React.JSX.Element {
           counts={{searches: app.searches.length, recent: app.recent.length}}
         />
       )}
-      {toast && !message && !sheet && !showSettings ? (
+      {toast && !message && !sheet && !showSettings && !card ? (
         <Pressable style={st.toast} onPress={() => setToast(null)} accessibilityLabel="Dismiss">
           <Text style={st.toastText} numberOfLines={3}>{toast}</Text>
         </Pressable>
@@ -843,227 +872,21 @@ function InkShelfApp(): React.JSX.Element {
       });
   };
 
-  // ----- home: search, recent searches, recently read, genres -----
-  if (screen.kind === 'home') {
-    return shell(
-      <>
-        <Header title="" right={<IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />} />
-        <View style={st.brand} pointerEvents="none">
-          <Icon name="logo" size={px(34)} />
-          <Text style={st.brandText}>InkShelf</Text>
-        </View>
-        <Home
-          libs={libs}
-          index={index}
-          ready={indexReady}
-          recent={recentFound()}
-          genres={genreCards()}
-          searches={app.searches}
-          paging={settings.paging}
-          grid={isGrid('search')}
-          setGrid={setGridFor('search')}
-          cover={xCover}
-          wantCovers={wantCovers}
-          onSearched={rememberSearch}
-          onForgetSearch={q => changeApp(a => ({...a, searches: q ? a.searches.filter(x => x !== q) : []}))}
-          onOpen={x => goBook(x, 'home')}
-          onFound={f => goBook(snapOf(f), 'home')}
-          onGenre={goGenre}
-          onViewAll={what => setScreen({kind: 'gallery', what})}
-          onLibrary={l => openLibrary(l)}
-          onAddLibrary={addLibrary}
-        />
-        {taskbar('home')}
-      </>,
-    );
-  }
-
-  // ----- "view all" pages for Home rows -----
-  if (screen.kind === 'gallery') {
-    const items =
-      screen.what === 'recent'
-        ? recentFound().map(r => ({key: r.x.lib + r.x.key, title: r.x.title, sub: r.x.vol ? `Vol ${r.x.vol}` : r.x.libName, cover: r.x.cover, f: r.f, onPress: () => goBook(r.x, 'home')}))
-        : genreCards().map(g => ({key: g.name, title: g.name, sub: `${g.count} book${g.count === 1 ? '' : 's'}`, cover: g.f ? xCover(g.f) : null, f: g.f, onPress: () => goGenre(g.name)}));
-    return shell(
-      <>
-        <Header title={screen.what === 'recent' ? 'Recently read' : 'Explore by genre'} left="Home" onLeft={() => setScreen({kind: 'home'})} />
-        <Gallery items={items} label={screen.what === 'recent' ? `${items.length} book${items.length === 1 ? '' : 's'}` : `${items.length} genres`} paging={settings.paging} grid={isGrid('gallery')} setGrid={setGridFor('gallery')} wantCovers={wantCovers} />
-        {taskbar('home')}
-      </>,
-    );
-  }
-
-  // ----- newly added: books still waiting for a genre/tag or a summary -----
-  if (screen.kind === 'new') {
-    return shell(
-      <>
-        <Header title="Newly added" right={libs.length ? <IconBtn bare name="refresh" label="Refresh all libraries" onPress={() => refreshAll()} iconSize={px(28)} style={{marginRight: px(4)}} /> : null} />
-        <NewList onAllSeen={markAllSeen} items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
-        {taskbar('new')}
-      </>,
-    );
-  }
-
-  // ----- bookmarks -----
-  if (screen.kind === 'bookmarks') {
-    return shell(
-      <>
-        <Header title="My Bookmarks" />
-        <SnapList
-          items={app.bookmarks}
-          libs={libs}
-          paging={settings.paging}
-          grid={isGrid('bookmarks')}
-          setGrid={setGridFor('bookmarks')}
-          empty="No bookmarks yet. Open a book and tap Bookmark to keep it here."
-          onOpen={x => goBook(x, 'bookmarks')}
-          onRemove={x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))}))}
-        />
-        {taskbar('bookmarks')}
-      </>,
-    );
-  }
-
-  // ----- data and storage (Mihon-style): libraries, refresh, remove, missing books -----
-  if (screen.kind === 'libraries') {
-    const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
-    const allMissing = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key]})) : []; });
-    return shell(
-      <>
-        <Header title="Data and storage" left="Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'home'})} />
-        <DataPage
-          libs={libs}
-          info={l => {
-            const d = dataOf(l);
-            const n = d?.meta.newKeys?.length || 0;
-            const miss = d ? Object.keys(d.meta.missing || {}).length : 0;
-            return {
-              books: d ? d.books.length : null,
-              line: d ? [`${d.books.length} book${d.books.length === 1 ? '' : 's'}`, n ? `${n} new` : '', miss ? `${miss} missing link${miss === 1 ? '' : 's'}` : ''].filter(Boolean).join('  ·  ') : 'Not read yet',
-              when: d?.meta.lastScan ? ago(d.meta.lastScan) : '',
-              busy: !!scanning[l.path],
-            };
-          }}
-          missing={settings.missing}
-          setMissing={v => changeSettings({missing: v})}
-          missingCount={allMissing.length}
-          onOpen={l => openLibrary(l)}
-          onRefresh={l => (l ? refreshAll(l) : refreshAll())}
-          onRemove={async l => {
-            const n = libs.filter(x => x.path !== l.path);
-            setLibs(n);
-            await saveLibraries(n);
-            if (lib?.path === l.path) { setLib(null); setBooks([]); }
-            say(`Removed ${l.name}. Your books and details are still in the folder.`);
-          }}
-          onAdd={addLibrary}
-          onPicker={addFromBook}
-          onMissing={() => setScreen({kind: 'missing'})}
-          backup={{
-            dir: settings.backupDir || DEFAULT_BACKUP_DIR,
-            when: lastBackup,
-            onNow: async () => say((await backupNow()) ? 'Backed up' : "Couldn't write the backup there. Check InkShelf may write files."),
-            onMove: () => setScreen({kind: 'browse', path: '/storage/emulated/0/Document', for: 'backup'}),
-            onRestore: async () => {
-              const dir = settings.backupDir || DEFAULT_BACKUP_DIR;
-              if (await readBackup(dir)) await restoreFromFolder(dir);
-              else setScreen({kind: 'browse', path: null, for: 'restore'});
-            },
-          }}
-        />
-      </>,
-    );
-  }
-
-  // ----- books whose files are gone, but whose details are kept -----
-  if (screen.kind === 'missing') {
-    const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
-    const items = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key] || {}})) : []; });
-    const forget = async (list: {l: Lib; b: Book}[]) => {
-      for (const l of libs) {
-        const keys = list.filter(x => x.l.path === l.path).map(x => x.b.key);
-        if (!keys.length) continue;
-        const d = dataOf(l);
-        if (!d) continue;
-        const m: MetaStore = {...d.meta, books: {...d.meta.books}, missing: {...(d.meta.missing || {})}};
-        keys.forEach(k => { delete m.books[k]; delete m.missing![k]; });
-        await saveMeta(l.path, m, d.books);
-        setLibData(x => ({...x, [l.path]: {books: d.books, meta: m}}));
-        if (l.path === lib?.path) setMeta(m);
-      }
-    };
-    return shell(
-      <>
-        <Header title="Missing links" left="Data and storage" onLeft={() => setScreen({kind: 'libraries'})} />
-        <MissingList items={items} paging={settings.paging} onForget={x => forget([x])} onForgetAll={() => forget(items)} onOpen={x => { if (lib?.path === x.l.path) setScreen({kind: 'book', key: x.b.key, from: 'library'}); else openLibrary(x.l, {kind: 'book', key: x.b.key, from: 'library'}); }} />
-      </>,
-    );
-  }
-
-  // ----- folder browser -----
-  if (screen.kind === 'browse') {
-    return shell(
-      <FolderBrowser
-        path={screen.path}
-        onGo={p => setScreen({kind: 'browse', path: p, for: screen.for})}
-        onCancel={() => setScreen(libs.length || screen.for ? {kind: 'libraries'} : {kind: 'home'})}
-        title={screen.for === 'backup' ? 'Where to keep the backup' : screen.for === 'restore' ? 'Folder with the backup' : undefined}
-        onPick={
-          screen.for === 'backup'
-            ? p => {
-                changeSettings({backupDir: p});
-                say(`The backup is now kept in ${p.replace('/storage/emulated/0/', '')}`);
-                setScreen({kind: 'libraries'});
-              }
-            : screen.for === 'restore'
-              ? async p => { if (await restoreFromFolder(p)) setScreen({kind: 'libraries'}); }
-              : useFolder
-        }
-        onBookPicker={screen.for ? undefined : addFromBook}
-        knownRoots={knownRoots}
-      />,
-    );
-  }
-
-  // ----- after picking a book: which folder above it is the library? -----
-  if (screen.kind === 'pickroot') {
-    const parts = screen.file.split('/');
-    const base = screen.file.startsWith('/storage/emulated/0/') ? 4 : 3; // stop at the storage root
-    const folders: string[] = [];
-    for (let i = parts.length - 1; i >= base; i--) folders.unshift(parts.slice(0, i).join('/'));
-    const rootLabel = base === 4 ? 'Supernote' : 'SD card';
-    return shell(
-      <>
-        <Header title="Which folder is the library?" left="Cancel" onLeft={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})} />
-        <View style={[st.pad, {flex: 1}]}>
-          <Text style={[st.para, {fontSize: px(18)}]}>{'Tap the folder that holds all the books for this library. Its subfolders become filters.'}</Text>
-          {folders.map((f, i) => (
-            <Pressable key={f} onPress={() => useFolder(f)} style={[st.folderRow, {paddingLeft: px(10) + i * px(22), flexDirection: 'row', alignItems: 'center'}]}>
-              <Icon name="folder-plus" size={px(26)} />
-              <View style={{flex: 1, marginLeft: px(12)}}>
-                <Text style={st.folderName} numberOfLines={1}>{i === 0 ? `${rootLabel}  ›  ${f.split('/').pop()}` : f.split('/').pop()}</Text>
-              </View>
-              <Icon name="check" size={px(24)} />
-            </Pressable>
-          ))}
-          <Text style={[st.small, {marginTop: px(14)}]} numberOfLines={2}>{`You picked: ${parts[parts.length - 1]}`}</Text>
-          <Btn small icon="library" label="Browse folders instead" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(18)}} />
-        </View>
-      </>,
-    );
-  }
-
-  // ----- book page -----
+  // ----- book page and edit page: a card over the page you came from (tap outside to close) -----
+  let card: React.ReactNode = null;
+  let view: Screen = screen;
   if (screen.kind === 'book' || screen.kind === 'edit') {
+    view = {kind: screen.from || 'library'} as Screen;
+    const close = () => setScreen(view);
     const b = shelf.find(x => x.key === screen.key);
     if (!b || !lib) {
-      return shell(
-        <>
-          <Header title="" left="Back" onLeft={() => setScreen({kind: 'library'})} />
+      card = (
+        <ModalCard onOutside={close}>
+          <CardHeader title="" onBack={close} onClose={close} />
           <Text style={[st.para, st.pad]}>{lib && scanning[lib.path] && !books.length ? 'Looking for books…' : 'This book is no longer in the folder.'}</Text>
-        </>,
+        </ModalCard>
       );
-    }
+    } else {
     const splitBook = (x: Book) =>
       regroup(lib, m => {
         if (x.series === 'group') {
@@ -1073,8 +896,9 @@ function InkShelfApp(): React.JSX.Element {
         }
         return {...m, series: {...(m.series || {}), [x.dir]: false}};
       }).then(() => { say(`Split "${titleOf(x)}" back into ${x.files.length} books`); setScreen({kind: 'library'}); });
+    const backFromEdit = () => setScreen(screen.kind === 'edit' && screen.viaBook ? {kind: 'book', key: b.key, from: screen.from} : view);
     if (screen.kind === 'edit') {
-      return shell(
+      card = (
         <EditPage
           book={b}
           meta={metaOf(b)}
@@ -1084,14 +908,14 @@ function InkShelfApp(): React.JSX.Element {
           cover={coverUri(b)}
           onPickCover={pickCover}
           onSplit={b.series ? () => splitBook(b) : undefined}
-          onCancel={() => setScreen(screen.from === 'new' ? {kind: 'new'} : {kind: 'book', key: b.key})}
+          onCancel={backFromEdit}
           onSave={async m => {
             await updateMeta(b.key, m);
-            setScreen(screen.from === 'new' ? {kind: 'new'} : {kind: 'book', key: b.key});
+            backFromEdit();
           }}
-        />,
+        />
       );
-    }
+    } else {
     scheduleCovers([b]);
     const goFilter = (k: FilterKind, v: string) => {
       if (k === 'c') { setCat(v); setTags({}); }
@@ -1099,7 +923,9 @@ function InkShelfApp(): React.JSX.Element {
       setPage(1);
       setScreen({kind: 'library'});
     };
-    return shell(
+    const mb = metaOf(b);
+    card = (
+      <ModalCard onOutside={close}>
       <BookPage
         key={b.key}
         book={b}
@@ -1135,10 +961,338 @@ function InkShelfApp(): React.JSX.Element {
           if (err) setMessage(err);
         }}
         onMark={() => toggleMark(b)}
-        onEdit={() => setScreen({kind: 'edit', key: b.key})}
-        onBack={() => setScreen({kind: screen.from || 'library'})}
+        onEdit={() => setScreen({kind: 'edit', key: b.key, from: screen.from, viaBook: true})}
+        onBack={close}
         onFilter={goFilter}
+        onFav={() => updateMeta(b.key, {fav: mb.fav ? undefined : true})}
+        onReading={st2 => updateMeta(b.key, {reading: setReading(mb.reading, st2)})}
+        collections={collections.map(c => ({c, on: inCollection(c, {lib, book: b, meta: mb})}))}
+        onCollection={(c, on) => toggleIn(c, lib, b.key, on)}
+        onNewCollection={() => setScreen({kind: 'coledit', id: null})}
+      />
+      </ModalCard>
+    );
+    }
+    }
+  }
+
+
+  // ----- home: search, recent searches, recently read, genres -----
+  if (view.kind === 'home') {
+    return shell(
+      <>
+        <Header title="" right={<IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />} />
+        <View style={st.brand} pointerEvents="none">
+          <Icon name="logo" size={px(34)} />
+          <Text style={st.brandText}>InkShelf</Text>
+        </View>
+        <Home
+          libs={libs}
+          index={index}
+          ready={indexReady}
+          recent={recentFound()}
+          genres={genreCards()}
+          searches={app.searches}
+          paging={settings.paging}
+          grid={isGrid('search')}
+          setGrid={setGridFor('search')}
+          cover={xCover}
+          wantCovers={wantCovers}
+          onSearched={rememberSearch}
+          onForgetSearch={q => changeApp(a => ({...a, searches: q ? a.searches.filter(x => x !== q) : []}))}
+          onOpen={x => goBook(x, 'home')}
+          onFound={f => goBook(snapOf(f), 'home')}
+          onGenre={goGenre}
+          onViewAll={what => setScreen({kind: 'gallery', what})}
+          onLibrary={l => openLibrary(l)}
+          onAddLibrary={addLibrary}
+        />
+        {taskbar('home')}
+      </>,
+    );
+  }
+
+  // ----- "view all" pages for Home rows -----
+  if (view.kind === 'gallery') {
+    const items =
+      view.what === 'recent'
+        ? recentFound().map(r => ({key: r.x.lib + r.x.key, title: r.x.title, sub: r.x.vol ? `Vol ${r.x.vol}` : r.x.libName, cover: r.x.cover, f: r.f, onPress: () => goBook(r.x, 'home')}))
+        : genreCards().map(g => ({key: g.name, title: g.name, sub: `${g.count} book${g.count === 1 ? '' : 's'}`, cover: g.f ? xCover(g.f) : null, f: g.f, onPress: () => goGenre(g.name)}));
+    return shell(
+      <>
+        <Header title={view.what === 'recent' ? 'Recently read' : 'Explore by genre'} left="Home" onLeft={() => setScreen({kind: 'home'})} />
+        <Gallery items={items} label={view.what === 'recent' ? `${items.length} book${items.length === 1 ? '' : 's'}` : `${items.length} genres`} paging={settings.paging} grid={isGrid('gallery')} setGrid={setGridFor('gallery')} wantCovers={wantCovers} />
+        {taskbar('home')}
+      </>,
+    );
+  }
+
+  // ----- newly added: books still waiting for a genre/tag or a summary -----
+  if (view.kind === 'new') {
+    return shell(
+      <>
+        <Header title="Newly added" right={libs.length ? <IconBtn bare name="refresh" label="Refresh all libraries" onPress={() => refreshAll()} iconSize={px(28)} style={{marginRight: px(4)}} /> : null} />
+        <NewList onAllSeen={markAllSeen} items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
+        {taskbar('new')}
+      </>,
+    );
+  }
+
+  // ----- collections: bookmarks, favourites, in progress, completed, and your own -----
+  if (view.kind === 'bookmarks') {
+    const cur = collections.find(c => c.id === colSel);
+    const members = cur ? index.filter(f => inCollection(cur, factsOf(f))) : [];
+    if (cur) wantCovers(members.slice(0, 12));
+    const chipList = [{id: 'bookmarks', name: 'Bookmarks', n: app.bookmarks.length}, ...collections.map(c => ({id: c.id, name: c.name, n: index.filter(f => inCollection(c, factsOf(f))).length}))];
+    // as tall as the chips need (they wrap onto more lines)
+    let line = 0, lines = 1;
+    for (const c of chipList) {
+      const w = (c.name.length + String(c.n).length + 2) * px(17) * 0.56 + px(34);
+      if (line + w > W - px(24)) { lines++; line = 0; }
+      line += w;
+    }
+    const chipH = lines * px(44) + px(14);
+    return shell(
+      <>
+        <Header
+          title="Collections"
+          right={
+            <>
+              {cur ? <IconBtn bare name="edit" label={`Edit ${cur.name}`} onPress={() => setScreen({kind: 'coledit', id: cur.id})} iconSize={px(26)} style={{marginRight: px(4)}} /> : null}
+              <IconBtn bare name="plus" label="New collection" onPress={() => setScreen({kind: 'coledit', id: null})} iconSize={px(28)} style={{marginRight: px(4)}} />
+            </>
+          }
+        />
+        <View style={[st.colChips, {height: chipH}]}>
+          {chipList.map(c => (
+            <Pill key={c.id} label={`${c.name}  ${c.n}`} active={colSel === c.id || (!cur && c.id === 'bookmarks')} onPress={() => setColSel(c.id)} />
+          ))}
+        </View>
+        {cur ? (
+          <>
+            <Toolbar text={`${members.length} book${members.length === 1 ? '' : 's'}${cur.rules.length ? '  ·  adds books by itself' : ''}`} grid={isGrid('collection')} setGrid={setGridFor('collection')} />
+            <Collection
+              key={cur.id + isGrid('collection')}
+              grid={isGrid('collection')}
+              top={px(64) + chipH + px(60)}
+              paging={settings.paging}
+              empty={cur.rules.length ? 'No books fit this collection yet. Tap the pencil to change its rules, or add books from a book page.' : 'Empty. Add books from a book page (the collections button), or tap the pencil to add rules.'}
+              items={members.map(f => ({
+                key: f.lib.path + f.book.key,
+                title: f.meta.title || f.book.fileTitle,
+                sub: [f.meta.reading ? `${readLabel(f.meta.reading.state)} · ${day(f.meta.reading.at)}` : '', f.book.folder || f.lib.name].filter(Boolean).join('  ·  '),
+                cover: xCover(f),
+                pills: f.meta.genres,
+                onPress: () => goBook(snapOf(f), 'bookmarks'),
+                action: {icon: 'close' as IconName, label: `Take out of ${cur.name}`, onPress: () => toggleIn(cur, f.lib, f.book.key, false)},
+              }))}
+            />
+          </>
+        ) : (
+          <SnapList
+            items={app.bookmarks}
+            libs={libs}
+            paging={settings.paging}
+            grid={isGrid('bookmarks')}
+            setGrid={setGridFor('bookmarks')}
+            top={chipH}
+            empty="No bookmarks yet. Open a book and tap Bookmark to keep it here."
+            onOpen={x => goBook(x, 'bookmarks')}
+            onRemove={x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))}))}
+          />
+        )}
+        {taskbar('bookmarks')}
+      </>,
+    );
+  }
+
+  // ----- make or change a collection: hand-picked books and rules that add books by themselves -----
+  if (view.kind === 'coledit') {
+    const vid = view.id;
+    const existing = vid ? collections.find(c => c.id === vid) : null;
+    const values = (f: RuleField): string[] => {
+      const uniq = (l: string[]) => Array.from(new Set(l.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+      if (f === 'genre') return uniq(index.flatMap(x => x.meta.genres || []));
+      if (f === 'tag') return uniq(index.flatMap(x => x.meta.tags || []));
+      if (f === 'category') return uniq(index.flatMap(x => catsOf(x.book, x.meta)));
+      if (f === 'status') return [...READ_STATES.map(r => r.label), 'No status'];
+      if (f === 'language') return uniq(index.map(x => x.meta.language || ''));
+      if (f === 'fav') return ['Yes', 'No'];
+      if (f === 'library') return libs.map(l => l.name);
+      return [];
+    };
+    const cid = view.id;
+    return shell(
+      <>
+        <CollectionEditor
+          key={cid || 'new'}
+          start={existing || null}
+          values={values}
+          count={c => index.filter(f => inCollection(c, factsOf(f))).length}
+          onCancel={() => setScreen({kind: 'bookmarks'})}
+          onSave={c => {
+            changeCollections(list => (list.some(x => x.id === c.id) ? list.map(x => (x.id === c.id ? c : x)) : [...list, c]));
+            setColSel(c.id);
+            setScreen({kind: 'bookmarks'});
+          }}
+          onDelete={existing ? () => { changeCollections(list => list.filter(x => x.id !== existing.id)); setColSel('bookmarks'); setScreen({kind: 'bookmarks'}); } : undefined}
+        />
+      </>,
+    );
+  }
+
+  // ----- leave folders or files out of a library -----
+  if (view.kind === 'exclude') {
+    const vpath = view.path;
+    const vlib = view.lib;
+    const l = libs.find(x => x.path === vlib);
+    if (l) {
+      const setExclude = async (ex: string[]) => {
+        const n = libs.map(x => (x.path === l.path ? {...x, exclude: ex} : x));
+        setLibs(n);
+        await saveLibraries(n);
+        if (lib?.path === l.path) setLib({...l, exclude: ex});
+      };
+      return shell(
+        <ExcludePage
+          lib={l}
+          path={vpath}
+          onGo={p => setScreen({kind: 'exclude', lib: l.path, path: p})}
+          setExclude={setExclude}
+          onDone={() => { setScreen({kind: 'libraries'}); refreshAll(l); }}
+        />,
+      );
+    }
+  }
+
+  // ----- data and storage (Mihon-style): libraries, refresh, remove, missing books -----
+  if (view.kind === 'libraries') {
+    const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
+    const allMissing = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key]})) : []; });
+    return shell(
+      <>
+        <Header title="Data and storage" left="Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'home'})} />
+        <DataPage
+          libs={libs}
+          info={l => {
+            const d = dataOf(l);
+            const n = d?.meta.newKeys?.length || 0;
+            const miss = d ? Object.keys(d.meta.missing || {}).length : 0;
+            return {
+              books: d ? d.books.length : null,
+              line: d ? [`${d.books.length} book${d.books.length === 1 ? '' : 's'}`, n ? `${n} new` : '', miss ? `${miss} missing link${miss === 1 ? '' : 's'}` : ''].filter(Boolean).join('  ·  ') : 'Not read yet',
+              when: d?.meta.lastScan ? ago(d.meta.lastScan) : '',
+              busy: !!scanning[l.path],
+            };
+          }}
+          missing={settings.missing}
+          setMissing={v => changeSettings({missing: v})}
+          missingCount={allMissing.length}
+          onOpen={l => openLibrary(l)}
+          onRefresh={l => (l ? refreshAll(l) : refreshAll())}
+          onRemove={async l => {
+            const n = libs.filter(x => x.path !== l.path);
+            setLibs(n);
+            await saveLibraries(n);
+            if (lib?.path === l.path) { setLib(null); setBooks([]); }
+            say(`Removed ${l.name}. Your books and details are still in the folder.`);
+          }}
+          onAdd={addLibrary}
+          onPicker={addFromBook}
+          onMissing={() => setScreen({kind: 'missing'})}
+          onExclude={l => setScreen({kind: 'exclude', lib: l.path, path: ''})}
+          backup={{
+            dir: settings.backupDir || DEFAULT_BACKUP_DIR,
+            when: lastBackup,
+            onNow: async () => say((await backupNow()) ? 'Backed up' : "Couldn't write the backup there. Check InkShelf may write files."),
+            onMove: () => setScreen({kind: 'browse', path: '/storage/emulated/0/Document', for: 'backup'}),
+            onRestore: async () => {
+              const dir = settings.backupDir || DEFAULT_BACKUP_DIR;
+              if (await readBackup(dir)) await restoreFromFolder(dir);
+              else setScreen({kind: 'browse', path: null, for: 'restore'});
+            },
+          }}
+        />
+      </>,
+    );
+  }
+
+  // ----- books whose files are gone, but whose details are kept -----
+  if (view.kind === 'missing') {
+    const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
+    const items = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key] || {}})) : []; });
+    const forget = async (list: {l: Lib; b: Book}[]) => {
+      for (const l of libs) {
+        const keys = list.filter(x => x.l.path === l.path).map(x => x.b.key);
+        if (!keys.length) continue;
+        const d = dataOf(l);
+        if (!d) continue;
+        const m: MetaStore = {...d.meta, books: {...d.meta.books}, missing: {...(d.meta.missing || {})}};
+        keys.forEach(k => { delete m.books[k]; delete m.missing![k]; });
+        await saveMeta(l.path, m, d.books);
+        setLibData(x => ({...x, [l.path]: {books: d.books, meta: m}}));
+        if (l.path === lib?.path) setMeta(m);
+      }
+    };
+    return shell(
+      <>
+        <Header title="Missing links" left="Data and storage" onLeft={() => setScreen({kind: 'libraries'})} />
+        <MissingList items={items} paging={settings.paging} onForget={x => forget([x])} onForgetAll={() => forget(items)} onOpen={x => { if (lib?.path === x.l.path) setScreen({kind: 'book', key: x.b.key, from: 'library'}); else openLibrary(x.l, {kind: 'book', key: x.b.key, from: 'library'}); }} />
+      </>,
+    );
+  }
+
+  // ----- folder browser -----
+  if (view.kind === 'browse') {
+    const purpose = view.for;
+    return shell(
+      <FolderBrowser
+        path={view.path}
+        onGo={p => setScreen({kind: 'browse', path: p, for: purpose})}
+        onCancel={() => setScreen(libs.length || purpose ? {kind: 'libraries'} : {kind: 'home'})}
+        title={view.for === 'backup' ? 'Where to keep the backup' : view.for === 'restore' ? 'Folder with the backup' : undefined}
+        onPick={
+          view.for === 'backup'
+            ? p => {
+                changeSettings({backupDir: p});
+                say(`The backup is now kept in ${p.replace('/storage/emulated/0/', '')}`);
+                setScreen({kind: 'libraries'});
+              }
+            : view.for === 'restore'
+              ? async p => { if (await restoreFromFolder(p)) setScreen({kind: 'libraries'}); }
+              : useFolder
+        }
+        onBookPicker={view.for ? undefined : addFromBook}
+        knownRoots={knownRoots}
       />,
+    );
+  }
+
+  // ----- after picking a book: which folder above it is the library? -----
+  if (view.kind === 'pickroot') {
+    const parts = view.file.split('/');
+    const base = view.file.startsWith('/storage/emulated/0/') ? 4 : 3; // stop at the storage root
+    const folders: string[] = [];
+    for (let i = parts.length - 1; i >= base; i--) folders.unshift(parts.slice(0, i).join('/'));
+    const rootLabel = base === 4 ? 'Supernote' : 'SD card';
+    return shell(
+      <>
+        <Header title="Which folder is the library?" left="Cancel" onLeft={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={[st.para, {fontSize: px(18)}]}>{'Tap the folder that holds all the books for this library. Its subfolders become filters.'}</Text>
+          {folders.map((f, i) => (
+            <Pressable key={f} onPress={() => useFolder(f)} style={[st.folderRow, {paddingLeft: px(10) + i * px(22), flexDirection: 'row', alignItems: 'center'}]}>
+              <Icon name="folder-plus" size={px(26)} />
+              <View style={{flex: 1, marginLeft: px(12)}}>
+                <Text style={st.folderName} numberOfLines={1}>{i === 0 ? `${rootLabel}  ›  ${f.split('/').pop()}` : f.split('/').pop()}</Text>
+              </View>
+              <Icon name="check" size={px(24)} />
+            </Pressable>
+          ))}
+          <Text style={[st.small, {marginTop: px(14)}]} numberOfLines={2}>{`You picked: ${parts[parts.length - 1]}`}</Text>
+          <Btn small icon="library" label="Browse folders instead" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(18)}} />
+        </View>
+      </>,
     );
   }
 
@@ -1419,6 +1573,21 @@ function InkShelfApp(): React.JSX.Element {
   );
 }
 
+const day = (t: number) => new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'});
+const dayTime = (t: number) => new Date(t).toLocaleString(undefined, {day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit'});
+/** a small mark for each reading status (shapes, since the screen has no colours) */
+function StatusDot({state, light}: {state?: ReadState; light?: boolean}) {
+  const c = light ? '#ffffff' : BLACK;
+  const base = {width: px(16), height: px(16), borderRadius: px(8), borderWidth: 2, borderColor: c, marginRight: px(8)};
+  if (!state) return <View style={[base, {borderStyle: 'dashed'}]} />;
+  if (state === 'completed') return <View style={[base, {backgroundColor: c}]} />;
+  if (state === 'reading' || state === 'rereading')
+    return <View style={[base, {overflow: 'hidden'}]}><View style={{position: 'absolute', left: 0, top: 0, bottom: 0, width: px(6), backgroundColor: c}} />{state === 'rereading' ? <View style={{position: 'absolute', right: 0, top: 0, bottom: 0, width: px(3), backgroundColor: c}} /> : null}</View>;
+  if (state === 'hold') return <View style={[base, {borderRadius: px(3)}]} />;
+  if (state === 'dropped') return <View style={[base, {alignItems: 'center', justifyContent: 'center'}]}><View style={{width: px(14), height: 2, backgroundColor: c, transform: [{rotate: '45deg'}]}} /></View>;
+  return <View style={base} />;
+}
+
 const ago = (t: number) => {
   const m = Math.round((Date.now() - t) / 60000);
   if (m < 1) return 'just now';
@@ -1523,21 +1692,29 @@ function BookPage(props: {
   onMark: () => void;
   onNotes: (notes: Note[]) => void;
   onPaste: (what: 'cover' | 'details' | 'both' | 'copy') => void;
+  onFav: () => void;
+  onReading: (s: ReadState | null) => void;
+  collections: {c: Collection; on: boolean}[];
+  onCollection: (c: Collection, on: boolean) => void;
+  onNewCollection: () => void;
 }) {
-  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste} = props;
+  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection} = props;
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [lp, setLp] = useState(0);
   const [rp, setRp] = useState(0);
   const scroll = paging === 'scroll';
 
-  const LW = Math.round(W * 0.37);
-  const RW = W - LW;
+  const LW = Math.round(CARD_W * 0.37);
+  const RW = CARD_W - LW;
   const lIn = LW - px(28);
   const rIn = RW - px(32);
-  const titleLines = Math.min(2, wrapWords(title, Math.floor((W - px(32)) / (px(26) * 0.56))).length);
+  const statusW = px(190);
+  const titleLines = Math.min(2, wrapWords(title, Math.floor((CARD_W - px(32) - statusW) / (px(26) * 0.56))).length);
   const titleH = px(14) + titleLines * px(34) + px(10);
-  const colH = H - px(64) - titleH;
+  const colH = CARD_H - px(64) - titleH;
   const pagerH = px(56);
 
   // ----- left: cover, then Genre, Language, Status (arrows turn to Tags, then Details), then the button -----
@@ -1585,6 +1762,11 @@ function BookPage(props: {
   else left.push({h: px(28), sec, node: <Text style={st.small}>None</Text>});
   left.push({h: px(6), sec});
   field('Completely translated', m.translated);
+  if (m.reading) {
+    const n = timesRead(m.reading);
+    const done = [...m.reading.history].reverse().find(h => h.state === 'completed');
+    field('Reading', `${readLabel(m.reading.state)} since ${day(m.reading.at)}` + (done && m.reading.state !== 'completed' ? `. Finished ${day(done.at)}` : '') + (n > 1 ? `. Read ${n} times` : ''));
+  }
   if (b.vols.length > 1) field('Files', `${b.vols.length} parts${b.series === 'group' ? ' (combined by you)' : b.series ? ' (one folder)' : ''}`);
 
   // ----- right: description, then volumes -----
@@ -1692,13 +1874,20 @@ function BookPage(props: {
       <View style={st.header}>
         <IconBtn bare name="back" label="Back" onPress={onBack} iconSize={px(30)} />
         <View style={{flex: 1}} />
+        <IconBtn name={m.fav ? 'heart-on' : 'heart'} label={m.fav ? 'Remove from favourites' : 'Favourite'} dark={!!m.fav} onPress={onFav} style={{marginRight: px(10)}} />
+        <IconBtn name="collections" label="Collections" onPress={() => setColOpen(true)} style={{marginRight: px(10)}} />
         <IconBtn name="paste" label="Paste into note" onPress={() => setPasteOpen(true)} style={{marginRight: px(10)}} />
         <IconBtn name={marked ? 'bookmark-on' : 'bookmark'} label={marked ? 'Remove bookmark' : 'Bookmark'} onPress={onMark} style={{marginRight: px(10)}} />
         <IconBtn name="edit" label="Edit details" onPress={onEdit} style={{marginRight: px(6)}} />
-        <CloseBtn />
+        <IconBtn bare name="close" label="Close page" onPress={onBack} iconSize={px(30)} />
       </View>
-      <View style={{height: titleH, paddingHorizontal: px(16), justifyContent: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
-        <Text style={st.bookTitle} numberOfLines={2}>{title}</Text>
+      <View style={{height: titleH, paddingHorizontal: px(16), flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
+        <Text style={[st.bookTitle, {flex: 1}]} numberOfLines={2}>{title}</Text>
+        <Pressable onPress={() => setStatusOpen(true)} style={[st.statusChip, {maxWidth: statusW}, m.reading && st.btnDark]} accessibilityLabel="Reading status">
+          <StatusDot state={m.reading?.state} light={!!m.reading} />
+          <Text style={[st.statusText, m.reading && {color: '#ffffff'}]} numberOfLines={1}>{readLabel(m.reading?.state)}</Text>
+          <Icon name="down" size={px(20)} color={m.reading ? '#ffffff' : BLACK} />
+        </Pressable>
       </View>
       <View style={{flex: 1, flexDirection: 'row'}}>
         <View style={[st.bookLeft, {width: LW}]}>
@@ -1736,6 +1925,57 @@ function BookPage(props: {
           )}
         </View>
       </View>
+      {statusOpen ? (
+        <View style={st.sheetWrap}>
+          <Pressable style={{flex: 1}} onPress={() => setStatusOpen(false)} accessibilityLabel="Close" />
+          <View style={st.sheet}>
+            <Pressable onPress={() => setStatusOpen(false)} hitSlop={px(12)} style={{alignItems: 'center'}}>
+              <View style={st.handle} />
+              <Text style={st.sheetTitle}>Reading status</Text>
+            </Pressable>
+            <View style={{flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10)}}>
+              {READ_STATES.map(r => {
+                const on = m.reading?.state === r.id;
+                return (
+                  <Pressable key={r.id} onPress={() => { onReading(on ? null : r.id); setStatusOpen(false); }} style={[st.statusPick, on && st.btnDark]} accessibilityLabel={r.label}>
+                    <StatusDot state={r.id} light={on} />
+                    <Text style={[st.statusText, {fontSize: px(19)}, on && {color: '#ffffff'}]}>{r.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {m.reading ? <Btn small icon="close" label="Clear status" onPress={() => { onReading(null); setStatusOpen(false); }} style={{marginTop: px(6)}} /> : null}
+            <Text style={[st.section, {marginTop: px(14)}]}>History</Text>
+            {(m.reading?.history || []).length ? (
+              [...(m.reading?.history || [])].reverse().slice(0, 6).map((h, i) => (
+                <View key={i} style={st.histRow}>
+                  <StatusDot state={h.state} />
+                  <Text style={[st.statusText, {flex: 1}]}>{readLabel(h.state)}</Text>
+                  <Text style={st.small}>{dayTime(h.at)}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={st.small}>{'No changes yet. Opening a book marks it Reading; set Completed when you finish, and the date is kept.'}</Text>
+            )}
+          </View>
+        </View>
+      ) : null}
+      {colOpen ? (
+        <View style={st.sheetWrap}>
+          <Pressable style={{flex: 1}} onPress={() => setColOpen(false)} accessibilityLabel="Close" />
+          <View style={st.sheet}>
+            <Pressable onPress={() => setColOpen(false)} hitSlop={px(12)} style={{alignItems: 'center'}}>
+              <View style={st.handle} />
+              <Text style={st.sheetTitle}>Collections</Text>
+            </Pressable>
+            <Text style={[st.hint, {marginTop: px(8)}]}>Ticked by hand, or automatically when the book fits a collection's rules.</Text>
+            {collections.map(({c, on}) => (
+              <TriRow key={c.id} label={c.name} state={on ? 1 : 0} onPress={() => onCollection(c, !on)} />
+            ))}
+            <Btn small icon="plus" label="New collection" onPress={() => { setColOpen(false); onNewCollection(); }} style={{marginTop: px(12)}} />
+          </View>
+        </View>
+      ) : null}
       {notesOpen ? <NotesSheet title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
       {pasteOpen ? <PasteSheet cover={cover} title={title} onPick={w => { setPasteOpen(false); onPaste(w); }} onClose={() => setPasteOpen(false)} /> : null}
     </>
@@ -1939,7 +2179,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
     {t: 'library', icon: 'library', label: 'Library'},
     {t: 'new', icon: 'new', label: 'Newly added'},
     {t: 'home', icon: 'home', label: 'Home'},
-    {t: 'bookmarks', icon: 'bookmark', label: 'Bookmarks'},
+    {t: 'bookmarks', icon: 'collections', label: 'Collections'},
     {t: 'settings', icon: 'settings', label: 'Settings'},
   ];
   return (
@@ -1949,7 +2189,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
         return (
           <Pressable key={t} onPress={() => onTab(t)} style={st.task} accessibilityRole="button" accessibilityLabel={label}>
             <View style={[st.taskIcon, t === 'home' && st.taskHome, on && st.btnDark]}>
-              <Icon name={on && icon === 'bookmark' ? 'bookmark-on' : icon} size={px(30)} color={on ? '#ffffff' : BLACK} />
+              <Icon name={icon} size={px(30)} color={on ? '#ffffff' : BLACK} />
               {t === 'new' && newCount > 0 ? (
                 <View style={[st.badge, on && {backgroundColor: '#ffffff', borderColor: BLACK}]}>
                   <Text style={[st.badgeText, on && {color: BLACK}]}>{newCount > 99 ? '99+' : newCount}</Text>
@@ -2072,6 +2312,9 @@ const FLAGS: {k: string; label: string}[] = [
   {k: 'f:started', label: 'Started'},
   {k: 'f:bookmarked', label: 'Bookmarked'},
   {k: 'f:new', label: 'New'},
+  {k: 'f:fav', label: 'Favourite'},
+  {k: 'f:inprogress', label: 'In progress'},
+  {k: 'f:finished', label: 'Finished by me'},
   {k: 'f:notes', label: 'Has notes'},
   {k: 'f:completed', label: 'Completed'},
   {k: 'f:translated', label: 'Completely translated'},
@@ -2308,6 +2551,161 @@ function CategorySheet({tree, total, current, onPick, libs, lib, onLib, onClose}
   );
 }
 
+
+// ---------- collection editor ----------
+function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
+  start: Collection | null;
+  values: (f: RuleField) => string[];
+  count: (c: Collection) => number;
+  onSave: (c: Collection) => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const [c, setC] = useState<Collection>(start || {id: Date.now().toString(36), name: '', rules: [], match: 'all', add: [], remove: []});
+  const [pick, setPick] = useState<{title: string; options: string[]; onPick: (v: string) => void; typed?: boolean} | null>(null);
+  const [typed, setTyped] = useState('');
+  const [sure, setSure] = useState(false);
+  const setRule = (i: number, r: Partial<Rule>) => setC({...c, rules: c.rules.map((x, j) => (j === i ? {...x, ...r} : x))});
+  const fieldName = (f: RuleField) => RULE_FIELDS.find(x => x.id === f)?.label || f;
+  const n = count(c);
+  return (
+    <>
+      <Header title={start ? 'Edit collection' : 'New collection'} left="Back" onLeft={onCancel} />
+      <View style={[st.pad, {flex: 1}]}>
+        {!start ? (
+          <>
+            <Text style={st.small}>Start from:</Text>
+            <View style={st.pillWrap}>
+              {COLLECTION_TEMPLATES.map(t => <Pill key={t.id} label={t.name} onPress={() => setC({...t, id: Date.now().toString(36), add: [], remove: []})} />)}
+            </View>
+          </>
+        ) : null}
+        <Text style={st.label}>Name</Text>
+        <TextInput style={st.input} value={c.name} onChangeText={t => setC({...c, name: t})} placeholder="e.g. Cosy reads, To reread, Book club" />
+        <View style={[st.dataHead, {marginTop: px(16)}]}>
+          <Text style={st.dataTitle}>Add books by themselves when</Text>
+        </View>
+        {c.rules.length > 1 ? (
+          <View style={st.modeRow}>
+            <Pill label="all of these fit" active={c.match === 'all'} onPress={() => setC({...c, match: 'all'})} />
+            <Pill label="any of these fits" active={c.match === 'any'} onPress={() => setC({...c, match: 'any'})} />
+          </View>
+        ) : null}
+        {c.rules.map((r, i) => (
+          <View key={i} style={st.ruleRow}>
+            <Pressable style={st.ruleBit} onPress={() => setPick({title: 'Look at', options: RULE_FIELDS.map(x => x.label), onPick: v => setRule(i, {field: RULE_FIELDS.find(x => x.label === v)!.id, value: ''})})} accessibilityLabel="Rule field">
+              <Text style={st.ruleText} numberOfLines={1}>{fieldName(r.field)}</Text>
+              <Icon name="down" size={px(18)} />
+            </Pressable>
+            <Pressable style={[st.ruleBit, r.op === 'not' && st.btnDark]} onPress={() => setRule(i, {op: r.op === 'has' ? 'not' : 'has'})} accessibilityLabel="Include or exclude">
+              <Text style={[st.ruleText, r.op === 'not' && {color: '#ffffff'}]}>{r.field === 'title' ? (r.op === 'has' ? 'has' : "doesn't have") : r.op === 'has' ? 'is' : 'is not'}</Text>
+            </Pressable>
+            <Pressable
+              style={[st.ruleBit, {flex: 1}]}
+              onPress={() => (r.field === 'title' ? setPick({title: 'Words in the title', options: [], typed: true, onPick: v => setRule(i, {value: v})}) : setPick({title: fieldName(r.field), options: values(r.field), typed: r.field !== 'status' && r.field !== 'fav' && r.field !== 'library', onPick: v => setRule(i, {value: v})}))}
+              accessibilityLabel="Rule value">
+              <Text style={[st.ruleText, !r.value && {color: '#888888'}]} numberOfLines={1}>{r.value || 'choose…'}</Text>
+              <Icon name="down" size={px(18)} />
+            </Pressable>
+            <IconBtn name="close" label="Remove rule" onPress={() => setC({...c, rules: c.rules.filter((_, j) => j !== i)})} size={px(40)} style={{marginLeft: px(6)}} />
+          </View>
+        ))}
+        <Btn small icon="plus" label="Add a rule" onPress={() => setC({...c, rules: [...c.rules, {field: 'genre', op: 'has', value: ''}]})} style={{marginTop: px(6)}} />
+        <Text style={[st.small, {marginTop: px(10)}]}>{c.rules.length ? `${n} book${n === 1 ? '' : 's'} in it now${c.add.length ? ` (${c.add.length} added by hand)` : ''}. Rules keep it up to date by themselves.` : 'No rules: only books you add from a book page.'}</Text>
+        <View style={{flex: 1}} />
+        <Btn dark icon="check" label="Save collection" onPress={() => c.name.trim() && onSave({...c, name: c.name.trim(), rules: c.rules.filter(r => r.value)})} style={!c.name.trim() ? st.dim : undefined} />
+        {onDelete ? (
+          sure ? (
+            <View style={{flexDirection: 'row', marginTop: px(10)}}>
+              <Btn small dark icon="trash" label="Delete this collection" onPress={onDelete} style={{flex: 1}} />
+              <IconBtn name="close" label="Keep it" onPress={() => setSure(false)} style={{marginLeft: px(8)}} />
+            </View>
+          ) : (
+            <Btn small icon="trash" label="Delete collection (books stay)" onPress={() => setSure(true)} style={{marginTop: px(10)}} />
+          )
+        ) : null}
+      </View>
+      {pick ? (
+        <View style={st.sheetWrap}>
+          <Pressable style={{flex: 1}} onPress={() => setPick(null)} accessibilityLabel="Close" />
+          <View style={st.sheet}>
+            <Pressable onPress={() => setPick(null)} hitSlop={px(12)} style={{alignItems: 'center'}}>
+              <View style={st.handle} />
+              <Text style={st.sheetTitle}>{pick.title}</Text>
+            </Pressable>
+            {pick.typed ? (
+              <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(10)}}>
+                <TextInput style={[st.input, {flex: 1, marginBottom: 0}]} value={typed} onChangeText={setTyped} placeholder="Type it" />
+                <IconBtn dark name="check" label="Use this" onPress={() => { if (typed.trim()) { pick.onPick(typed.trim()); setTyped(''); setPick(null); } }} style={{marginLeft: px(8)}} />
+              </View>
+            ) : null}
+            <View style={[st.pillWrap, {marginTop: px(10)}]}>
+              {pick.options.slice(0, 40).map(o => <Pill key={o} label={o} onPress={() => { pick.onPick(o); setPick(null); }} />)}
+            </View>
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+// ---------- leave folders or files out of a library ----------
+function ExcludePage({lib, path, onGo, setExclude, onDone}: {lib: Lib; path: string; onGo: (p: string) => void; setExclude: (ex: string[]) => void; onDone: () => void}) {
+  const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [pg, setPg] = useState(0);
+  const ex = lib.exclude || [];
+  useEffect(() => {
+    setPg(0);
+    listDir(path ? `${lib.path}/${path}` : lib.path).then(list =>
+      setEntries(list.filter(e => !e.name.startsWith('.') && (e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt|docx)$/i.test(e.name))).sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name, undefined, {numeric: true}))),
+    );
+  }, [lib.path, path]);
+  const rel = (e: Entry) => (path ? `${path}/${e.name}` : e.name);
+  const hiddenAbove = path.split('/').some((_, i, a) => ex.includes(a.slice(0, i + 1).join('/')));
+  const rowH = px(60);
+  const per = Math.max(4, Math.floor((H - px(64) - px(150) - px(64) - px(80)) / rowH));
+  const list = entries || [];
+  const pages = Math.max(1, Math.ceil(list.length / per));
+  const p = Math.min(pg, pages - 1);
+  return (
+    <>
+      <Header title={`Leave out of ${lib.name}`} left="Back" onLeft={onDone} />
+      <View style={[st.pad, {flex: 1, paddingBottom: 0}]}>
+        <Text style={st.small}>{'Tap the eye to leave a folder or book out (for example a big folder you picked by accident). It stays left out after refreshing, and it is kept in the backup.'}</Text>
+        <View style={[st.crumbBar, {paddingHorizontal: 0}]}>
+          <IconBtn name="up" label="Up one folder" disabled={!path} onPress={() => onGo(path.split('/').slice(0, -1).join('/'))} size={px(42)} />
+          <Text style={[st.small, {flex: 1, marginLeft: px(10), color: BLACK}]} numberOfLines={1}>{[lib.name, ...path.split('/').filter(Boolean)].join('  ›  ')}</Text>
+          {ex.length ? <Btn small icon="eye" label={`Show all ${ex.length}`} onPress={() => setExclude([])} /> : null}
+        </View>
+        {hiddenAbove ? <Text style={[st.small, {marginVertical: px(6)}]}>A folder above this one is left out, so everything here is too.</Text> : null}
+        {entries && !list.length ? <Text style={st.para}>Nothing here.</Text> : null}
+        {list.slice(p * per, (p + 1) * per).map(e => {
+          const off = ex.includes(rel(e));
+          return (
+            <View key={e.path} style={[st.folderRow, {height: rowH, flexDirection: 'row', alignItems: 'center'}, off && {opacity: 0.55}]}>
+              <Pressable style={{flex: 1, flexDirection: 'row', alignItems: 'center'}} onPress={() => (e.isDir ? onGo(rel(e)) : setExclude(off ? ex.filter(x => x !== rel(e)) : [...ex, rel(e)]))} accessibilityLabel={e.isDir ? `Open ${e.name}` : e.name}>
+                <Icon name={e.isDir ? 'folder' : 'new'} size={px(26)} />
+                <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}, off && {textDecorationLine: 'line-through'}]} numberOfLines={1}>{e.name}</Text>
+                {off ? <Text style={[st.small, {marginRight: px(8)}]}>left out</Text> : null}
+                {e.isDir ? <Icon name="forward" size={px(22)} /> : null}
+              </Pressable>
+              <IconBtn name={off ? 'hide' : 'eye'} dark={off} label={off ? `Show ${e.name}` : `Leave out ${e.name}`} onPress={() => setExclude(off ? ex.filter(x => x !== rel(e)) : [...ex, rel(e)])} style={{marginLeft: px(12)}} />
+            </View>
+          );
+        })}
+      </View>
+      <View style={st.pager}>
+        <IconBtn name="back" label="Previous page" disabled={p <= 0} onPress={() => setPg(p - 1)} />
+        <Text style={st.pageText}>{`${p + 1} / ${pages}`}</Text>
+        <IconBtn name="forward" label="Next page" disabled={p >= pages - 1} onPress={() => setPg(p + 1)} />
+      </View>
+      <View style={[st.pad, {paddingTop: 0}]}>
+        <Btn dark icon="check" label="Done" onPress={onDone} />
+      </View>
+    </>
+  );
+}
+
 // ---------- data and storage ----------
 function DataPage(props: {
   libs: Lib[];
@@ -2321,9 +2719,10 @@ function DataPage(props: {
   onAdd: () => void;
   onPicker: () => void;
   onMissing: () => void;
+  onExclude: (l: Lib) => void;
   backup: {dir: string; when: number | null; onNow: () => void; onMove: () => void; onRestore: () => void};
 }) {
-  const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing, backup} = props;
+  const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing, backup, onExclude} = props;
   const [confirm, setConfirm] = useState<string | null>(null);
   const [pg, setPg] = useState(0);
   const per = 2;
@@ -2358,7 +2757,7 @@ function DataPage(props: {
                 <View style={{flex: 1}}>
                   <Text style={st.libName} numberOfLines={1}>{l.name}</Text>
                   <Text style={[st.small, {fontWeight: 'bold'}]} numberOfLines={1}>{i.line}</Text>
-                  <Text style={st.small} numberOfLines={1}>{[where(l.path), i.busy ? 'checking now' : i.when ? `checked ${i.when}` : ''].filter(Boolean).join('  ·  ')}</Text>
+                  <Text style={st.small} numberOfLines={1}>{[where(l.path), l.exclude?.length ? `${l.exclude.length} left out` : '', i.busy ? 'checking now' : i.when ? `checked ${i.when}` : ''].filter(Boolean).join('  ·  ')}</Text>
                 </View>
               </Pressable>
               {sure ? (
@@ -2368,6 +2767,7 @@ function DataPage(props: {
                 </>
               ) : (
                 <>
+                  <IconBtn name="hide" label={`Leave folders out of ${l.name}`} onPress={() => onExclude(l)} style={{marginLeft: px(8)}} />
                   <IconBtn name="refresh" label={`Refresh ${l.name}`} onPress={() => onRefresh(l)} disabled={i.busy} style={{marginLeft: px(8)}} />
                   <IconBtn name="trash" label={`Remove ${l.name}`} onPress={() => setConfirm(l.path)} style={{marginLeft: px(8)}} />
                 </>
@@ -2738,7 +3138,7 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
   );
 }
 
-function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; grid: boolean; setGrid: (g: boolean) => void; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void}) {
+function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove, top = 0}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; grid: boolean; setGrid: (g: boolean) => void; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void; top?: number}) {
   const [which, setWhich] = useState('all');
   const opts = [{id: 'all', label: 'All'}, ...libs.filter(l => items.some(x => x.lib === l.path)).map(l => ({id: l.path, label: l.name}))];
   const shown = items.filter(x => which === 'all' || x.lib === which);
@@ -2750,7 +3150,7 @@ function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove}:
       <Collection
         key={which + grid}
         grid={grid}
-        top={px(64) + (chips ? px(62) : 0) + px(60)}
+        top={px(64) + top + (chips ? px(62) : 0) + px(60)}
         paging={paging}
         empty={empty}
         items={shown.map(x => ({
@@ -3230,9 +3630,25 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
   const [translated, setTranslated] = useState<Meta['translated']>(meta.translated);
   const guess = (book.folder.match(/^(\w+)\s+novels?$/i) || [])[1];
   const langs = Array.from(new Set([guess, 'Chinese', 'Korean', 'Japanese', 'English'].filter(Boolean) as string[])).filter(l => l !== language);
+  const result = (): Meta => ({
+    title: title.trim() && title.trim() !== book.fileTitle ? title.trim() : undefined,
+    genres,
+    tags,
+    description: desc.trim() || undefined,
+    cover: img,
+    language: language.trim() || undefined,
+    status: status.trim() || undefined,
+    translated,
+    categories: JSON.stringify(cats) === JSON.stringify(fromFolders) ? undefined : cats,
+  });
+  const start = useRef(JSON.stringify(result()));
+  const dirty = JSON.stringify(result()) !== start.current;
+  const [ask, setAsk] = useState(false);
+  // leaving with changes: ask whether to keep them
+  const leave = () => (dirty ? setAsk(true) : onCancel());
   return (
-    <>
-      <Header title="Edit details" left="Cancel" onLeft={onCancel} />
+    <ModalCard onOutside={leave}>
+      <CardHeader title="Edit details" onBack={leave} onClose={leave} />
       <ScrollView contentContainerStyle={st.pad} keyboardShouldPersistTaps="handled">
         <Text style={st.label}>Title</Text>
         <TextInput style={st.input} value={title} onChangeText={setTitle} />
@@ -3275,19 +3691,7 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
           dark
           icon="check"
           a11y="Save"
-          onPress={() =>
-            onSave({
-              title: title.trim() && title.trim() !== book.fileTitle ? title.trim() : undefined,
-              genres,
-              tags,
-              description: desc.trim() || undefined,
-              cover: img,
-              language: language.trim() || undefined,
-              status: status.trim() || undefined,
-              translated,
-              categories: JSON.stringify(cats) === JSON.stringify(fromFolders) ? undefined : cats,
-            })
-          }
+          onPress={() => onSave(result())}
           style={{marginTop: px(24)}}
         />
         {onSplit ? (
@@ -3299,11 +3703,56 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
         ) : null}
         <View style={{height: px(200)}} />
       </ScrollView>
-    </>
+      {ask ? (
+        <View style={st.overlay}>
+          <View style={st.dialog}>
+            <Text style={[st.h2, {marginBottom: px(6)}]}>Save your changes?</Text>
+            <Text style={[st.para, {fontSize: px(18)}]}>{`You changed the details of "${title || book.fileTitle}".`}</Text>
+            <Btn dark icon="check" label="Save" onPress={() => onSave(result())} />
+            <Btn icon="trash" label="Discard changes" onPress={onCancel} style={{marginTop: px(10)}} />
+            <Btn small label="Keep editing" onPress={() => setAsk(false)} style={{marginTop: px(10)}} />
+          </View>
+        </View>
+      ) : null}
+    </ModalCard>
+  );
+}
+
+// ---------- a page that opens over the one behind it (tap outside to close) ----------
+const CARD_X = px(26);
+const CARD_Y = px(30);
+const CARD_W = W - CARD_X * 2;
+const CARD_H = H - CARD_Y * 2;
+function ModalCard({onOutside, children}: {onOutside: () => void; children: React.ReactNode}) {
+  return (
+    <View style={st.cardWrap}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onOutside} accessibilityLabel="Outside the page" />
+      <View style={st.pageCard}>{children}</View>
+    </View>
+  );
+}
+function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () => void; onClose: () => void; right?: React.ReactNode}) {
+  return (
+    <View style={st.header}>
+      <IconBtn bare name="back" label="Back" onPress={onBack} iconSize={px(30)} />
+      <Text style={st.headerTitle} numberOfLines={1}>{title}</Text>
+      {right}
+      <IconBtn bare name="close" label="Close page" onPress={onClose} iconSize={px(30)} />
+    </View>
   );
 }
 
 const st = StyleSheet.create({
+  statusChip: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(22), height: px(44), paddingHorizontal: px(12), marginLeft: px(10)},
+  statusText: {fontSize: px(17), fontWeight: 'bold', color: BLACK, flexShrink: 1},
+  statusPick: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(24), height: px(50), paddingHorizontal: px(16), marginRight: px(10), marginBottom: px(10)},
+  histRow: {flexDirection: 'row', alignItems: 'center', height: px(40), borderBottomWidth: 1, borderColor: '#dddddd'},
+  colChips: {flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: px(12), paddingTop: px(10), height: px(120), overflow: 'hidden', borderBottomWidth: 1, borderColor: '#888888'},
+  ruleRow: {flexDirection: 'row', alignItems: 'center', marginBottom: px(8)},
+  ruleBit: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(10), height: px(46), paddingHorizontal: px(10), marginRight: px(6)},
+  ruleText: {fontSize: px(17), fontWeight: 'bold', color: BLACK, marginRight: px(4), flexShrink: 1},
+  cardWrap: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.28)', paddingHorizontal: CARD_X, paddingVertical: CARD_Y},
+  pageCard: {flex: 1, backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: BLACK, borderRadius: px(20), overflow: 'hidden'},
   screen: {flex: 1, backgroundColor: '#ffffff'},
   pad: {padding: px(16)},
   header: {height: px(64), flexDirection: 'row', alignItems: 'center', borderBottomWidth: 2, borderColor: BLACK, paddingHorizontal: px(12)},
