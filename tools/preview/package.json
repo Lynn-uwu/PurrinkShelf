@@ -1,0 +1,7 @@
+{
+  "name": "inkshelf-preview",
+  "private": true,
+  "description": "Renders InkShelf's screens in a browser (react-native-web) with a fake Supernote, for screenshots.",
+  "scripts": {"build": "node build.mjs", "shots": "node build.mjs && node shots.cjs"},
+  "dependencies": {"react": "19.0.0", "react-dom": "19.0.0", "react-native-web": "0.20.0", "esbuild": "0.25.0"}
+}

@@ -60,13 +60,13 @@ function Cover({uri, w, h, title}: {uri?: string | null; w: number; h: number; t
       </View>
     );
   }
-  return <Image source={{uri: uri.startsWith('file://') ? uri : 'file://' + uri}} style={{width: w, height: h}} resizeMode="cover" onError={() => setBad(true)} />;
+  return <Image source={{uri: /^[a-z]+:/i.test(uri) ? uri : 'file://' + uri}} style={{width: w, height: h}} resizeMode="cover" onError={() => setBad(true)} />;
 }
 
 function ViewIcon({kind, on, onPress}: {kind: 'list' | 'grid'; on: boolean; onPress: () => void}) {
   const c = on ? '#ffffff' : BLACK;
   return (
-    <Pressable onPress={onPress} hitSlop={px(6)} style={[st.iconBtn, on && st.btnDark]}>
+    <Pressable onPress={onPress} hitSlop={px(6)} accessibilityRole="button" accessibilityLabel={kind === 'list' ? 'List view' : 'Grid view'} style={[st.iconBtn, on && st.btnDark]}>
       {kind === 'list' ? (
         <View>
           {[0, 1, 2].map(i => (
@@ -337,7 +337,7 @@ export default function App(): React.JSX.Element {
           </View>
           <Btn dark label={b.vols.length ? '▶  Start reading (Vol ' + b.vols[0].n + ')' : '▶  Start reading'} onPress={() => read(b.files[0])} />
           <Btn label="✎  Edit title, tags, description, cover" onPress={() => setScreen({kind: 'edit', key: b.key})} style={{marginTop: px(10)}} />
-          {paras.length ? paras.map((p, i) => <Text key={i} style={st.para}>{p}</Text>) : <Text style={[st.small, {marginTop: px(14)}]}>No description yet. Tap Edit to add one.</Text>}
+          {paras.length ? paras.map((p, i) => <Text key={i} style={[st.para, i === 0 && {marginTop: px(14)}]}>{p}</Text>) : <Text style={[st.small, {marginTop: px(14)}]}>No description yet. Tap Edit to add one.</Text>}
           {b.vols.length > 0 && <Text style={st.h2}>{`${b.vols.length} volumes`}</Text>}
           {b.vols.map(v => (
             <Pressable key={v.path} style={st.vol} onPress={() => read(v.path)}>
@@ -402,8 +402,27 @@ export default function App(): React.JSX.Element {
               {b.vols.length ? <Text style={st.small}>{`  · ${b.vols.length} vols`}</Text> : null}
             </Text>
             <View style={st.pillLine}>
-              {b.folder ? <Pill label={b.folder} /> : null}
-              {(m.tags || []).map(t => <Pill key={t} label={t} active={tags[t] === 1} />)}
+              {(() => {
+                // only whole pills: show what fits on one line, then "+N"
+                const all = [...(b.folder ? [b.folder] : []), ...(m.tags || [])];
+                const room = resW - Math.round((ch * 2) / 3) - px(40);
+                const pw = (t: string) => t.length * px(15) * 0.56 + px(29);
+                const shown: string[] = [];
+                let used = 0;
+                for (let i = 0; i < all.length; i++) {
+                  const more = i < all.length - 1 ? px(48) : 0;
+                  if (used + pw(all[i]) + more > room) break;
+                  shown.push(all[i]);
+                  used += pw(all[i]);
+                }
+                const extra = all.length - shown.length;
+                return (
+                  <>
+                    {shown.map((t, i) => <Pill key={t + i} label={t} active={(i > 0 || !b.folder) && tags[t] === 1} />)}
+                    {extra > 0 ? <Pill label={`+${extra}`} /> : null}
+                  </>
+                );
+              })()}
             </View>
             {m.description ? (
               <Text style={st.teaser} numberOfLines={titleOf(b).length > (showFilters ? 34 : 50) ? 1 : 2}>{m.description.replace(/\s+/g, ' ')}</Text>
