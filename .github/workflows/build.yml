@@ -47,19 +47,18 @@ jobs:
 
       - name: Save the build to the 'builds' branch
         if: github.event_name != 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cp build/outputs/*.snplg /tmp/InkShelf.snplg
+          mkdir -p /tmp/builds && cd /tmp/builds
+          cp "$GITHUB_WORKSPACE"/build/outputs/*.snplg InkShelf.snplg
+          printf "Latest InkShelf build from %s (%s)\n" "${GITHUB_SHA::7}" "$(date -u +%Y-%m-%dT%H:%MZ)" > BUILD.txt
+          git init -q -b builds
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin builds || true
-          git switch --orphan builds-tmp
-          git rm -rf --cached . >/dev/null 2>&1 || true
-          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp /tmp/InkShelf.snplg InkShelf.snplg
-          printf "Latest InkShelf build from %s (%s)\n" "${GITHUB_SHA::7}" "$(date -u +%Y-%m-%dT%H:%MZ)" > BUILD.txt
           git add InkShelf.snplg BUILD.txt
-          git commit -m "Build ${GITHUB_SHA::7}"
-          git push -f origin builds-tmp:builds
+          git commit -q -m "Build ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds:builds
 
       - name: Attach to release
         if: github.event_name == 'release'
