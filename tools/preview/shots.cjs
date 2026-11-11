@@ -16,8 +16,9 @@ require('fs').mkdirSync(out, {recursive: true});
   // first open, adding a library
   await p.goto(url('')); await shot('01-home-first-open');
   await p.getByText('Add your first library').click(); await p.waitForTimeout(300); await shot('02-choose-storage');
-  await p.getByText('SD card', {exact: true}).click(); await p.waitForTimeout(200);
-  await p.getByText('Novels', {exact: true}).click(); await p.waitForTimeout(300); await shot('03-inside-novels');
+  await p.getByLabel('Open SD card').click(); await p.waitForTimeout(200);
+  await shot('02b-inside-sd-card');
+  await p.getByLabel('Open Novels').click(); await p.waitForTimeout(300); await shot('03-inside-novels');
   await p.getByText('Use this folder').click(); await p.waitForTimeout(400); await shot('04-library-list');
 
   // someone who has been using it

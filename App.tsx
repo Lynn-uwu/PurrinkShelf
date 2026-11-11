@@ -362,7 +362,7 @@ function InkShelfApp(): React.JSX.Element {
   async function useFolder(p: string) {
     try {
       log('use folder', p);
-      const name = p.split('/').filter(Boolean).pop() || 'Library';
+      const name = p === '/storage/emulated/0' ? 'Supernote' : /^\/storage\/[^/]+$/.test(p) ? 'SD card' : p.split('/').filter(Boolean).pop() || 'Library';
       const n = [...libs.filter(x => x.path !== p), {name, path: p}];
       setLibs(n);
       await saveLibraries(n);
@@ -2170,12 +2170,16 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker}: {path: stri
         {!path ? (
           <>
             <Text style={st.para}>Where are your books?</Text>
+            <Text style={st.small}>{'Tap ✓ to use a whole place as one library, or open it to choose a folder inside.'}</Text>
             {roots.map(r => (
-              <Pressable key={r.path} style={[st.folderRow, {flexDirection: 'row', alignItems: 'center'}]} onPress={() => onGo(r.path)}>
-                <Icon name="folder" size={px(28)} />
-                <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}]}>{r.label}</Text>
-                <Icon name="forward" size={px(24)} />
-              </Pressable>
+              <View key={r.path} style={[st.folderRow, {flexDirection: 'row', alignItems: 'center'}]}>
+                <Pressable style={{flex: 1, flexDirection: 'row', alignItems: 'center'}} onPress={() => onGo(r.path)} accessibilityLabel={`Open ${r.label}`}>
+                  <Icon name="folder" size={px(28)} />
+                  <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}]}>{r.label}</Text>
+                  <Icon name="forward" size={px(24)} />
+                </Pressable>
+                <IconBtn name="check" label={`Use all of ${r.label}`} dark onPress={() => onPick(r.path)} style={{marginLeft: px(14)}} />
+              </View>
             ))}
             {onBookPicker ? <Btn small icon="search" label="Or pick a book with Supernote's file picker" onPress={onBookPicker} style={{marginTop: px(20)}} /> : null}
           </>
@@ -2191,11 +2195,14 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker}: {path: stri
             {entries && !entries.length ? <Text style={st.para}>This folder is empty.</Text> : null}
             {shown.map(e =>
               e.isDir ? (
-                <Pressable key={e.path} style={[st.folderRow, {flexDirection: 'row', alignItems: 'center'}]} onPress={() => onGo(e.path)}>
-                  <Icon name="folder" size={px(26)} />
-                  <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}]} numberOfLines={1}>{e.name}</Text>
-                  <Icon name="forward" size={px(22)} />
-                </Pressable>
+                <View key={e.path} style={[st.folderRow, {flexDirection: 'row', alignItems: 'center'}]}>
+                  <Pressable style={{flex: 1, flexDirection: 'row', alignItems: 'center'}} onPress={() => onGo(e.path)} accessibilityLabel={`Open ${e.name}`}>
+                    <Icon name="folder" size={px(26)} />
+                    <Text style={[st.folderName, {flex: 1, marginLeft: px(12)}]} numberOfLines={1}>{e.name}</Text>
+                    <Icon name="forward" size={px(22)} />
+                  </Pressable>
+                  <IconBtn name="check" label={`Use ${e.name}`} onPress={() => onPick(e.path)} size={px(42)} style={{marginLeft: px(14)}} />
+                </View>
               ) : (
                 <View key={e.path} style={st.folderRow}>
                   <Text style={[st.small, {fontSize: px(17)}]} numberOfLines={1}>{e.name}</Text>
