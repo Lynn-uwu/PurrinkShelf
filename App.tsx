@@ -6,7 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {Collection, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
+import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
@@ -637,9 +637,9 @@ function InkShelfApp(): React.JSX.Element {
   // ---------- collections ----------
   const collections = app.collections || STARTER_COLLECTIONS;
   const [colSel, setColSel] = useState<string>('bookmarks');
-  const changeCollections = (f: (c: Collection[]) => Collection[]) => changeApp(a => ({...a, collections: f(a.collections || STARTER_COLLECTIONS)}));
+  const changeCollections = (f: (c: Coll[]) => Coll[]) => changeApp(a => ({...a, collections: f(a.collections || STARTER_COLLECTIONS)}));
   const factsOf = (f: Found) => ({lib: f.lib, book: f.book, meta: f.meta});
-  const toggleIn = (c: Collection, l: Lib, key: string, on: boolean) => {
+  const toggleIn = (c: Coll, l: Lib, key: string, on: boolean) => {
     const id = `${l.path}|${key}`;
     changeCollections(list => list.map(x => x.id !== c.id ? x : on
       ? {...x, add: [...x.add.filter(y => y !== id), id], remove: x.remove.filter(y => y !== id)}
@@ -1694,8 +1694,8 @@ function BookPage(props: {
   onPaste: (what: 'cover' | 'details' | 'both' | 'copy') => void;
   onFav: () => void;
   onReading: (s: ReadState | null) => void;
-  collections: {c: Collection; on: boolean}[];
-  onCollection: (c: Collection, on: boolean) => void;
+  collections: {c: Coll; on: boolean}[];
+  onCollection: (c: Coll, on: boolean) => void;
   onNewCollection: () => void;
 }) {
   const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection} = props;
@@ -2554,14 +2554,14 @@ function CategorySheet({tree, total, current, onPick, libs, lib, onLib, onClose}
 
 // ---------- collection editor ----------
 function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
-  start: Collection | null;
+  start: Coll | null;
   values: (f: RuleField) => string[];
-  count: (c: Collection) => number;
-  onSave: (c: Collection) => void;
+  count: (c: Coll) => number;
+  onSave: (c: Coll) => void;
   onCancel: () => void;
   onDelete?: () => void;
 }) {
-  const [c, setC] = useState<Collection>(start || {id: Date.now().toString(36), name: '', rules: [], match: 'all', add: [], remove: []});
+  const [c, setC] = useState<Coll>(start || {id: Date.now().toString(36), name: '', rules: [], match: 'all', add: [], remove: []});
   const [pick, setPick] = useState<{title: string; options: string[]; onPick: (v: string) => void; typed?: boolean} | null>(null);
   const [typed, setTyped] = useState('');
   const [sure, setSure] = useState(false);
