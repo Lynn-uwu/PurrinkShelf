@@ -1,0 +1,49 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build InkShelf.snplg (JavaScript + native opener)
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          bash buildPlugin.sh
+          ls -la build/outputs build/generated
+          unzip -l build/outputs/*.snplg
+          unzip -p build/outputs/*.snplg PluginConfig.json
+
+      - name: Check the native part is inside
+        run: unzip -l build/outputs/*.snplg | grep -q "app.npk" || (echo "native part (app.npk) missing" && exit 1)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InkShelf
+          path: build/outputs/*.snplg
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" build/outputs/*.snplg --clobber
