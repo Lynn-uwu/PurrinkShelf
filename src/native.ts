@@ -54,13 +54,22 @@ export async function openBook(path: string, how: 'reader' | 'explorer' | 'kit' 
     if (how === 'kit') {
       const r: any = await PluginFileAPI.openFile(path, -1);
       if (r && r.success === false) return r.error?.message || 'The reader refused the book.';
+      setTimeout(() => {
+        PluginManager.closePluginView().catch(() => {});
+      }, 600);
     } else {
       if (!N) return 'InkShelf was installed without its native part.';
-      await N.openDocument(path, how);
+      // Close InkShelf first, then open the book. Closing after the book opened left
+      // Supernote thinking InkShelf was still showing, so the next tap was swallowed.
+      await PluginManager.closePluginView().catch(() => {});
+      await new Promise(r => setTimeout(r, 250));
+      try {
+        await N.openDocument(path, how);
+      } catch (e) {
+        PluginManager.showPluginView().catch(() => {}); // come back so the message can be read
+        throw e;
+      }
     }
-    setTimeout(() => {
-      PluginManager.closePluginView().catch(() => {});
-    }, 600);
     return null;
   } catch (e: any) {
     return e?.message || String(e);
