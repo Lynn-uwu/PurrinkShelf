@@ -8,6 +8,7 @@ import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, V
 import {FileUtils, PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, Vol, needsDetails, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
+import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {Entry, copyText, hasNative, listDir, openBook, pasteIntoNote} from './src/native';
 
@@ -143,9 +144,57 @@ function Header({left, title, onLeft, right}: {left?: string; title: string; onL
 const CloseBtn = () => <IconBtn bare name="close" label="Close InkShelf" onPress={() => PluginManager.closePluginView()} iconSize={px(30)} />;
 
 // ---------- the app ----------
+installGlobalHandler();
+
+/** Shows what went wrong instead of letting InkShelf close, so it can be reported. */
+class Guard extends React.Component<{children: React.ReactNode}, {err: {message: string; stack?: string} | null}> {
+  state = {err: null as {message: string; stack?: string} | null};
+  componentDidMount() {
+    setErrorScreen(err => this.setState({err}));
+  }
+  static getDerivedStateFromError(e: any) {
+    return {err: {message: `Screen: ${e?.message || String(e)}`, stack: e?.stack}};
+  }
+  componentDidCatch(e: any) {
+    log('ERROR', 'Screen:', e?.message || String(e), e?.stack || '');
+  }
+  render() {
+    const err = this.state.err;
+    if (!err) return this.props.children;
+    return (
+      <View style={[st.screen, {padding: px(24)}]}>
+        <Text style={st.h2}>Something went wrong</Text>
+        <Text style={[st.para, {fontSize: px(18)}]}>{'InkShelf stopped this instead of closing. A photo of this screen helps fix it.'}</Text>
+        <View style={{borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), padding: px(12), marginVertical: px(12)}}>
+          <Text style={{fontSize: px(17), fontWeight: 'bold', color: BLACK}}>{err.message}</Text>
+          <Text style={{fontSize: px(12), color: '#333333', marginTop: px(6)}} numberOfLines={10}>{err.stack || ''}</Text>
+        </View>
+        <Text style={st.small}>{'Last steps:'}</Text>
+        <Text style={{fontSize: px(12), color: '#333333'}} numberOfLines={12}>{recentLog().slice(-12).join('\n')}</Text>
+        <Text style={[st.small, {marginTop: px(10)}]}>{`Full log: ${LOG_PATH.replace('/storage/emulated/0/', '')}`}</Text>
+        <View style={{flexDirection: 'row', marginTop: px(16)}}>
+          <Btn dark icon="home" label="Back to Home" onPress={() => this.setState({err: null})} style={{flex: 1, marginRight: px(10)}} />
+          <Btn icon="close" a11y="Close InkShelf" onPress={() => PluginManager.closePluginView()} />
+        </View>
+      </View>
+    );
+  }
+}
+
 export default function App(): React.JSX.Element {
+  return (
+    <Guard>
+      <InkShelfApp />
+    </Guard>
+  );
+}
+
+function InkShelfApp(): React.JSX.Element {
   const [screen, setScreen] = useState<Screen>({kind: 'home'});
   const [app, setApp] = useState<AppState>(EMPTY_STATE);
+  useEffect(() => {
+    log('screen', screen.kind, (screen as any).path || (screen as any).key || '');
+  }, [screen]);
   const [showSettings, setShowSettings] = useState(false);
   const [libs, setLibs] = useState<Lib[]>([]);
   const [lib, setLib] = useState<Lib | null>(null);
@@ -193,7 +242,9 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     (async () => {
+      log('InkShelf started', hasNative() ? 'native ok' : 'NO NATIVE MODULE');
       await askPermissions();
+      log('permissions asked');
       loadSettings().then(setSettings);
       loadState().then(setApp);
       const l = await loadLibraries();
@@ -208,6 +259,7 @@ export default function App(): React.JSX.Element {
   const titleOf = (b: Book) => metaOf(b).title || b.fileTitle;
 
   async function openLibrary(l: Lib, then?: Screen, filter?: TagState) {
+    log('open library', l.path);
     setBusy(`Reading ${l.name}…`);
     setLib(l);
     coverCache.current = {};
@@ -216,6 +268,7 @@ export default function App(): React.JSX.Element {
     setTags({});
     setPage(1);
     const [bs, m] = await Promise.all([scanLibrary(l.path), loadMeta(l.path)]);
+    log('library read', bs.length, 'books,', Object.keys(m.books).length, 'with details');
     setBooks(bs);
     setMeta(m);
     setLibData(d => ({...d, [l.path]: {books: bs, meta: m}}));
@@ -348,7 +401,9 @@ export default function App(): React.JSX.Element {
 
   async function read(path: string) {
     setBusy('Opening…');
+    log('open book', path);
     const err = await openBook(path, 'reader');
+    log('open book result', err || 'ok');
     setBusy(null);
     if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
   }
@@ -579,11 +634,17 @@ export default function App(): React.JSX.Element {
         onGo={p => setScreen({kind: 'browse', path: p})}
         onCancel={() => setScreen(libs.length ? {kind: 'libraries'} : {kind: 'home'})}
         onPick={async p => {
-          const name = p.split('/').filter(Boolean).pop() || 'Library';
-          const n = [...libs.filter(x => x.path !== p), {name, path: p}];
-          setLibs(n);
-          await saveLibraries(n);
-          openLibrary({name, path: p});
+          try {
+            log('use folder', p);
+            const name = p.split('/').filter(Boolean).pop() || 'Library';
+            const n = [...libs.filter(x => x.path !== p), {name, path: p}];
+            setLibs(n);
+            await saveLibraries(n);
+            log('saved libraries', n.length);
+            await openLibrary({name, path: p});
+          } catch (e) {
+            reportError(e, 'Adding the library');
+          }
         }}
       />,
     );
@@ -1948,13 +2009,18 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
     setPg(1);
     (async () => {
       if (path) {
+        log('list folder', path);
         setEntries((await listDir(path)).filter(e => e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt|docx)$/i.test(e.name)));
       } else {
         const r = [{label: 'Supernote (internal storage)', path: '/storage/emulated/0'}];
         try {
-          const ext: string[] = (await FileUtils.getExternalDirPath()) || [];
+          const raw: any = await FileUtils.getExternalDirPath();
+          log('storage roots', raw);
+          const ext: string[] = (Array.isArray(raw) ? raw : raw?.result ?? (raw ? [raw] : [])).map((x: any) => String(x));
           ext.filter(p => !p.startsWith('/storage/emulated')).forEach((p, i) => r.push({label: `SD card${ext.length > 2 ? ' ' + (i + 1) : ''}`, path: p.replace(/\/+$/, '')}));
-        } catch (e) {}
+        } catch (e) {
+          log('storage roots failed', e);
+        }
         setRoots(r);
       }
     })();

@@ -74,7 +74,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
             intent.action = Intent.ACTION_VIEW
             launch(intent)
             promise.resolve(true)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "openDocument failed", e)
             promise.reject("OPEN_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)
         }
@@ -103,7 +103,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                     arr.pushMap(m)
                 }
             promise.resolve(arr)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             promise.reject("LIST_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
@@ -113,7 +113,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
         try {
             val f = File(path)
             promise.resolve(if (f.exists()) f.readText(Charsets.UTF_8) else null)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             promise.reject("READ_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
@@ -134,7 +134,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                 tmp.delete()
             }
             promise.resolve(true)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             promise.reject("WRITE_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
@@ -184,9 +184,23 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                 zip.getInputStream(img).use { input -> out.outputStream().use { input.copyTo(it) } }
                 promise.resolve(out.absolutePath)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "extractEpubCover failed for $epubPath", e)
             promise.resolve(null)
+        }
+    }
+
+    /** Add a line to a text file (InkShelf's trouble log). */
+    @ReactMethod
+    fun appendText(path: String, text: String, promise: Promise) {
+        try {
+            val f = File(path)
+            f.parentFile?.mkdirs()
+            if (f.exists() && f.length() > 200_000) f.writeText(f.readText().takeLast(100_000))
+            f.appendText(text, Charsets.UTF_8)
+            promise.resolve(true)
+        } catch (e: Throwable) {
+            promise.resolve(false)
         }
     }
 
@@ -197,7 +211,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
             val cm = reactApplicationContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("InkShelf", text))
             promise.resolve(true)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             promise.reject("COPY_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
@@ -222,7 +236,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
             f.parentFile?.mkdirs()
             f.outputStream().use { out.compress(Bitmap.CompressFormat.PNG, 100, it) }
             promise.resolve(f.absolutePath)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "prepareImage failed for $src", e)
             promise.resolve(null)
         }
