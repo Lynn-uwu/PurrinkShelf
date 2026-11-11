@@ -1,6 +1,6 @@
 // Thin wrapper around InkShelf's native module (android/app/src/main/java/com/inkshelf).
 import {NativeModules} from 'react-native';
-import {PluginFileAPI, PluginManager} from 'sn-plugin-lib';
+import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
 
 export type Entry = {name: string; path: string; isDir: boolean; size: number; mtime?: number};
 
@@ -61,6 +61,66 @@ export async function openBook(path: string, how: 'reader' | 'explorer' | 'kit' 
     setTimeout(() => {
       PluginManager.closePluginView().catch(() => {});
     }, 600);
+    return null;
+  } catch (e: any) {
+    return e?.message || String(e);
+  }
+}
+
+export async function copyText(text: string): Promise<boolean> {
+  if (!N) return false;
+  try {
+    return !!(await N.copyText(text));
+  } catch (e) {
+    return false;
+  }
+}
+
+const ok = (r: any) => r && r.success !== false;
+
+/** Is InkShelf open on top of a note (so we can paste into it)? */
+export async function currentNote(): Promise<string | null> {
+  try {
+    const r: any = await PluginCommAPI.getCurrentFilePath();
+    const p = r?.result ?? r;
+    return typeof p === 'string' && /\.note$/i.test(p) ? p : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Paste a book into the note InkShelf was opened from: its cover and/or a text box.
+ * Returns null when it worked, or what went wrong.
+ */
+export async function pasteIntoNote(opts: {cover?: string | null; coverOut: string; text?: string}): Promise<string | null> {
+  if (!(await currentNote())) return 'Open InkShelf from a note (the toolbar inside a note) to paste into it. The text is on the clipboard instead.';
+  try {
+    if (opts.cover && N) {
+      const png = await N.prepareImage(opts.cover, opts.coverOut, 600);
+      if (!png) return "Couldn't read this book's cover.";
+      const r: any = await PluginNoteAPI.insertImage(png);
+      if (!ok(r)) return r?.error?.message || "The note didn't take the picture.";
+    }
+    if (opts.text) {
+      let w = 1404;
+      try {
+        const s: any = await PluginCommAPI.getPageDisplaySize();
+        w = s?.result?.width || s?.width || w;
+      } catch (e) {}
+      const lines = opts.text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 48)), 0);
+      const r: any = await PluginNoteAPI.insertText({
+        textContentFull: opts.text,
+        textRect: {left: Math.round(w * 0.08), top: 180, right: Math.round(w * 0.92), bottom: 180 + Math.min(1500, lines * 52 + 40)},
+        fontSize: 32,
+        textAlign: 0,
+        textBold: 0,
+        textItalics: 0,
+        textFrameWidthType: 0,
+      });
+      if (!ok(r)) return r?.error?.message || "The note didn't take the text.";
+    }
+    setTimeout(() => PluginManager.closePluginView().catch(() => {}), 300);
     return null;
   } catch (e: any) {
     return e?.message || String(e);

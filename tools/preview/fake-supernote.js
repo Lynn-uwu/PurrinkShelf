@@ -56,6 +56,8 @@ NativeModules.InkShelf = {
   readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? JSON.stringify(meta) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
   writeText: async (path, text) => { files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),
+  copyText: async t => ((window.__copied = t), true),
+  prepareImage: async (src, out) => out,
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },
 };
 if (new URLSearchParams(location.search).get('lib')) {
@@ -67,6 +69,15 @@ export const PluginManager = {
   hasPermission: async () => true, requestPermission: async () => 2, getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
 };
 export const FileUtils = {exists: async () => true, getExternalDirPath: async () => ['/storage/emulated/0', SD]};
+window.__pasted = [];
+export const PluginCommAPI = {
+  getCurrentFilePath: async () => ({success: true, result: '/storage/emulated/0/Note/Book reviews.note'}),
+  getPageDisplaySize: async () => ({success: true, result: {width: 1404, height: 1872}}),
+};
+export const PluginNoteAPI = {
+  insertImage: async p => (window.__pasted.push('image:' + p), {success: true, result: true}),
+  insertText: async t => (window.__pasted.push('text:' + t.textContentFull.split('\n')[0]), {success: true, result: true}),
+};
 export const PluginFileAPI = {openFile: async () => ({success: true, result: true})};
 export const RattaFileSelector = {selectImage: async () => null};
 

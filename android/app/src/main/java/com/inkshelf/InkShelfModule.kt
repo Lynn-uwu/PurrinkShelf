@@ -1,7 +1,12 @@
 package com.inkshelf
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -181,6 +186,44 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
             }
         } catch (e: Exception) {
             Log.w(TAG, "extractEpubCover failed for $epubPath", e)
+            promise.resolve(null)
+        }
+    }
+
+    /** Put text on the Android clipboard. */
+    @ReactMethod
+    fun copyText(text: String, promise: Promise) {
+        try {
+            val cm = reactApplicationContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("InkShelf", text))
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("COPY_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Turn any cover image into a PNG no bigger than maxSide pixels,
+     * because notes only accept png/jpg files with the right name.
+     */
+    @ReactMethod
+    fun prepareImage(src: String, outPath: String, maxSide: Int, promise: Promise) {
+        try {
+            val path = src.removePrefix("file://")
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= maxSide || bounds.outHeight / (sample * 2) >= maxSide) sample *= 2
+            val bmp = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+            if (bmp == null) { promise.resolve(null); return }
+            val scale = minOf(1f, maxSide.toFloat() / maxOf(bmp.width, bmp.height))
+            val out = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
+            val f = File(outPath)
+            f.parentFile?.mkdirs()
+            f.outputStream().use { out.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            promise.resolve(f.absolutePath)
+        } catch (e: Exception) {
+            Log.w(TAG, "prepareImage failed for $src", e)
             promise.resolve(null)
         }
     }

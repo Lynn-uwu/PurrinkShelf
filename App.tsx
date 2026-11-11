@@ -8,7 +8,8 @@ import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, V
 import {FileUtils, PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, Vol, needsDetails, coverFor, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
-import {Entry, hasNative, listDir, openBook} from './src/native';
+import {ICONS, IconName} from './src/icons';
+import {Entry, copyText, hasNative, listDir, openBook, pasteIntoNote} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -45,10 +46,44 @@ async function askPermissions() {
 }
 
 // ---------- small building blocks ----------
-function Btn({label, onPress, dark, small, style}: {label: string; onPress: () => void; dark?: boolean; small?: boolean; style?: any}) {
+function Btn({label, icon, onPress, dark, small, style, a11y}: {label?: string; icon?: IconName; onPress: () => void; dark?: boolean; small?: boolean; style?: any; a11y?: string}) {
   return (
-    <Pressable onPress={onPress} hitSlop={px(6)} style={[st.btn, small && st.btnSmall, dark && st.btnDark, style]}>
-      <Text style={[st.btnText, small && st.btnTextSmall, dark && {color: '#ffffff'}]}>{label}</Text>
+    <Pressable onPress={onPress} hitSlop={px(6)} accessibilityRole="button" accessibilityLabel={a11y || label} style={[st.btn, small && st.btnSmall, dark && st.btnDark, {flexDirection: 'row', justifyContent: 'center'}, style]}>
+      {icon ? <Icon name={icon} size={small ? px(24) : px(28)} color={dark ? '#ffffff' : BLACK} /> : null}
+      {label ? <Text style={[st.btnText, small && st.btnTextSmall, dark && {color: '#ffffff'}, icon && {marginLeft: px(8)}]}>{label}</Text> : null}
+    </Pressable>
+  );
+}
+
+function Icon({name, size, color}: {name: IconName; size?: number; color?: string}) {
+  const sz = size || px(26);
+  return <Image source={ICONS[name]} style={{width: sz, height: sz, tintColor: color || BLACK}} />;
+}
+
+/** a round icon button; "bare" drops the outline */
+function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, style, onLongPress}: {
+  name: IconName;
+  onPress: () => void;
+  label: string; // read out by screen readers, not shown
+  dark?: boolean;
+  bare?: boolean;
+  size?: number;
+  iconSize?: number;
+  disabled?: boolean;
+  style?: any;
+  onLongPress?: () => void;
+}) {
+  const sz = size || px(46);
+  return (
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      disabled={disabled}
+      hitSlop={px(6)}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={[{width: sz, height: sz, borderRadius: sz / 2, alignItems: 'center', justifyContent: 'center'}, !bare && st.iconRing, dark && st.btnDark, disabled && st.dim, style]}>
+      <Icon name={name} size={iconSize || Math.round(sz * 0.56)} color={dark ? '#ffffff' : BLACK} />
     </Pressable>
   );
 }
@@ -74,27 +109,7 @@ function Cover({uri, w, h, title}: {uri?: string | null; w: number; h: number; t
 }
 
 function ViewIcon({kind, on, onPress}: {kind: 'list' | 'grid'; on: boolean; onPress: () => void}) {
-  const c = on ? '#ffffff' : BLACK;
-  return (
-    <Pressable onPress={onPress} hitSlop={px(6)} accessibilityRole="button" accessibilityLabel={kind === 'list' ? 'List view' : 'Grid view'} style={[st.iconBtn, on && st.btnDark]}>
-      {kind === 'list' ? (
-        <View>
-          {[0, 1, 2].map(i => (
-            <View key={i} style={{flexDirection: 'row', alignItems: 'center', marginVertical: px(2)}}>
-              <View style={{width: px(5), height: px(5), backgroundColor: c, marginRight: px(4)}} />
-              <View style={{width: px(18), height: px(3), backgroundColor: c}} />
-            </View>
-          ))}
-        </View>
-      ) : (
-        <View style={{width: px(24), flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'}}>
-          {[0, 1, 2, 3].map(i => (
-            <View key={i} style={{width: px(10), height: px(10), backgroundColor: c, marginBottom: i < 2 ? px(4) : 0}} />
-          ))}
-        </View>
-      )}
-    </Pressable>
-  );
+  return <IconBtn name={kind} label={kind === 'list' ? 'List view' : 'Grid view'} dark={on} onPress={onPress} size={px(44)} style={{marginLeft: px(8), borderRadius: px(10)}} />;
 }
 
 function FilterRow({label, count, state, onPress}: {label: string; count: number; state: 0 | 1 | -1; onPress: () => void}) {
@@ -111,25 +126,21 @@ function FilterRow({label, count, state, onPress}: {label: string; count: number
   );
 }
 
-function Header({left, title, onLeft}: {left?: string; title: string; onLeft?: () => void}) {
+function Header({left, title, onLeft, right}: {left?: string; title: string; onLeft?: () => void; right?: React.ReactNode}) {
   return (
     <View style={st.header}>
-      <View style={{minWidth: px(130)}}>
-        {left && onLeft ? (
-          <Pressable onPress={onLeft} hitSlop={px(10)} style={st.headerBtn}>
-            <Text style={st.headerBtnText}>{left}</Text>
-          </Pressable>
-        ) : null}
+      <View style={{minWidth: px(110), flexDirection: 'row'}}>
+        {left && onLeft ? <IconBtn bare name="back" label={left} onPress={onLeft} iconSize={px(30)} /> : null}
       </View>
       <Text style={st.headerTitle} numberOfLines={1}>{title}</Text>
-      <View style={{minWidth: px(130), alignItems: 'flex-end'}}>
-        <Pressable onPress={() => PluginManager.closePluginView()} hitSlop={px(10)} style={st.headerBtn}>
-          <Text style={st.headerBtnText}>Close ✕</Text>
-        </Pressable>
+      <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
+        {right}
+        <CloseBtn />
       </View>
     </View>
   );
 }
+const CloseBtn = () => <IconBtn bare name="close" label="Close InkShelf" onPress={() => PluginManager.closePluginView()} iconSize={px(30)} />;
 
 // ---------- the app ----------
 export default function App(): React.JSX.Element {
@@ -164,6 +175,12 @@ export default function App(): React.JSX.Element {
   const setGrid = (v: boolean) => changeSettings({libraryGrid: v});
   const showFilters = settings.showFilters;
   const setShowFilters = (v: boolean) => changeSettings({showFilters: v});
+  const isGrid = (page: string) => settings.views?.[page] === 'grid';
+  const setGridFor = (page: string) => (g: boolean) => setSettings(cur => {
+    const n = {...cur, views: {...cur.views, [page]: g ? 'grid' : 'list'} as Settings['views']};
+    saveSettings(n);
+    return n;
+  });
   const volGrid = settings.volumeGrid;
   const setVolGrid = (v: boolean) => changeSettings({volumeGrid: v});
   const changeApp = (f: (a: AppState) => AppState) => {
@@ -449,6 +466,8 @@ export default function App(): React.JSX.Element {
           genres={genreCards()}
           searches={app.searches}
           paging={settings.paging}
+          grid={isGrid('search')}
+          setGrid={setGridFor('search')}
           cover={xCover}
           wantCovers={wantCovers}
           onSearched={rememberSearch}
@@ -473,8 +492,8 @@ export default function App(): React.JSX.Element {
         : genreCards().map(g => ({key: g.name, title: g.name, sub: `${g.count} book${g.count === 1 ? '' : 's'}`, cover: g.f ? xCover(g.f) : null, f: g.f, onPress: () => goGenre(g.name)}));
     return shell(
       <>
-        <Header title={screen.what === 'recent' ? 'Recently read' : 'Explore by genre'} left="‹ Home" onLeft={() => setScreen({kind: 'home'})} />
-        <Gallery items={items} paging={settings.paging} wantCovers={wantCovers} />
+        <Header title={screen.what === 'recent' ? 'Recently read' : 'Explore by genre'} left="Home" onLeft={() => setScreen({kind: 'home'})} />
+        <Gallery items={items} label={screen.what === 'recent' ? `${items.length} book${items.length === 1 ? '' : 's'}` : `${items.length} genres`} paging={settings.paging} grid={isGrid('gallery')} setGrid={setGridFor('gallery')} wantCovers={wantCovers} />
         {taskbar('home')}
       </>,
     );
@@ -485,7 +504,7 @@ export default function App(): React.JSX.Element {
     return shell(
       <>
         <Header title="Newly added" />
-        <NewList items={fresh} libs={libs} ready={indexReady} paging={settings.paging} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
+        <NewList items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
         {taskbar('new')}
       </>,
     );
@@ -500,6 +519,8 @@ export default function App(): React.JSX.Element {
           items={app.bookmarks}
           libs={libs}
           paging={settings.paging}
+          grid={isGrid('bookmarks')}
+          setGrid={setGridFor('bookmarks')}
           empty="No bookmarks yet. Open a book and tap Bookmark to keep it here."
           onOpen={x => goBook(x, 'bookmarks')}
           onRemove={x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))}))}
@@ -513,7 +534,7 @@ export default function App(): React.JSX.Element {
   if (screen.kind === 'libraries') {
     return shell(
       <>
-        <Header title="Libraries" left="‹ Home" onLeft={() => setScreen({kind: 'home'})} />
+        <Header title="Libraries" left="Home" onLeft={() => setScreen({kind: 'home'})} />
         <ScrollView contentContainerStyle={st.pad}>
           <Text style={st.h1}>Your libraries</Text>
           {!hasNative() && <Text style={st.warn}>This copy of InkShelf is missing its native part, so it can't read folders or open books.</Text>}
@@ -526,7 +547,8 @@ export default function App(): React.JSX.Element {
               </Pressable>
               <Btn
                 small
-                label="Remove"
+                icon="trash"
+                a11y="Remove from list"
                 onPress={async () => {
                   const n = libs.filter(x => x.path !== l.path);
                   setLibs(n);
@@ -536,7 +558,7 @@ export default function App(): React.JSX.Element {
               />
             </View>
           ))}
-          <Btn dark label="＋  Add a library folder" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(16)}} />
+          <Btn dark icon="folder-plus" label="Add a library folder" onPress={() => setScreen({kind: 'browse', path: null})} style={{marginTop: px(16)}} />
           <Text style={[st.small, {marginTop: px(20)}]}>
             Removing a library only removes it from this list. Your books and saved details stay in the folder.
           </Text>
@@ -569,7 +591,7 @@ export default function App(): React.JSX.Element {
     if (!b || !lib) {
       return shell(
         <>
-          <Header title="" left="‹ Back" onLeft={() => setScreen({kind: 'library'})} />
+          <Header title="" left="Back" onLeft={() => setScreen({kind: 'library'})} />
           <Text style={[st.para, st.pad]}>This book is no longer in the folder.</Text>
         </>,
       );
@@ -610,6 +632,27 @@ export default function App(): React.JSX.Element {
         onRead={path => readBook(b, path)}
         marked={isMarked(b)}
         onNotes={notes => updateMeta(b.key, {notes})}
+        onPaste={async what => {
+          const m = metaOf(b);
+          const text = [
+            titleOf(b),
+            m.genres?.length ? `Genre: ${m.genres.join(', ')}` : '',
+            m.tags?.length ? `Tags: ${m.tags.join(', ')}` : '',
+            [m.language && `Language: ${m.language}`, m.status && `Status: ${m.status}`].filter(Boolean).join('  ·  '),
+            m.description ? `\n${m.description}` : '',
+          ].filter(Boolean).join('\n');
+          const copied = await copyText(text);
+          if (what === 'copy') {
+            setMessage(copied ? 'Copied. Paste it into a text box in any note.' : "Couldn't copy the text.");
+            return;
+          }
+          const err = await pasteIntoNote({
+            cover: what === 'details' ? null : coverUri(b),
+            coverOut: `${lib.path}/.inkshelf/paste.png`,
+            text: what === 'cover' ? undefined : text,
+          });
+          if (err) setMessage(err);
+        }}
         onMark={() => toggleMark(b)}
         onEdit={() => setScreen({kind: 'edit', key: b.key})}
         onBack={() => setScreen({kind: screen.from || 'library'})}
@@ -652,7 +695,7 @@ export default function App(): React.JSX.Element {
     content = (
       <View style={{padding: px(10)}}>
         <Text style={st.para}>No books match these filters.</Text>
-        <Btn small label="Clear filters" onPress={() => { setFolders([]); setTags({}); }} />
+        <Btn small icon="close" label="Clear filters" onPress={() => { setFolders([]); setTags({}); }} />
       </View>
     );
   } else if (!grid) {
@@ -727,16 +770,18 @@ export default function App(): React.JSX.Element {
   return shell(
     <>
       <View style={st.header}>
-        <Pressable onPress={() => setShowFilters(!showFilters)} hitSlop={px(10)} style={[st.headerBtn, {minWidth: px(130)}]}>
-          <Text style={st.headerBtnText}>{showFilters ? '‹ Hide filters' : `Filters${active ? ` (${active})` : ''} ›`}</Text>
+        <View style={{minWidth: px(110), flexDirection: 'row'}}>
+          <View>
+            <IconBtn name="sidebar" label={showFilters ? 'Hide filters' : 'Show filters'} dark={showFilters} onPress={() => setShowFilters(!showFilters)} size={px(46)} style={{borderRadius: px(12)}} />
+            {!showFilters && active ? <View style={st.badge}><Text style={st.badgeText}>{active}</Text></View> : null}
+          </View>
+        </View>
+        <Pressable style={{flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center'}} onPress={() => setScreen({kind: 'libraries'})} accessibilityLabel="Switch library">
+          <Text style={st.headerName} numberOfLines={1}>{lib?.name || 'Library'}</Text>
+          <Icon name="down" size={px(24)} />
         </Pressable>
-        <Pressable style={{flex: 1}} onPress={() => setScreen({kind: 'libraries'})}>
-          <Text style={st.headerTitle} numberOfLines={1}>{`${lib?.name || 'Library'} ▾`}</Text>
-        </Pressable>
-        <View style={{minWidth: px(130), alignItems: 'flex-end'}}>
-          <Pressable onPress={() => PluginManager.closePluginView()} hitSlop={px(10)} style={st.headerBtn}>
-            <Text style={st.headerBtnText}>Close ✕</Text>
-          </Pressable>
+        <View style={{minWidth: px(110), alignItems: 'flex-end'}}>
+          <CloseBtn />
         </View>
       </View>
       <View style={{flex: 1, flexDirection: 'row'}}>
@@ -781,13 +826,9 @@ export default function App(): React.JSX.Element {
                     {tagChunk.map(t => <FilterRow key={t} label={t} count={tagCount(`${fKind}:${t}`)} state={tags[`${fKind}:${t}`] || 0} onPress={() => cycleTag(`${fKind}:${t}`)} />)}
                   </View>
                   <View style={st.gPager}>
-                    <Pressable disabled={tp <= 1} onPress={() => setTPage(tp - 1)} hitSlop={px(8)} style={[st.arrow, tp <= 1 && st.dim]}>
-                      <Text style={st.arrowText}>‹</Text>
-                    </Pressable>
+                    <IconBtn name="back" label="Previous" disabled={tp <= 1} onPress={() => setTPage(tp - 1)} />
                     <Text style={st.small}>{`${tp} / ${tPages}`}</Text>
-                    <Pressable disabled={tp >= tPages} onPress={() => setTPage(tp + 1)} hitSlop={px(8)} style={[st.arrow, tp >= tPages && st.dim]}>
-                      <Text style={st.arrowText}>›</Text>
-                    </Pressable>
+                    <IconBtn name="forward" label="Next" disabled={tp >= tPages} onPress={() => setTPage(tp + 1)} />
                   </View>
                 </>
               )}
@@ -804,13 +845,9 @@ export default function App(): React.JSX.Element {
           </View>
           <View style={{flex: 1, paddingHorizontal: px(10)}}>{content}</View>
           <View style={st.pager}>
-            <Pressable disabled={pg <= 1} onPress={() => setPage(pg - 1)} style={[st.pageBtn, pg <= 1 && st.dim]}>
-              <Text style={st.pageBtnText}>‹ Prev</Text>
-            </Pressable>
-            <Text style={st.pageText}>{`Page ${pg} of ${pages}`}</Text>
-            <Pressable disabled={pg >= pages} onPress={() => setPage(pg + 1)} style={[st.pageBtn, pg >= pages && st.dim]}>
-              <Text style={st.pageBtnText}>Next ›</Text>
-            </Pressable>
+            <IconBtn name="back" label="Previous page" disabled={pg <= 1} onPress={() => setPage(pg - 1)} />
+            <Text style={st.pageText}>{`${pg} / ${pages}`}</Text>
+            <IconBtn name="forward" label="Next page" disabled={pg >= pages} onPress={() => setPage(pg + 1)} />
           </View>
         </View>
       </View>
@@ -886,16 +923,12 @@ function renderItems(items: Item[]) {
 function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPage: (p: number) => void; name?: string}) {
   return (
     <View style={st.gPager}>
-      <Pressable disabled={page <= 0} onPress={() => onPage(page - 1)} hitSlop={px(8)} style={[st.arrow, page <= 0 && st.dim]}>
-        <Text style={st.arrowText}>‹</Text>
-      </Pressable>
+      <IconBtn name="back" label="Previous" disabled={page <= 0} onPress={() => onPage(page - 1)} />
       <View style={{alignItems: 'center', flex: 1}}>
         {name ? <Text style={st.pagerName} numberOfLines={1}>{name}</Text> : null}
         <Text style={st.small}>{`${page + 1} / ${pages}`}</Text>
       </View>
-      <Pressable disabled={page >= pages - 1} onPress={() => onPage(page + 1)} hitSlop={px(8)} style={[st.arrow, page >= pages - 1 && st.dim]}>
-        <Text style={st.arrowText}>›</Text>
-      </Pressable>
+      <IconBtn name="forward" label="Next" disabled={page >= pages - 1} onPress={() => onPage(page + 1)} />
     </View>
   );
 }
@@ -915,9 +948,11 @@ function BookPage(props: {
   marked: boolean;
   onMark: () => void;
   onNotes: (notes: Note[]) => void;
+  onPaste: (what: 'cover' | 'details' | 'both' | 'copy') => void;
 }) {
-  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes} = props;
+  const {book: b, meta: m, title, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste} = props;
   const [notesOpen, setNotesOpen] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [lp, setLp] = useState(0);
   const [rp, setRp] = useState(0);
   const scroll = paging === 'scroll';
@@ -1006,7 +1041,8 @@ function BookPage(props: {
           vol: true,
           node: (
             <Pressable style={st.volRow} onPress={() => onRead(v.path)}>
-              <Text style={st.volRowText}>{`▶  Vol ${v.n}`}</Text>
+              <Icon name="play" size={px(22)} />
+              <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`Vol ${v.n}`}</Text>
               <Text style={[st.small, {flex: 1, textAlign: 'right'}]} numberOfLines={1}>{vlabel(v)}</Text>
             </Pressable>
           ),
@@ -1048,32 +1084,27 @@ function BookPage(props: {
 
   const top = (
     <View style={{width: coverW + px(14), height: coverH + px(10)}}>
-      <Cover uri={cover} w={coverW} h={coverH} title={title} />
+      <Pressable onLongPress={() => setPasteOpen(true)} delayLongPress={450} accessibilityLabel="Hold to paste into your note">
+        <Cover uri={cover} w={coverW} h={coverH} title={title} />
+      </Pressable>
       <PostIt notes={m.notes || []} onPress={() => setNotesOpen(true)} style={{position: 'absolute', right: 0, bottom: 0}} />
     </View>
   );
   const start = (
     <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
-      <Text style={st.startText}>{b.vols.length ? `▶  Read Vol ${b.vols[0].n}` : '▶  Start reading'}</Text>
+      <Icon name="play-on" size={px(26)} color="#ffffff" />
+      {b.vols.length ? <Text style={[st.startText, {marginLeft: px(8)}]}>{`Vol ${b.vols[0].n}`}</Text> : null}
     </Pressable>
   );
   return (
     <>
       <View style={st.header}>
-        <Pressable onPress={onBack} hitSlop={px(10)} style={[st.headerBtn, {minWidth: px(130)}]}>
-          <Text style={st.headerBtnText}>‹ Back</Text>
-        </Pressable>
+        <IconBtn bare name="back" label="Back" onPress={onBack} iconSize={px(30)} />
         <View style={{flex: 1}} />
-        <Pressable onPress={onMark} hitSlop={px(8)} style={[st.editBtn, {flexDirection: 'row', alignItems: 'center', marginRight: px(10)}, marked && st.btnDark]}>
-          <RibbonIcon color={marked ? '#ffffff' : BLACK} bg={marked ? BLACK : '#ffffff'} filled={marked} size={px(16)} />
-          <Text style={[st.editText, {marginLeft: px(6)}, marked && {color: '#ffffff'}]}>{marked ? 'Bookmarked' : 'Bookmark'}</Text>
-        </Pressable>
-        <Pressable onPress={onEdit} hitSlop={px(8)} style={st.editBtn}>
-          <Text style={st.editText}>✎ Edit</Text>
-        </Pressable>
-        <Pressable onPress={() => PluginManager.closePluginView()} hitSlop={px(10)} style={[st.headerBtn, {marginLeft: px(12)}]}>
-          <Text style={st.headerBtnText}>Close ✕</Text>
-        </Pressable>
+        <IconBtn name="paste" label="Paste into note" onPress={() => setPasteOpen(true)} style={{marginRight: px(10)}} />
+        <IconBtn name={marked ? 'bookmark-on' : 'bookmark'} label={marked ? 'Remove bookmark' : 'Bookmark'} onPress={onMark} style={{marginRight: px(10)}} />
+        <IconBtn name="edit" label="Edit details" onPress={onEdit} style={{marginRight: px(6)}} />
+        <CloseBtn />
       </View>
       <View style={{height: titleH, paddingHorizontal: px(16), justifyContent: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
         <Text style={st.bookTitle} numberOfLines={2}>{title}</Text>
@@ -1115,7 +1146,39 @@ function BookPage(props: {
         </View>
       </View>
       {notesOpen ? <NotesSheet title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
+      {pasteOpen ? <PasteSheet cover={cover} title={title} onPick={w => { setPasteOpen(false); onPaste(w); }} onClose={() => setPasteOpen(false)} /> : null}
     </>
+  );
+}
+
+// ---------- paste a book into the note InkShelf was opened from ----------
+function PasteSheet({cover, title, onPick, onClose}: {cover: string | null; title: string; onPick: (w: 'cover' | 'details' | 'both' | 'copy') => void; onClose: () => void}) {
+  const opt = (w: 'cover' | 'details' | 'both' | 'copy', icon: IconName, label: string, dark?: boolean) => (
+    <Pressable onPress={() => onPick(w)} style={{flex: 1, alignItems: 'center'}} accessibilityLabel={label}>
+      <View style={[st.round, dark && st.btnDark]}><Icon name={icon} size={px(30)} color={dark ? '#ffffff' : BLACK} /></View>
+      <Text style={st.tileLabel}>{label}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={st.sheetWrap}>
+      <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel="Close" />
+      <View style={st.sheet}>
+        <Pressable onPress={onClose} hitSlop={px(12)} style={{alignItems: 'center'}}>
+          <View style={st.handle} />
+          <Text style={st.sheetTitle}>Paste into your note</Text>
+        </Pressable>
+        <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(16), marginBottom: px(18)}}>
+          <Cover uri={cover} w={px(60)} h={px(90)} title={title} />
+          <Text style={[st.rowTitle, {flex: 1, marginLeft: px(14)}]} numberOfLines={2}>{title}</Text>
+        </View>
+        <View style={{flexDirection: 'row'}}>
+          {opt('both', 'paste', 'Cover + details', true)}
+          {opt('cover', 'image', 'Cover')}
+          {opt('details', 'text', 'Details')}
+          {opt('copy', 'copy', 'Copy text')}
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -1155,10 +1218,13 @@ function PostIt({notes, onPress, style}: {notes: Note[]; onPress: () => void; st
 
 function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: Note[]; onChange: (n: Note[]) => void; onClose: () => void}) {
   const [sel, setSel] = useState(0);
-  const [editing, setEditing] = useState<Note | null>(notes.length ? null : null);
-  const [confirm, setConfirm] = useState(false);
+  const [editing, setEditing] = useState<Note | null>(null);
+  const [confirm, setConfirm] = useState<'one' | 'all' | null>(null); // deleting asks for a second tap
   const cur = notes[Math.min(sel, notes.length - 1)];
-  const startNew = () => setEditing({id: Date.now().toString(36), text: '', color: NOTE_COLORS[notes.length % NOTE_COLORS.length].id, at: Date.now()});
+  const startNew = () => {
+    setConfirm(null);
+    setEditing({id: Date.now().toString(36), text: '', color: NOTE_COLORS[notes.length % NOTE_COLORS.length].id, at: Date.now()});
+  };
   const save = () => {
     if (!editing) return;
     const n = {...editing, title: editing.title?.trim() || undefined, text: editing.text.trim(), at: Date.now()};
@@ -1169,38 +1235,51 @@ function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: No
     setSel(i >= 0 ? i : next.length - 1);
     setEditing(null);
   };
-  const remove = () => {
-    if (!confirm) return setConfirm(true);
-    const next = notes.filter(x => x.id !== cur.id);
-    onChange(next);
-    setSel(Math.max(0, sel - 1));
-    setConfirm(false);
+  const removeOne = (id: string) => {
+    if (confirm !== 'one') return setConfirm('one');
+    const i = notes.findIndex(x => x.id === id);
+    onChange(notes.filter(x => x.id !== id));
+    setSel(Math.max(0, i - 1));
+    setEditing(null);
+    setConfirm(null);
   };
+  const removeAll = () => {
+    if (confirm !== 'all') return setConfirm('all');
+    onChange([]);
+    setSel(0);
+    setEditing(null);
+    setConfirm(null);
+  };
+  const isSaved = (n: Note | null) => !!n && notes.some(x => x.id === n.id);
   const boxW = W - px(60) - px(36);
   const boxH = Math.round(H * 0.46);
+  const warn = confirm ? <Text style={[st.small, {textAlign: 'center', marginTop: px(8)}]}>{confirm === 'all' ? 'Tap the bin again to delete all notes on this book.' : 'Tap the bin again to delete this note.'}</Text> : null;
   return (
     <View style={st.modalWrap}>
       <Pressable style={StyleSheet.absoluteFill} onPress={editing ? undefined : onClose} />
       <View style={st.modal}>
         <View style={st.modalHead}>
-          <View style={{flex: 1}}>
-            <Text style={st.modalTitle}>Notes</Text>
+          <Icon name="note" size={px(30)} />
+          <View style={{flex: 1, marginLeft: px(10)}}>
             <Text style={st.small} numberOfLines={1}>{title}</Text>
+            <Text style={st.cardSub}>{`${notes.length} / ${MAX_NOTES}`}</Text>
           </View>
-          <Text style={[st.small, {marginRight: px(14)}]}>{`${notes.length} / ${MAX_NOTES}`}</Text>
-          <Pressable onPress={onClose} hitSlop={px(10)} accessibilityLabel="Close notes"><Text style={st.headerBtnText}>✕</Text></Pressable>
+          {notes.length > 1 && !editing ? (
+            <IconBtn name="trash-all" label="Delete all notes" dark={confirm === 'all'} onPress={removeAll} style={{marginRight: px(8)}} />
+          ) : null}
+          <IconBtn bare name="close" label="Close notes" onPress={onClose} iconSize={px(28)} />
         </View>
 
         {/* one tab per note, plus "+" while there is room */}
         <View style={{flexDirection: 'row', marginBottom: px(14)}}>
           {notes.map((x, i) => (
-            <Pressable key={x.id} onPress={() => { setSel(i); setEditing(null); setConfirm(false); }} style={[st.noteTab, {backgroundColor: noteBg(x.color)}, i === sel && !editing && st.noteTabOn]}>
-              <Text style={st.noteTabText} numberOfLines={1}>{x.title || `Note ${i + 1}`}</Text>
+            <Pressable key={x.id} onPress={() => { setSel(i); setEditing(null); setConfirm(null); }} style={[st.noteTab, {backgroundColor: noteBg(x.color)}, i === sel && !editing && st.noteTabOn, editing?.id === x.id && st.noteTabOn]}>
+              <Text style={st.noteTabText} numberOfLines={1}>{x.title || `${i + 1}`}</Text>
             </Pressable>
           ))}
           {notes.length < MAX_NOTES ? (
-            <Pressable onPress={startNew} style={[st.noteTab, {borderStyle: 'dashed', backgroundColor: '#ffffff', flex: 0, paddingHorizontal: px(14)}]} accessibilityLabel="New note">
-              <Text style={[st.noteTabText, {fontSize: px(22)}]}>+</Text>
+            <Pressable onPress={startNew} style={[st.noteTab, st.noteTabPlus, editing && !isSaved(editing) && st.noteTabOn]} accessibilityLabel="New note">
+              <Icon name="plus" size={px(24)} />
             </Pressable>
           ) : null}
         </View>
@@ -1222,16 +1301,18 @@ function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: No
             </View>
             <View style={{flexDirection: 'row', marginTop: px(14), alignItems: 'center'}}>
               {NOTE_COLORS.map(c => (
-                <Pressable key={c.id} onPress={() => setEditing({...editing, color: c.id})} style={{alignItems: 'center', marginRight: px(14)}} accessibilityLabel={c.label}>
-                  <View style={[st.swatch, {backgroundColor: c.bg}, editing.color === c.id && {borderWidth: 3}]} />
-                  <Text style={st.cardSub}>{c.label}</Text>
+                <Pressable key={c.id} onPress={() => setEditing({...editing, color: c.id})} style={{marginRight: px(12)}} accessibilityLabel={c.label}>
+                  <View style={[st.swatch, {backgroundColor: c.bg}, editing.color === c.id && {borderWidth: 3.5}]}>
+                    {editing.color === c.id ? <Icon name="check" size={px(22)} /> : null}
+                  </View>
                 </Pressable>
               ))}
+              <View style={{flex: 1}} />
+              {isSaved(editing) ? <IconBtn name="trash" label="Delete note" dark={confirm === 'one'} onPress={() => removeOne(editing.id)} style={{marginRight: px(10)}} /> : null}
+              <IconBtn name="close" label="Cancel" onPress={() => { setEditing(null); setConfirm(null); }} style={{marginRight: px(10)}} />
+              <IconBtn name="check" label="Save note" dark onPress={save} />
             </View>
-            <View style={{flexDirection: 'row', marginTop: px(16)}}>
-              <Btn small label="Cancel" onPress={() => setEditing(null)} style={{flex: 1, marginRight: px(10)}} />
-              <Btn small dark label="Save note" onPress={save} style={{flex: 1}} />
-            </View>
+            {warn}
           </>
         ) : cur ? (
           <>
@@ -1240,142 +1321,50 @@ function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: No
               <Text style={st.noteText} numberOfLines={cur.title ? 12 : 13}>{cur.text}</Text>
               <Text style={[st.small, {position: 'absolute', right: px(16), bottom: px(12)}]}>{dateText(cur.at)}</Text>
             </View>
-            <View style={{flexDirection: 'row', marginTop: px(16)}}>
-              <Btn small label={confirm ? 'Tap again to delete' : 'Delete'} onPress={remove} style={{flex: 1, marginRight: px(10)}} />
-              <Btn small dark label="✎  Edit" onPress={() => { setEditing(cur); setConfirm(false); }} style={{flex: 1}} />
+            <View style={{flexDirection: 'row', marginTop: px(14), justifyContent: 'flex-end'}}>
+              <IconBtn name="trash" label="Delete note" dark={confirm === 'one'} onPress={() => removeOne(cur.id)} style={{marginRight: px(10)}} />
+              <IconBtn name="edit" label="Edit note" dark onPress={() => { setEditing(cur); setConfirm(null); }} />
             </View>
+            {warn}
           </>
         ) : (
-          <View style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: '#fbf0a0', justifyContent: 'center', alignItems: 'center'}]}>
-            <Text style={[st.para, {textAlign: 'center'}]}>{'No notes yet.\nKeep up to five notes on this book: your thoughts, a quote, where you stopped.'}</Text>
-            <Btn dark label="Write a note" onPress={startNew} style={{marginTop: px(10), paddingHorizontal: px(30)}} />
-          </View>
+          <Pressable onPress={startNew} style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: '#fbf0a0', justifyContent: 'center', alignItems: 'center'}]} accessibilityLabel="Write a note">
+            <View style={[st.round, {backgroundColor: BLACK}]}><Icon name="plus" size={px(32)} color="#ffffff" /></View>
+            <Text style={[st.small, {textAlign: 'center', marginTop: px(12)}]}>{'Up to five notes:\nthoughts, quotes, where you stopped.'}</Text>
+          </Pressable>
         )}
       </View>
     </View>
   );
 }
 
-// ---------- taskbar + icons (drawn, so they look the same on every device) ----------
-function HomeIcon({c, size}: {c: string; size: number}) {
-  const u = size / 24;
-  return (
-    <View style={{width: size, height: size, alignItems: 'center', justifyContent: 'flex-end'}}>
-      <View style={{width: 0, height: 0, borderLeftWidth: 12 * u, borderRightWidth: 12 * u, borderBottomWidth: 10 * u, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: c}} />
-      <View style={{width: 17 * u, height: 12 * u, borderWidth: 2.5 * u, borderTopWidth: 0, borderColor: c, alignItems: 'center', justifyContent: 'flex-end'}}>
-        <View style={{width: 5 * u, height: 7 * u, backgroundColor: c}} />
-      </View>
-    </View>
-  );
-}
-function ShelfIcon({c, size}: {c: string; size: number}) {
-  const u = size / 24;
-  return (
-    <View style={{width: size, height: size, justifyContent: 'flex-end'}}>
-      <View style={{flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 2 * u}}>
-        {[20, 16, 20, 14].map((h, i) => (
-          <View key={i} style={{width: 4 * u, height: h * u, borderWidth: 2 * u, borderColor: c, marginRight: 1.5 * u, backgroundColor: i === 1 ? c : 'transparent', transform: i === 3 ? [{rotate: '-14deg'}] : []}} />
-        ))}
-      </View>
-      <View style={{height: 2.5 * u, backgroundColor: c}} />
-    </View>
-  );
-}
-function RibbonIcon({color, bg, filled, size}: {color: string; bg: string; filled?: boolean; size: number}) {
-  const w = Math.round(size * 0.75);
-  const d = size * 0.3; // depth of the notch
-  const t = Math.max(2, size / 10);
-  if (filled) {
-    return (
-      <View style={{width: w, height: size, backgroundColor: color}}>
-        <View style={{position: 'absolute', bottom: 0, left: 0, width: 0, height: 0, borderLeftWidth: w / 2, borderRightWidth: w / 2, borderBottomWidth: d, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: bg}} />
-      </View>
-    );
-  }
-  // outline: three sides plus a "V" at the bottom
-  const L = Math.sqrt((w / 2) * (w / 2) + d * d);
-  const ang = (Math.atan2(d, w / 2) * 180) / Math.PI;
-  const line = (sign: number) => (
-    <View style={{position: 'absolute', width: L, height: t, backgroundColor: color, left: (sign < 0 ? w / 4 : (3 * w) / 4) - L / 2, top: size - d / 2 - t / 2, transform: [{rotate: `${sign * ang}deg`}]}} />
-  );
-  return (
-    <View style={{width: w, height: size}}>
-      <View style={{position: 'absolute', left: 0, top: 0, width: w, height: size - t / 2, borderWidth: t, borderBottomWidth: 0, borderColor: color}} />
-      {line(-1)}
-      {line(1)}
-    </View>
-  );
-}
-function SlidersIcon({c, size}: {c: string; size: number}) {
-  const u = size / 24;
-  return (
-    <View style={{width: size, height: size, justifyContent: 'space-around', paddingVertical: 2 * u}}>
-      {[14, 5, 11].map((x, i) => (
-        <View key={i} style={{height: 2.5 * u, backgroundColor: c, justifyContent: 'center'}}>
-          <View style={{position: 'absolute', left: x * u, width: 7 * u, height: 7 * u, borderRadius: 4 * u, borderWidth: 2.5 * u, borderColor: c, backgroundColor: c === '#ffffff' ? BLACK : '#ffffff'}} />
-        </View>
-      ))}
-    </View>
-  );
-}
+// ---------- taskbar ----------
 
-function SearchIcon({c, size}: {c: string; size: number}) {
-  const u = size / 24;
-  return (
-    <View style={{width: size, height: size}}>
-      <View style={{position: 'absolute', left: 2 * u, top: 2 * u, width: 14 * u, height: 14 * u, borderRadius: 7 * u, borderWidth: 2.5 * u, borderColor: c}} />
-      <View style={{position: 'absolute', left: 13 * u, top: 17 * u, width: 10 * u, height: 3 * u, backgroundColor: c, transform: [{rotate: '45deg'}]}} />
-    </View>
-  );
-}
-function ClockIcon({c, size}: {c: string; size: number}) {
-  const u = size / 24;
-  return (
-    <View style={{width: size, height: size, borderRadius: size / 2, borderWidth: 2.5 * u, borderColor: c}}>
-      <View style={{position: 'absolute', left: 9.5 * u, top: 4 * u, width: 2.5 * u, height: 8 * u, backgroundColor: c}} />
-      <View style={{position: 'absolute', left: 9.5 * u, top: 9.5 * u, width: 6 * u, height: 2.5 * u, backgroundColor: c}} />
-    </View>
-  );
-}
 
-function NewIcon({c, size}: {c: string; size: number}) {
-  const u = size / 24;
-  return (
-    <View style={{width: size, height: size, alignItems: 'center', justifyContent: 'center'}}>
-      <View style={{width: 17 * u, height: 22 * u, borderWidth: 2.5 * u, borderColor: c, borderRadius: 2 * u, alignItems: 'center', justifyContent: 'center'}}>
-        <View style={{position: 'absolute', width: 9 * u, height: 2.5 * u, backgroundColor: c}} />
-        <View style={{position: 'absolute', width: 2.5 * u, height: 9 * u, backgroundColor: c}} />
-      </View>
-    </View>
-  );
-}
 
 type Tab = 'library' | 'new' | 'home' | 'bookmarks' | 'settings';
 function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; newCount: number}) {
-  const items: {t: Tab; label: string}[] = [
-    {t: 'library', label: 'Library'},
-    {t: 'new', label: 'New'},
-    {t: 'home', label: 'Home'},
-    {t: 'bookmarks', label: 'Bookmarks'},
-    {t: 'settings', label: 'Settings'},
+  const items: {t: Tab; icon: IconName; label: string}[] = [
+    {t: 'library', icon: 'library', label: 'Library'},
+    {t: 'new', icon: 'new', label: 'Newly added'},
+    {t: 'home', icon: 'home', label: 'Home'},
+    {t: 'bookmarks', icon: 'bookmark', label: 'Bookmarks'},
+    {t: 'settings', icon: 'settings', label: 'Settings'},
   ];
   return (
     <View style={st.taskbar}>
-      {items.map(({t, label}) => {
+      {items.map(({t, icon, label}) => {
         const on = t === tab;
-        const c = on ? '#ffffff' : BLACK;
-        const sz = px(24);
         return (
           <Pressable key={t} onPress={() => onTab(t)} style={st.task} accessibilityRole="button" accessibilityLabel={label}>
             <View style={[st.taskIcon, t === 'home' && st.taskHome, on && st.btnDark]}>
-              {t === 'home' ? <HomeIcon c={c} size={sz} /> : t === 'library' ? <ShelfIcon c={c} size={sz} /> : t === 'bookmarks' ? <RibbonIcon color={c} bg={on ? BLACK : '#ffffff'} size={sz} /> : t === 'new' ? <NewIcon c={c} size={sz} /> : <SlidersIcon c={c} size={sz} />}
+              <Icon name={on && icon === 'bookmark' ? 'bookmark-on' : icon} size={px(30)} color={on ? '#ffffff' : BLACK} />
               {t === 'new' && newCount > 0 ? (
                 <View style={[st.badge, on && {backgroundColor: '#ffffff', borderColor: BLACK}]}>
                   <Text style={[st.badgeText, on && {color: BLACK}]}>{newCount > 99 ? '99+' : newCount}</Text>
                 </View>
               ) : null}
             </View>
-            <Text style={[st.taskText, on && {fontWeight: 'bold'}]}>{label}</Text>
           </Pressable>
         );
       })}
@@ -1413,17 +1402,7 @@ function RoundBtn({label, note, onPress, children, dim}: {label: string; note?: 
   );
 }
 function MiniIcon({kind, on}: {kind: 'list' | 'grid'; on: boolean}) {
-  const c = BLACK;
-  const o = on ? 1 : 0.55;
-  return kind === 'list' ? (
-    <View style={{opacity: o}}>
-      {[0, 1, 2].map(i => <View key={i} style={{width: px(22), height: px(3), backgroundColor: c, marginVertical: px(2)}} />)}
-    </View>
-  ) : (
-    <View style={{width: px(20), flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', opacity: o}}>
-      {[0, 1, 2, 3].map(i => <View key={i} style={{width: px(8), height: px(8), backgroundColor: c, marginBottom: i < 2 ? px(3) : 0}} />)}
-    </View>
-  );
+  return <View style={{opacity: on ? 1 : 0.5}}><Icon name={kind} size={px(28)} /></View>;
 }
 function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts}: {
   settings: Settings;
@@ -1455,17 +1434,17 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
             <Seg
               options={[
-                {label: '‹ ›  Arrows', on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})},
-                {label: 'Scroll', on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})},
+                {label: <Icon name="pages" size={px(30)} />, on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})},
+                {label: <Icon name="scroll" size={px(30)} />, on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})},
               ]}
             />
-            <Text style={st.tileLabel}>Long book pages</Text>
+            <Text style={st.tileLabel}>Turn pages  ·  or scroll</Text>
           </View>
           <View style={{flex: 1, alignItems: 'center', marginHorizontal: px(6)}}>
             <Seg
               options={[
-                {label: 'Show', on: settings.showFilters, onPress: () => change({showFilters: true})},
-                {label: 'Hide', on: !settings.showFilters, onPress: () => change({showFilters: false})},
+                {label: <Icon name="sidebar" size={px(30)} />, on: settings.showFilters, onPress: () => change({showFilters: true})},
+                {label: <Icon name="close" size={px(26)} />, on: !settings.showFilters, onPress: () => change({showFilters: false})},
               ]}
             />
             <Text style={st.tileLabel}>Filters panel</Text>
@@ -1478,18 +1457,18 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
         </View>
 
         <View style={{flexDirection: 'row', marginTop: px(18)}}>
-          <RoundBtn label="Libraries" note="Add or remove" onPress={onLibraries}>
-            <ShelfIcon c={BLACK} size={px(26)} />
+          <RoundBtn label="Libraries" onPress={onLibraries}>
+            <Icon name="folder-plus" size={px(30)} />
           </RoundBtn>
           <RoundBtn label="Clear searches" note={`${counts.searches} saved`} onPress={onClearSearches} dim={!counts.searches}>
-            <SearchIcon c={BLACK} size={px(26)} />
+            <Icon name="search" size={px(30)} />
           </RoundBtn>
           <RoundBtn label="Clear history" note={`${counts.recent} recent`} onPress={onClearHistory} dim={!counts.recent}>
-            <ClockIcon c={BLACK} size={px(26)} />
+            <Icon name="clock" size={px(30)} />
           </RoundBtn>
         </View>
 
-        <Btn dark label="Done" onPress={onClose} style={{marginTop: px(20)}} />
+        <Btn dark icon="check" a11y="Done" onPress={onClose} style={{marginTop: px(20)}} />
       </View>
     </View>
   );
@@ -1528,44 +1507,134 @@ function Chips({options, value, onChange}: {options: {id: string; label: string}
 function Pager({p, pages, setP, note}: {p: number; pages: number; setP: (n: number) => void; note?: string}) {
   return (
     <View style={st.pager}>
-      <Pressable disabled={p <= 0} onPress={() => setP(p - 1)} style={[st.pageBtn, p <= 0 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
-      <Text style={st.pageText}>{`${note ? note + '  ·  ' : ''}Page ${p + 1} of ${pages}`}</Text>
-      <Pressable disabled={p >= pages - 1} onPress={() => setP(p + 1)} style={[st.pageBtn, p >= pages - 1 && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
+      <IconBtn name="back" label="Previous page" disabled={p <= 0} onPress={() => setP(p - 1)} />
+      <Text style={st.pageText}>{`${note ? note + '  ·  ' : ''}${p + 1} / ${pages}`}</Text>
+      <IconBtn name="forward" label="Next page" disabled={p >= pages - 1} onPress={() => setP(p + 1)} />
     </View>
   );
 }
 
-/** Rows that turn pages with arrows by default, or scroll when the setting says so. */
-function Paged<T>({items, rowH, top, paging, render, note}: {items: T[]; rowH: number; top: number; paging: Settings['paging']; render: (x: T) => React.ReactNode; note?: string}) {
+/** one thing in a list or grid page */
+type CItem = {
+  key: string;
+  title: string;
+  sub?: string;
+  cover?: string | null;
+  pills?: string[];
+  marks?: string[]; // black labels, e.g. "No summary"
+  vol?: number;
+  onPress: () => void;
+  action?: {icon: IconName; label: string; onPress: () => void; dark?: boolean};
+};
+
+/** count on the left, list/grid buttons on the right */
+function Toolbar({text, grid, setGrid}: {text: string; grid: boolean; setGrid: (g: boolean) => void}) {
+  return (
+    <View style={st.toolbar}>
+      <Text style={st.resCount} numberOfLines={1}>{text}</Text>
+      <View style={{flexDirection: 'row'}}>
+        <ViewIcon kind="list" on={!grid} onPress={() => setGrid(false)} />
+        <ViewIcon kind="grid" on={grid} onPress={() => setGrid(true)} />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * A page of books as a list (rows) or a grid (4 across, 3 down, filling the space).
+ * Turns pages with arrows by default, or scrolls when Settings say so.
+ */
+function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: boolean; top: number; paging: Settings['paging']; empty?: string}) {
   const [pg, setPg] = useState(0);
-  if (paging === 'scroll') return <ScrollView style={{flex: 1}} contentContainerStyle={{paddingHorizontal: px(14), paddingBottom: px(20)}}>{items.map(render)}</ScrollView>;
-  const per = Math.max(1, Math.floor((H - top - TASK_H - px(64) - px(8)) / rowH));
+  const scroll = paging === 'scroll';
+  const avail = H - top - TASK_H - (scroll ? 0 : px(64)) - px(6);
+  const rowH = px(120);
+  const cols = 4;
+  const rowsG = 3;
+  const cellW = Math.floor((W - px(28) - (cols - 1) * px(12)) / cols);
+  const cellH = Math.floor(avail / rowsG);
+  const coverH = Math.min(cellH - px(58) - px(16), Math.round((cellW - px(16)) * 1.5));
+  const coverW = Math.round(coverH / 1.5);
+  const per = grid ? cols * rowsG : Math.max(1, Math.floor(avail / rowH));
   const pages = Math.max(1, Math.ceil(items.length / per));
   const p = Math.min(pg, pages - 1);
-  return (
+  const shown = scroll ? items : items.slice(p * per, (p + 1) * per);
+  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>{empty || 'Nothing here yet.'}</Text></View>;
+
+  const row = (x: CItem) => {
+    const ch = rowH - px(14);
+    return (
+      <Pressable key={x.key} style={[st.row, {height: rowH, alignItems: 'center'}]} onPress={x.onPress}>
+        <Cover uri={x.cover} w={Math.round((ch * 2) / 3)} h={ch} title={x.title} />
+        <View style={[st.rowText, {alignSelf: 'stretch'}]}>
+          <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
+          {x.sub ? <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{x.sub}</Text> : null}
+          <View style={[st.pillLine, {marginTop: px(6)}]}>
+            {(x.marks || []).map(t => <Pill small active key={t} label={t} />)}
+            {(x.pills || []).slice(0, 3).map(t => <Pill small key={t} label={t} />)}
+          </View>
+        </View>
+        {x.action ? <IconBtn name={x.action.icon} label={x.action.label} dark={x.action.dark} onPress={x.action.onPress} style={{marginLeft: px(8)}} /> : null}
+      </Pressable>
+    );
+  };
+  const cell = (x: CItem, i: number) => (
+    <Pressable key={x.key} onPress={x.onPress} style={{width: cellW, height: cellH, marginLeft: i % cols ? px(12) : 0, alignItems: 'center'}}>
+      <View style={[st.card, {width: cellW, alignItems: 'center'}]}>
+        <Cover uri={x.cover} w={coverW} h={coverH} title={x.title} />
+        {x.vol ? <View style={st.volBadge}><Text style={st.volBadgeText}>{`Vol ${x.vol}`}</Text></View> : null}
+        {x.marks?.length ? (
+          <View style={st.markBadge}>
+            {x.marks.map(t => <Text key={t} style={st.volBadgeText}>{t}</Text>)}
+          </View>
+        ) : null}
+        {x.action ? (
+          <IconBtn name={x.action.icon} label={x.action.label} dark={x.action.dark} onPress={x.action.onPress} size={px(40)} style={{position: 'absolute', right: px(4), bottom: px(4)}} />
+        ) : null}
+      </View>
+      <Text style={[st.cardTitle, {alignSelf: 'stretch'}]} numberOfLines={1}>{x.title}</Text>
+      {x.sub ? <Text style={[st.cardSub, {alignSelf: 'stretch'}]} numberOfLines={1}>{x.sub}</Text> : null}
+    </Pressable>
+  );
+  const body = grid ? (
+    <View style={{flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: px(14), paddingTop: px(4)}}>{shown.map(cell)}</View>
+  ) : (
+    <View style={{paddingHorizontal: px(14)}}>{shown.map(row)}</View>
+  );
+  return scroll ? (
+    <ScrollView style={{flex: 1}}>{body}</ScrollView>
+  ) : (
     <>
-      <View style={{flex: 1, paddingHorizontal: px(14)}}>{items.slice(p * per, (p + 1) * per).map(render)}</View>
-      <Pager p={p} pages={pages} setP={setPg} note={note} />
+      <View style={{flex: 1}}>{body}</View>
+      <Pager p={p} pages={pages} setP={setPg} />
     </>
   );
 }
 
-function SnapList({items, libs, paging, empty, onOpen, onRemove}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void}) {
+function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; grid: boolean; setGrid: (g: boolean) => void; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void}) {
   const [which, setWhich] = useState('all');
   const opts = [{id: 'all', label: 'All'}, ...libs.filter(l => items.some(x => x.lib === l.path)).map(l => ({id: l.path, label: l.name}))];
   const shown = items.filter(x => which === 'all' || x.lib === which);
-  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>{empty}</Text></View>;
+  const chips = opts.length > 2;
   return (
     <>
-      {opts.length > 2 ? <Chips options={opts} value={which} onChange={setWhich} /> : <View style={{height: px(8)}} />}
-      <Paged
-        key={which}
-        items={shown}
-        rowH={px(122)}
-        top={px(64) + (opts.length > 2 ? px(62) : px(8))}
+      {chips ? <Chips options={opts} value={which} onChange={setWhich} /> : null}
+      <Toolbar text={`${shown.length} saved`} grid={grid} setGrid={setGrid} />
+      <Collection
+        key={which + grid}
+        grid={grid}
+        top={px(64) + (chips ? px(62) : 0) + px(60)}
         paging={paging}
-        note={`${shown.length} saved`}
-        render={x => <SnapRow key={x.lib + x.key} x={x} h={px(122)} onPress={() => onOpen(x)} right={<Btn small label="Remove" onPress={() => onRemove(x)} style={{marginLeft: px(8)}} />} />}
+        empty={empty}
+        items={shown.map(x => ({
+          key: x.lib + x.key,
+          title: x.title,
+          sub: [x.folder || x.libName, x.vol ? `Vol ${x.vol}` : ''].filter(Boolean).join('  ·  '),
+          cover: x.cover,
+          pills: x.genres,
+          onPress: () => onOpen(x),
+          action: {icon: 'bookmark-remove', label: 'Remove bookmark', onPress: () => onRemove(x)},
+        }))}
       />
     </>
   );
@@ -1578,11 +1647,13 @@ const dateText = (ms: number) => {
   const d = new Date(ms);
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
-function NewList({items, libs, ready, paging, cover, wantCovers, onEdit, onOpen}: {
+function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, onEdit, onOpen}: {
   items: Found[];
   libs: Lib[];
   ready: boolean;
   paging: Settings['paging'];
+  grid: boolean;
+  setGrid: (g: boolean) => void;
   cover: (f: Found) => string | null;
   wantCovers: (l: Found[]) => void;
   onEdit: (f: Found) => void;
@@ -1592,13 +1663,13 @@ function NewList({items, libs, ready, paging, cover, wantCovers, onEdit, onOpen}
   const noGenre = (f: Found) => !(f.meta.genres?.length || f.meta.tags?.length);
   const noSum = (f: Found) => !f.meta.description;
   const shown = items.filter(f => which === 'all' || (which === 'genre' ? noGenre(f) : which === 'summary' ? noSum(f) : f.lib.path === which));
+  wantCovers(shown);
   const opts = [
     {id: 'all', label: `All (${items.length})`},
     {id: 'genre', label: 'No genre'},
     {id: 'summary', label: 'No summary'},
     ...(libs.length > 1 ? libs.map(l => ({id: l.path, label: l.name})) : []),
   ];
-  const rowH = px(122);
   if (!items.length) {
     return (
       <View style={[st.pad, {flex: 1}]}>
@@ -1608,69 +1679,35 @@ function NewList({items, libs, ready, paging, cover, wantCovers, onEdit, onOpen}
   }
   return (
     <>
-      <Text style={[st.small, {paddingHorizontal: px(16), paddingTop: px(10)}]}>Newest first. Books leave this list once they have a genre (or tag) and a summary.</Text>
       <Chips options={opts} value={which} onChange={setWhich} />
-      <Paged
-        key={which}
-        items={shown}
-        rowH={rowH}
-        top={px(64) + px(34) + px(62)}
+      <Toolbar text={`${shown.length} need details  ·  newest first`} grid={grid} setGrid={setGrid} />
+      <Collection
+        key={which + grid}
+        grid={grid}
+        top={px(64) + px(62) + px(60)}
         paging={paging}
-        note={`${shown.length} to do`}
-        render={f => {
-          wantCovers([f]);
-          const ch = rowH - px(14);
-          return (
-            <Pressable key={f.lib.path + f.book.key} style={[st.row, {height: rowH, alignItems: 'center'}]} onPress={() => onOpen(f)}>
-              <Cover uri={cover(f)} w={Math.round((ch * 2) / 3)} h={ch} title={f.meta.title || f.book.fileTitle} />
-              <View style={[st.rowText, {alignSelf: 'stretch'}]}>
-                <Text style={st.rowTitle} numberOfLines={2}>{f.meta.title || f.book.fileTitle}</Text>
-                <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{[f.lib.name, f.book.folder, f.book.added ? `Added ${dateText(f.book.added)}` : ''].filter(Boolean).join('  ·  ')}</Text>
-                <View style={[st.pillLine, {marginTop: px(6)}]}>
-                  {noGenre(f) ? <Pill small active label="No genre" /> : null}
-                  {noSum(f) ? <Pill small active label="No summary" /> : null}
-                </View>
-              </View>
-              <Btn small dark label="Add details" onPress={() => onEdit(f)} style={{marginLeft: px(8)}} />
-            </Pressable>
-          );
-        }}
+        items={shown.map(f => ({
+          key: f.lib.path + f.book.key,
+          title: f.meta.title || f.book.fileTitle,
+          sub: [f.book.folder || f.lib.name, f.book.added ? dateText(f.book.added) : ''].filter(Boolean).join('  ·  '),
+          cover: cover(f),
+          marks: [noGenre(f) ? 'No genre' : '', noSum(f) ? 'No summary' : ''].filter(Boolean),
+          onPress: () => onOpen(f),
+          action: {icon: 'edit', label: 'Add details', dark: true, onPress: () => onEdit(f)},
+        }))}
       />
     </>
   );
 }
 
-// ---------- "view all" grid ----------
+// ---------- "view all" pages ----------
 type GItem = {key: string; title: string; sub: string; cover: string | null | undefined; f?: Found; onPress: () => void};
-function Gallery({items, paging, wantCovers}: {items: GItem[]; paging: Settings['paging']; wantCovers: (l: Found[]) => void}) {
-  const [pg, setPg] = useState(0);
-  const cols = 4;
-  const cw = Math.floor((W - px(32) - (cols - 1) * px(14)) / cols);
-  const cellH = Math.round(cw * 1.5) + px(64);
-  const rows = Math.max(1, Math.floor((H - px(64) - TASK_H - px(64) - px(16)) / cellH));
-  const per = paging === 'scroll' ? items.length : rows * cols;
-  const pages = Math.max(1, Math.ceil(items.length / per));
-  const p = Math.min(pg, pages - 1);
-  const shown = items.slice(p * per, (p + 1) * per);
-  wantCovers(shown.map(x => x.f).filter(Boolean) as Found[]);
-  const grid = (
-    <View style={{flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: px(16), paddingTop: px(12)}}>
-      {shown.map((x, i) => (
-        <Pressable key={x.key} onPress={x.onPress} style={{width: cw, height: cellH, marginLeft: i % cols ? px(14) : 0}}>
-          <Card uri={x.cover} w={cw} title={x.title} />
-          <Text style={st.cardTitle} numberOfLines={1}>{x.title}</Text>
-          <Text style={st.cardSub} numberOfLines={1}>{x.sub}</Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-  if (!items.length) return <View style={[st.pad, {flex: 1}]}><Text style={st.para}>Nothing here yet.</Text></View>;
-  return paging === 'scroll' ? (
-    <ScrollView style={{flex: 1}}>{grid}</ScrollView>
-  ) : (
+function Gallery({items, label, paging, grid, setGrid, wantCovers}: {items: GItem[]; label: string; paging: Settings['paging']; grid: boolean; setGrid: (g: boolean) => void; wantCovers: (l: Found[]) => void}) {
+  wantCovers(items.map(x => x.f).filter(Boolean) as Found[]);
+  return (
     <>
-      <View style={{flex: 1}}>{grid}</View>
-      <Pager p={p} pages={pages} setP={setPg} />
+      <Toolbar text={label} grid={grid} setGrid={setGrid} />
+      <Collection key={String(grid)} grid={grid} top={px(64) + px(60)} paging={paging} items={items.map(x => ({key: x.key, title: x.title, sub: x.sub, cover: x.cover, onPress: x.onPress}))} />
     </>
   );
 }
@@ -1694,6 +1731,8 @@ function Home(props: {
   genres: {name: string; count: number; f?: Found}[];
   searches: string[];
   paging: Settings['paging'];
+  grid: boolean;
+  setGrid: (g: boolean) => void;
   cover: (f: Found) => string | null;
   wantCovers: (l: Found[]) => void;
   onSearched: (q: string) => void;
@@ -1705,7 +1744,7 @@ function Home(props: {
   onLibrary: (l: Lib) => void;
   onAddLibrary: () => void;
 }) {
-  const {libs, index, ready, recent, genres, searches, paging, cover, wantCovers, onSearched, onForgetSearch, onOpen, onFound, onGenre, onViewAll, onAddLibrary} = props;
+  const {libs, index, ready, recent, genres, searches, paging, grid, setGrid, cover, wantCovers, onSearched, onForgetSearch, onOpen, onFound, onGenre, onViewAll, onAddLibrary} = props;
   const [q, setQ] = useState('');
   const [scopeOpen, setScopeOpen] = useState(false);
   const [scope, setScope] = useState('all');
@@ -1717,7 +1756,7 @@ function Home(props: {
     <>
       <View style={[st.searchRow, {flexDirection: 'row', alignItems: 'center'}]}>
         <View style={[st.searchBox, {flex: 1}]}>
-          <View style={{marginRight: px(10)}}><SearchIcon c={BLACK} size={px(22)} /></View>
+          <View style={{marginRight: px(10)}}><Icon name="search" size={px(26)} /></View>
           <TextInput
             style={st.searchInput}
             value={q}
@@ -1728,13 +1767,11 @@ function Home(props: {
             onSubmitEditing={() => onSearched(q)}
           />
           {q ? (
-            <Pressable onPress={() => setQ('')} hitSlop={px(10)} accessibilityLabel="Clear search">
-              <Text style={st.searchClear}>✕</Text>
-            </Pressable>
+            <IconBtn bare name="close" label="Clear search" onPress={() => setQ('')} size={px(40)} />
           ) : null}
         </View>
         <Pressable onPress={() => setScopeOpen(!scopeOpen)} style={[st.filterBtn, (scopeOpen || scope !== 'all') && st.btnDark]} accessibilityLabel="Search filters">
-          <SlidersIcon c={scopeOpen || scope !== 'all' ? '#ffffff' : BLACK} size={px(24)} />
+          <Icon name="settings" size={px(28)} color={scopeOpen || scope !== 'all' ? '#ffffff' : BLACK} />
         </Pressable>
       </View>
       {scopeOpen ? (
@@ -1751,32 +1788,28 @@ function Home(props: {
       .filter(f => scope === 'all' || f.lib.path === scope)
       .filter(f => words.every(w => title(f).toLowerCase().includes(w) || f.book.fileTitle.toLowerCase().includes(w)))
       .sort((a, b) => Number(!title(a).toLowerCase().startsWith(words[0])) - Number(!title(b).toLowerCase().startsWith(words[0])) || title(a).localeCompare(title(b)));
-    const rowH = px(112);
+    wantCovers(found.slice(0, 24));
     return (
       <View style={{flex: 1}}>
         {search}
-        <Text style={[st.small, {paddingHorizontal: px(16), marginBottom: px(4)}]}>
-          {!ready && !found.length ? 'Searching your libraries…' : `${found.length} title${found.length === 1 ? '' : 's'} found`}
-        </Text>
+        <Toolbar text={!ready && !found.length ? 'Searching your libraries…' : `${found.length} title${found.length === 1 ? '' : 's'}`} grid={grid} setGrid={setGrid} />
         {found.length ? (
-          <Paged
-            key={q + scope}
-            items={found}
-            rowH={rowH}
-            top={px(64) + px(78) + (scopeOpen ? px(62) : 0) + px(24)}
+          <Collection
+            key={q + scope + grid}
+            grid={grid}
+            top={px(64) + px(78) + (scopeOpen ? px(62) : 0) + px(60)}
             paging={paging}
-            render={f => {
-              wantCovers([f]);
-              return (
-                <SnapRow
-                  key={f.lib.path + f.book.key}
-                  x={{lib: f.lib.path, libName: f.lib.name, key: f.book.key, title: title(f), folder: f.book.folder, genres: f.meta.genres, at: 0}}
-                  cover={cover(f)}
-                  h={rowH}
-                  onPress={() => { onSearched(q); onFound(f); }}
-                />
-              );
-            }}
+            items={found.map(f => ({
+              key: f.lib.path + f.book.key,
+              title: title(f),
+              sub: f.book.folder || f.lib.name,
+              cover: cover(f),
+              pills: f.meta.genres,
+              onPress: () => {
+                onSearched(q);
+                onFound(f);
+              },
+            }))}
           />
         ) : ready ? (
           <Text style={[st.para, st.pad]}>No titles match. Try fewer words.</Text>
@@ -1795,13 +1828,11 @@ function Home(props: {
       <View style={{flexDirection: 'row', alignItems: 'center'}}>
         {!scroll && pages > 1 ? (
           <>
-            <Pressable disabled={page <= 0} onPress={() => setPage(page - 1)} hitSlop={px(8)} style={[st.miniArrow, page <= 0 && st.dim]}><Text style={st.miniArrowText}>‹</Text></Pressable>
-            <Pressable disabled={page >= pages - 1} onPress={() => setPage(page + 1)} hitSlop={px(8)} style={[st.miniArrow, page >= pages - 1 && st.dim]}><Text style={st.miniArrowText}>›</Text></Pressable>
+            <IconBtn name="back" label="Previous" size={px(38)} disabled={page <= 0} onPress={() => setPage(page - 1)} style={{marginLeft: px(6)}} />
+            <IconBtn name="forward" label="Next" size={px(38)} disabled={page >= pages - 1} onPress={() => setPage(page + 1)} style={{marginLeft: px(6)}} />
           </>
         ) : null}
-        <Pressable onPress={() => onViewAll(what)} hitSlop={px(8)}>
-          <Text style={st.viewAll}>View all</Text>
-        </Pressable>
+        <IconBtn name="arrow-right" label="View all" size={px(38)} onPress={() => onViewAll(what)} style={{marginLeft: px(10)}} />
       </View>
     </View>
   );
@@ -1830,7 +1861,7 @@ function Home(props: {
         <View style={[st.welcome, {marginHorizontal: px(16)}]}>
           <Text style={st.h2}>Welcome to InkShelf</Text>
           <Text style={[st.para, {fontSize: px(18)}]}>Pick a folder with your books (EPUB, PDF and more) and it becomes a library you can filter, search and bookmark.</Text>
-          <Btn dark label="＋  Add your first library" onPress={onAddLibrary} />
+          <Btn dark icon="folder-plus" label="Add your first library" onPress={onAddLibrary} />
         </View>
       ) : null}
 
@@ -1838,7 +1869,7 @@ function Home(props: {
         <View style={{paddingHorizontal: px(16)}}>
           <View style={st.secHead}>
             <Text style={st.secTitle}>Recent searches</Text>
-            <Pressable onPress={() => onForgetSearch('')} hitSlop={px(8)}><Text style={st.viewAll}>Clear all</Text></Pressable>
+            <IconBtn name="trash" label="Clear all searches" size={px(38)} onPress={() => onForgetSearch('')} />
           </View>
           <View style={[st.pillWrap, {maxHeight: px(84), overflow: 'hidden'}]}>
             {searches.map(t => (
@@ -1846,8 +1877,8 @@ function Home(props: {
                 <Pressable onPress={() => setQ(t)} hitSlop={px(4)}>
                   <Text style={st.chipText}>{t}</Text>
                 </Pressable>
-                <Pressable onPress={() => onForgetSearch(t)} hitSlop={px(8)} accessibilityLabel={`Forget ${t}`}>
-                  <Text style={st.chipX}>✕</Text>
+                <Pressable onPress={() => onForgetSearch(t)} hitSlop={px(8)} accessibilityLabel={`Forget ${t}`} style={{marginLeft: px(8)}}>
+                  <Icon name="close" size={px(16)} color="#555555" />
                 </Pressable>
               </View>
             ))}
@@ -1932,7 +1963,7 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
   const shown = list.slice((pg - 1) * rowsPer, pg * rowsPer);
   return (
     <>
-      <Header title="Choose a folder" left="‹ Cancel" onLeft={onCancel} />
+      <Header title="Choose a folder" left="Cancel" onLeft={onCancel} />
       <View style={[st.pad, {flex: 1}]}>
         {!path ? (
           <>
@@ -1947,8 +1978,8 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
           <>
             <Text style={st.small} numberOfLines={2}>{path}</Text>
             <View style={{flexDirection: 'row', marginVertical: px(10)}}>
-              <Btn small label="‹ Up" onPress={() => onGo(isRoot ? null : parent)} />
-              <Btn small dark label="✓  Use this folder" onPress={() => onPick(path)} style={{marginLeft: px(10), flex: 1}} />
+              <Btn small icon="up" a11y="Up one folder" onPress={() => onGo(isRoot ? null : parent)} />
+              <Btn small dark icon="check" label="Use this folder" onPress={() => onPick(path)} style={{marginLeft: px(10), flex: 1}} />
             </View>
             {entries === null ? <Text style={st.para}>Loading…</Text> : null}
             {entries && !entries.length ? <Text style={st.para}>This folder is empty.</Text> : null}
@@ -1968,9 +1999,9 @@ function FolderBrowser({path, onGo, onPick, onCancel}: {path: string | null; onG
       </View>
       {path && pages > 1 ? (
         <View style={st.pager}>
-          <Pressable disabled={pg <= 1} onPress={() => setPg(pg - 1)} style={[st.pageBtn, pg <= 1 && st.dim]}><Text style={st.pageBtnText}>‹ Prev</Text></Pressable>
-          <Text style={st.pageText}>{`Page ${pg} of ${pages}`}</Text>
-          <Pressable disabled={pg >= pages} onPress={() => setPg(pg + 1)} style={[st.pageBtn, pg >= pages && st.dim]}><Text style={st.pageBtnText}>Next ›</Text></Pressable>
+          <IconBtn name="back" label="Previous page" disabled={pg <= 1} onPress={() => setPg(pg - 1)} />
+          <Text style={st.pageText}>{`${pg} / ${pages}`}</Text>
+          <IconBtn name="forward" label="Next page" disabled={pg >= pages} onPress={() => setPg(pg + 1)} />
         </View>
       ) : null}
     </>
@@ -1995,7 +2026,7 @@ function PillEditor({label, values, setValues, used, placeholder}: {label: strin
       </View>
       <View style={{flexDirection: 'row', alignItems: 'center'}}>
         <TextInput style={[st.input, {flex: 1}]} value={text} onChangeText={setText} placeholder={placeholder} onSubmitEditing={add} />
-        <Btn small label="Add" onPress={add} style={{marginLeft: px(8)}} />
+        <IconBtn name="plus" label="Add" onPress={add} style={{marginLeft: px(8)}} />
       </View>
       {suggestions.length > 0 && (
         <>
@@ -2020,7 +2051,7 @@ function EditPage({book, meta, allGenres, allTags, cover, onSave, onCancel}: {bo
   const langs = Array.from(new Set([guess, 'Chinese', 'Korean', 'Japanese', 'English'].filter(Boolean) as string[])).filter(l => l !== language);
   return (
     <>
-      <Header title="Edit details" left="‹ Cancel" onLeft={onCancel} />
+      <Header title="Edit details" left="Cancel" onLeft={onCancel} />
       <ScrollView contentContainerStyle={st.pad} keyboardShouldPersistTaps="handled">
         <Text style={st.label}>Title</Text>
         <TextInput style={st.input} value={title} onChangeText={setTitle} />
@@ -2048,7 +2079,7 @@ function EditPage({book, meta, allGenres, allTags, cover, onSave, onCancel}: {bo
         <View style={{flexDirection: 'row', alignItems: 'center'}}>
           <Cover uri={img || cover} w={px(100)} h={px(150)} title={title} />
           <View style={{flex: 1, marginLeft: px(14)}}>
-            <Btn small label="Choose an image…" onPress={async () => {
+            <Btn small icon="image" label="Choose an image" onPress={async () => {
               try {
                 const p = await FileSelector.selectImage();
                 if (p) setImg(String(p));
@@ -2060,7 +2091,8 @@ function EditPage({book, meta, allGenres, allTags, cover, onSave, onCancel}: {bo
 
         <Btn
           dark
-          label="Save"
+          icon="check"
+          a11y="Save"
           onPress={() =>
             onSave({
               title: title.trim() && title.trim() !== book.fileTitle ? title.trim() : undefined,
@@ -2143,7 +2175,7 @@ const st = StyleSheet.create({
   noCoverText: {color: BLACK, textAlign: 'center', fontWeight: 'bold'},
   bookTitle: {fontSize: px(26), lineHeight: px(34), fontWeight: 'bold', color: BLACK},
   bookLeft: {borderRightWidth: 1.5, borderColor: '#888888'},
-  startBtn: {height: px(48), backgroundColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  startBtn: {height: px(48), flexDirection: 'row', backgroundColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
   startText: {fontSize: px(18), fontWeight: 'bold', color: '#ffffff'},
   editBtn: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(20), paddingHorizontal: px(14), paddingVertical: px(5)},
   editText: {fontSize: px(17), color: BLACK},
@@ -2151,7 +2183,7 @@ const st = StyleSheet.create({
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
   taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
   task: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  taskIcon: {width: px(52), height: px(36), borderRadius: px(18), alignItems: 'center', justifyContent: 'center'},
+  taskIcon: {width: px(64), height: px(48), borderRadius: px(24), alignItems: 'center', justifyContent: 'center'},
   taskText: {fontSize: px(13), color: BLACK, marginTop: px(1)},
   sheetWrap: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)'},
   sheet: {backgroundColor: '#ffffff', borderTopLeftRadius: px(28), borderTopRightRadius: px(28), borderWidth: 2, borderBottomWidth: 0, borderColor: BLACK, paddingHorizontal: px(22), paddingTop: px(10), paddingBottom: px(26)},
@@ -2179,7 +2211,7 @@ const st = StyleSheet.create({
   volBadgeText: {fontSize: px(12), color: '#ffffff', fontWeight: 'bold'},
   libChip: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(14), height: px(48), marginRight: px(10), marginBottom: px(10)},
   libChipText: {fontSize: px(18), color: BLACK, marginLeft: px(8)},
-  taskHome: {width: px(60), height: px(40), borderRadius: px(20), borderWidth: 1.5, borderColor: BLACK},
+  taskHome: {width: px(76), height: px(50), borderRadius: px(25), borderWidth: 1.5, borderColor: BLACK},
   badge: {position: 'absolute', top: -px(4), right: -px(2), minWidth: px(20), height: px(20), borderRadius: px(10), backgroundColor: BLACK, borderWidth: 1.5, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
   badgeText: {fontSize: px(11), fontWeight: 'bold', color: '#ffffff'},
   chipsRow: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', paddingHorizontal: px(16), paddingVertical: px(12)},
@@ -2212,7 +2244,12 @@ const st = StyleSheet.create({
   noteText: {fontSize: px(19), lineHeight: px(28), color: BLACK},
   noteTitleInput: {fontSize: px(20), fontWeight: 'bold', color: BLACK, borderBottomWidth: 1.5, borderColor: '#555555', paddingVertical: px(6), marginBottom: px(8)},
   noteTextInput: {flex: 1, fontSize: px(19), lineHeight: px(28), color: BLACK, textAlignVertical: 'top'},
-  swatch: {width: px(40), height: px(40), borderRadius: px(20), borderWidth: 1.5, borderColor: BLACK},
+  swatch: {width: px(42), height: px(42), borderRadius: px(21), borderWidth: 1.5, borderColor: BLACK, alignItems: 'center', justifyContent: 'center'},
+  iconRing: {borderWidth: 1.5, borderColor: BLACK, backgroundColor: '#ffffff'},
+  headerName: {fontSize: px(22), fontWeight: 'bold', color: BLACK, marginRight: px(4), maxWidth: W - px(300)},
+  markBadge: {position: 'absolute', left: px(6), top: px(6), backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(6), paddingVertical: px(2)},
+  noteTabPlus: {flexGrow: 0, flexShrink: 0, flexBasis: px(52), width: px(52), borderStyle: 'dashed', backgroundColor: '#ffffff', marginRight: 0},
+  toolbar: {height: px(60), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(16)},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},

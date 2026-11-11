@@ -34,8 +34,9 @@ export type Settings = {
   libraryGrid: boolean;
   volumeGrid: boolean;
   showFilters: boolean;
+  views: {[page: string]: 'list' | 'grid'}; // list or grid on Bookmarks, New, Search and View all
 };
-export const DEFAULT_SETTINGS: Settings = {paging: 'arrows', libraryGrid: false, volumeGrid: false, showFilters: true};
+export const DEFAULT_SETTINGS: Settings = {paging: 'arrows', libraryGrid: false, volumeGrid: false, showFilters: true, views: {gallery: 'grid'}};
 
 /** a book remembered outside its library (recently read, bookmarks) */
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
@@ -71,7 +72,8 @@ export async function saveLibraries(libs: Lib[]) {
 export async function loadSettings(): Promise<Settings> {
   const t = await readText(`${await pluginDir()}/settings.json`);
   try {
-    return {...DEFAULT_SETTINGS, ...(t ? JSON.parse(t) : {})};
+    const v = t ? JSON.parse(t) : {};
+    return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}};
   } catch (e) {
     return DEFAULT_SETTINGS;
   }
