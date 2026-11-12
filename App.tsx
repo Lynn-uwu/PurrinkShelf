@@ -3798,8 +3798,8 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
     const row = (title: string, text: string, on: boolean, flip: () => void, extra?: React.ReactNode) => (
       <View style={st.showRow} key={title}>
         <View style={{flex: 1, marginRight: px(12)}}>
-          <Text style={st.rowTitle}>{title}</Text>
-          <Text style={[st.small, {marginTop: px(2)}]}>{text}</Text>
+          <Text style={st.showTitle}>{title}</Text>
+          <Text style={[st.small, {marginTop: px(3)}]}>{text}</Text>
           {on && extra ? extra : null}
         </View>
         <Pill label={on ? 'On' : 'Off'} active={on} onPress={flip} width={px(84)} />
@@ -3811,7 +3811,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
         <CardHeader title="Show and hide" onBack={back} onClose={onClose} />
         <View style={[st.pad, {flex: 1}]}>
           <Text style={[st.small, {marginBottom: px(4)}]}>Off hides a part from view. Nothing is deleted: turn it on again and it's all back.</Text>
-          <Text style={[st.section, {marginTop: px(8)}]}>Profile page</Text>
+          <Text style={[st.section, st.showSection, {marginTop: px(14)}]}>Profile page</Text>
           {row('Reading goal', 'How many books you want to finish this year, and how far along you are.', ...prof('goal'), (
             <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(6)}}>
               <Text style={[st.small, {color: BLACK, marginRight: px(10)}]}>{`Books in ${new Date().getFullYear()}`}</Text>
@@ -3824,7 +3824,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           {row('Time spent reading', 'About how many hours you read this year, from the length of finished books.', ...prof('time'))}
           {row('Reading days', 'How many days in a row you opened a book, and your longest run.', ...prof('streak'))}
           {row('Top genres', 'The genres you read the most.', ...prof('genres'))}
-          <Text style={[st.section, {marginTop: px(14)}]}>Book pages</Text>
+          <Text style={[st.section, st.showSection, {marginTop: px(26)}]}>Book pages</Text>
           {row('Reading time', "A book's number of words and about how long it takes to read.", settings.length, () => change({length: !settings.length}))}
           {row('Content warnings', 'Warnings such as violence. Off hides them on book pages and in the filters.', settings.warnings, () => change({warnings: !settings.warnings}))}
           {row('Author from the file name', 'For "Title - Author" files, the part after the dash becomes the author.', settings.dashAuthor !== false, () => change({dashAuthor: settings.dashAuthor === false}))}
@@ -5705,7 +5705,9 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
-  showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(8), borderBottomWidth: 1, borderColor: '#dddddd'},
+  showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},
+  showSection: {fontSize: px(22), marginBottom: px(2), paddingBottom: px(5), borderColor: BLACK},
+  showTitle: {fontSize: px(16), lineHeight: px(20), fontWeight: '600', color: BLACK},
   catEye: {width: px(7), height: px(7), borderRadius: px(4), backgroundColor: '#ffffff'},
   descFrame: {flex: 1, borderWidth: 2.5, borderColor: BLACK, borderRadius: px(22), alignItems: 'center', justifyContent: 'center'},
   byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
