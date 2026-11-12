@@ -1,0 +1,16 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'reddit'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}, deviceScaleFactor: 2});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const tab = n => p.getByTestId('taskbar').getByLabel(n, {exact: true});
+  const shot = async n => { await p.waitForTimeout(700); await p.screenshot({path: path.join(out, n + '.png')}); console.log(n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1&goal=1&cat=1'); await p.waitForTimeout(15000);
+  await shot('1-home');
+  await tab('Library').click(); await shot('2-library');
+  await tab('Home').click(); await p.getByText('Moon Over the Jade Pavilion').first().click(); await shot('3-book');
+  await p.getByLabel(/^3 notes/).first().click(); await shot('4-notes');
+  await p.getByLabel('Back to the book', {exact: true}).click(); await p.mouse.click(350, 12); await p.waitForTimeout(400);
+  await tab('Profile').click(); await shot('5-profile');
+  await p.getByLabel('Settings', {exact: true}).first().click(); await p.waitForTimeout(400);
+  await p.getByText('Appearance', {exact: true}).click(); await shot('6-appearance');
+  await b.close(); })();
