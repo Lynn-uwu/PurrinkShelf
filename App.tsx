@@ -21,7 +21,7 @@ const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
 const px = (n: number) => Math.round(n * S);
 const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
-const TASK_H = px(66);
+const TASK_H = px(80);
 const GRID_PER_PAGE = 12;
 const READ = 'plugin.permission.FILE:READ';
 const WRITE = 'plugin.permission.FILE:WRITE';
@@ -773,7 +773,9 @@ function InkShelfApp(): React.JSX.Element {
   }
   // ---------- collections ----------
   const collections = app.collections || STARTER_COLLECTIONS;
-  const [colSel, setColSel] = useState<string>('bookmarks');
+  const [colSel, setColSel] = useState<string | null>(null); // null = the grid of collections
+  const [colEdit, setColEdit] = useState(false);
+  const [colDrop, setColDrop] = useState(false);
   const [helpQ, setHelpQ] = useState('');
   const changeCollections = (f: (c: Coll[]) => Coll[]) => changeApp(a => ({...a, collections: f(a.collections || STARTER_COLLECTIONS)}));
   const factsOf = (f: Found) => ({lib: f.lib, book: f.book, meta: f.meta});
@@ -1330,70 +1332,102 @@ function InkShelfApp(): React.JSX.Element {
     );
   }
 
-  // ----- collections: bookmarks, favourites, in progress, completed, and your own -----
+  // ----- collections: a grid of collections; open one to see its books -----
   if (view.kind === 'bookmarks') {
-    const cur = collections.find(c => c.id === colSel);
-    const members = cur ? index.filter(f => inCollection(cur, factsOf(f))) : [];
-    if (cur) wantCovers(members.slice(0, 12));
-    const chipList = [{id: 'bookmarks', name: 'Bookmarks', n: app.bookmarks.length}, ...collections.map(c => ({id: c.id, name: c.name, n: index.filter(f => inCollection(c, factsOf(f))).length}))];
-    // as tall as the chips need (they wrap onto more lines)
-    let line = 0, lines = 1;
-    for (const c of chipList) {
-      const w = (c.name.length + String(c.n).length + 2) * px(17) * 0.56 + px(34);
-      if (line + w > W - px(24)) { lines++; line = 0; }
-      line += w;
+    const all = [
+      {id: 'bookmarks', name: 'Bookmarks', items: app.bookmarks.map(x => ({key: x.lib + x.key, cover: x.cover || null, title: x.title}))},
+      ...collections.map(c => {
+        const fs = index.filter(f => inCollection(c, factsOf(f)));
+        return {id: c.id, name: c.name, found: fs, items: fs.map(f => ({key: f.lib.path + f.book.key, cover: xCover(f), title: f.meta.title || f.book.fileTitle}))};
+      }),
+    ];
+    const cur = colSel ? all.find(c => c.id === colSel) : undefined;
+    const coll = cur ? collections.find(c => c.id === cur.id) : undefined;
+    const back = () => { setColSel(null); setColEdit(false); setColDrop(false); };
+    if (!cur) {
+      wantCovers(all.flatMap(c => ((c as any).found || []).slice(0, 4)));
+      return shell(
+        <>
+          <Header title="Collections" right={<IconBtn bare name="plus" label="New collection" onPress={() => setScreen({kind: 'coledit', id: null})} iconSize={px(28)} style={{marginRight: px(4)}} />} />
+          <CollectionGrid
+            items={all.map(c => ({id: c.id, name: c.name, count: c.items.length, covers: c.items.slice(0, 4).map(i => ({cover: i.cover, title: i.title})), auto: !!collections.find(x => x.id === c.id)?.rules.length}))}
+            onOpen={id => { setColSel(id); setColEdit(false); }}
+            onNew={() => setScreen({kind: 'coledit', id: null})}
+          />
+          {taskbar('bookmarks')}
+        </>,
+      );
     }
-    const chipH = lines * px(44) + px(14);
+    const members = (cur as any).found as Found[] | undefined;
+    if (members) wantCovers(members.slice(0, 12));
     return shell(
       <>
-        <Header
-          title="Collections"
-          right={
-            <>
-              {cur ? <IconBtn bare name="edit" label={`Edit ${cur.name}`} onPress={() => setScreen({kind: 'coledit', id: cur.id})} iconSize={px(26)} style={{marginRight: px(4)}} /> : null}
-              <IconBtn bare name="plus" label="New collection" onPress={() => setScreen({kind: 'coledit', id: null})} iconSize={px(28)} style={{marginRight: px(4)}} />
-            </>
-          }
-        />
-        <View style={[st.colChips, {height: chipH}]}>
-          {chipList.map(c => (
-            <Pill key={c.id} label={`${c.name}  ${c.n}`} active={colSel === c.id || (!cur && c.id === 'bookmarks')} onPress={() => setColSel(c.id)} />
-          ))}
+        <View style={st.header}>
+          <View style={{minWidth: px(110), flexDirection: 'row'}}>
+            <IconBtn bare name="back" label="All collections" onPress={back} iconSize={px(30)} />
+          </View>
+          <Pressable style={{flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center'}} onPress={() => setColDrop(!colDrop)} accessibilityLabel="Choose a collection">
+            <Text style={st.headerName} numberOfLines={1}>{cur.name}</Text>
+            <Icon name={colDrop ? 'up' : 'down'} size={px(24)} />
+          </Pressable>
+          <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end'}}>
+            <IconBtn name={colEdit ? 'check' : 'edit'} dark={colEdit} label={colEdit ? 'Done editing' : `Edit ${cur.name}`} onPress={() => setColEdit(!colEdit)} style={{marginRight: px(8)}} />
+            <CloseBtn />
+          </View>
         </View>
-        {cur ? (
+        {colEdit ? (
+          <View style={st.editBar}>
+            <Text style={[st.small, {flex: 1, color: BLACK}]}>{cur.id === 'bookmarks' ? 'Tap ✕ to remove a bookmark.' : 'Tap ✕ to take a book out.'}</Text>
+            {coll ? <Btn small icon="filter" label="Rules and name" onPress={() => setScreen({kind: 'coledit', id: coll.id})} /> : null}
+          </View>
+        ) : null}
+        {coll ? (
           <>
-            <Toolbar text={`${members.length} book${members.length === 1 ? '' : 's'}${cur.rules.length ? '  ·  adds books by itself' : ''}`} grid={isGrid('collection')} setGrid={setGridFor('collection')} />
+            <Toolbar text={`${cur.items.length} book${cur.items.length === 1 ? '' : 's'}${coll.rules.length ? '  ·  adds books by itself' : ''}`} grid={isGrid('collection')} setGrid={setGridFor('collection')} />
             <Collection
-              key={cur.id + isGrid('collection')}
+              key={coll.id + isGrid('collection') + colEdit}
               grid={isGrid('collection')}
-              top={px(64) + chipH + px(60)}
+              top={px(64) + (colEdit ? px(58) : 0) + px(60)}
               paging={settings.paging}
-              empty={cur.rules.length ? 'No books fit this collection yet. Tap the pencil to change its rules, or add books from a book page.' : 'Empty. Add books from a book page (the collections button), or tap the pencil to add rules.'}
-              items={members.map(f => ({
+              empty={coll.rules.length ? 'No books fit this collection yet. Tap the pencil, then Rules and name, to change what it collects.' : 'Empty. Add books from a book page (the collections button), or tap the pencil to add rules.'}
+              items={(members || []).map(f => ({
                 key: f.lib.path + f.book.key,
                 title: f.meta.title || f.book.fileTitle,
                 sub: [f.meta.reading ? `${readLabel(f.meta.reading.state)} · ${day(f.meta.reading.at)}` : '', f.book.folder || f.lib.name].filter(Boolean).join('  ·  '),
                 cover: xCover(f),
                 pills: f.meta.genres,
                 onPress: () => goBook(snapOf(f), 'bookmarks'),
-                action: {icon: 'close' as IconName, label: `Take out of ${cur.name}`, onPress: () => toggleIn(cur, f.lib, f.book.key, false)},
+                action: colEdit ? {icon: 'close' as IconName, label: `Take out of ${coll.name}`, onPress: () => toggleIn(coll, f.lib, f.book.key, false)} : undefined,
               }))}
             />
           </>
         ) : (
           <SnapList
+            key={String(colEdit)}
             items={app.bookmarks}
             libs={libs}
             paging={settings.paging}
             grid={isGrid('bookmarks')}
             setGrid={setGridFor('bookmarks')}
-            top={chipH}
+            top={colEdit ? px(58) : 0}
             empty="No bookmarks yet. Open a book and tap Bookmark to keep it here."
             onOpen={x => goBook(x, 'bookmarks')}
-            onRemove={x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))}))}
+            onRemove={colEdit ? x => changeApp(a => ({...a, bookmarks: a.bookmarks.filter(y => !same(y, x.lib, x.key))})) : undefined}
           />
         )}
         {taskbar('bookmarks')}
+        {colDrop ? (
+          <CategorySheet
+            title="Collections"
+            even
+            allLabel="All collections"
+            tree={all.map(c => ({name: c.id, label: c.name, depth: 0, count: c.items.length}))}
+            total={all.length}
+            current={cur.id}
+            onPick={id => { setColDrop(false); setColEdit(false); setColSel(id); }}
+            onClose={() => setColDrop(false)}
+          />
+        ) : null}
       </>,
     );
   }
@@ -1425,9 +1459,10 @@ function InkShelfApp(): React.JSX.Element {
           onSave={c => {
             changeCollections(list => (list.some(x => x.id === c.id) ? list.map(x => (x.id === c.id ? c : x)) : [...list, c]));
             setColSel(c.id);
+            setColEdit(false);
             setScreen({kind: 'bookmarks'});
           }}
-          onDelete={existing ? () => { changeCollections(list => list.filter(x => x.id !== existing.id)); setColSel('bookmarks'); setScreen({kind: 'bookmarks'}); } : undefined}
+          onDelete={existing ? () => { changeCollections(list => list.filter(x => x.id !== existing.id)); setColSel(null); setScreen({kind: 'bookmarks'}); } : undefined}
         />
       </>,
     );
@@ -2561,20 +2596,39 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
     {t: 'bookmarks', icon: 'collections', label: 'Collections'},
     {t: 'settings', icon: 'settings', label: 'Settings'},
   ];
+  const short: {[t in Tab]: string} = {library: 'Library', new: 'New', home: 'Home', bookmarks: 'Collections', settings: 'Settings'};
   return (
     <View style={st.taskbar}>
       {items.map(({t, icon, label}) => {
         const on = t === tab;
+        const badge =
+          t === 'new' && newCount > 0 ? (
+            <View style={[st.badge, {top: on ? px(2) : -px(4), right: on ? px(2) : -px(10)}]}>
+              <Text style={st.badgeText}>{newCount > 99 ? '99+' : newCount}</Text>
+            </View>
+          ) : null;
         return (
           <Pressable key={t} onPress={() => onTab(t)} style={st.task} accessibilityRole="button" accessibilityLabel={label}>
-            <View style={[st.taskIcon, t === 'home' && st.taskHome, on && st.btnDark]}>
-              <Icon name={icon} size={px(30)} color={on ? '#ffffff' : BLACK} />
-              {t === 'new' && newCount > 0 ? (
-                <View style={[st.badge, on && {backgroundColor: '#ffffff', borderColor: BLACK}]}>
-                  <Text style={[st.badgeText, on && {color: BLACK}]}>{newCount > 99 ? '99+' : newCount}</Text>
+            {on ? (
+              <>
+                {/* the open tab rises out of the bar in a notch, like a call-to-action button */}
+                <View style={st.notch} />
+                <View style={st.notchCover} />
+                <View style={st.taskCta}>
+                  <Icon name={icon} size={px(32)} />
+                  {badge}
                 </View>
-              ) : null}
-            </View>
+                <Text style={[st.taskLabel, st.taskLabelOn]} numberOfLines={1}>{short[t]}</Text>
+              </>
+            ) : (
+              <>
+                <View style={{marginTop: px(12)}}>
+                  <Icon name={icon} size={px(28)} color="#555555" />
+                  {badge}
+                </View>
+                <Text style={st.taskLabel} numberOfLines={1}>{short[t]}</Text>
+              </>
+            )}
           </Pressable>
         );
       })}
@@ -2899,8 +2953,11 @@ function LibrarySheet(props: {
 
 
 // ---------- the category picker at the top of the library ----------
-function CategorySheet({tree, total, current, onPick, onClose}: {
-  tree: {name: string; depth: number; count: number}[];
+function CategorySheet({tree, total, current, onPick, onClose, title = 'Category', allLabel = 'All', even}: {
+  even?: boolean; // split into two equal columns (a flat list)
+  title?: string;
+  allLabel?: string;
+  tree: {name: string; depth: number; count: number; label?: string}[];
   total: number;
   current: string | null;
   onPick: (c: string | null) => void;
@@ -2909,9 +2966,9 @@ function CategorySheet({tree, total, current, onPick, onClose}: {
   onLib?: (l: Lib) => void;
   onClose: () => void;
 }) {
-  const rows: {name: string | null; depth: number; count: number}[] = [{name: null, depth: 0, count: total}, ...tree];
+  const rows: {name: string | null; depth: number; count: number; label?: string}[] = [{name: null, depth: 0, count: total}, ...tree];
   // a category and its sub-categories stay together; a second column only when one is full
-  const perCol = 9;
+  const perCol = even ? Math.min(9, Math.max(1, Math.ceil((tree.length + 1) / 2))) : 9;
   const blocks: (typeof rows)[] = [];
   rows.forEach(r => (r.depth === 0 || !blocks.length ? blocks.push([r]) : blocks[blocks.length - 1].push(r)));
   const columns: (typeof rows)[] = [[]];
@@ -2934,30 +2991,27 @@ function CategorySheet({tree, total, current, onPick, onClose}: {
       {list.map(r => {
         const on = r.name === current;
         return (
-          <Pressable key={r.name || '*'} onPress={() => onPick(r.name)} style={[st.catRow, {paddingLeft: px(10) + r.depth * px(18)}, on && st.btnDark]} accessibilityLabel={r.name || 'All'}>
+          <Pressable key={r.name || '*'} onPress={() => onPick(r.name)} style={[st.catRow, {paddingLeft: px(10) + r.depth * px(18)}, on && st.btnDark]} accessibilityLabel={r.label || r.name || allLabel}>
             {r.depth ? <Text style={[st.small, {marginRight: px(4)}, on && {color: '#ffffff'}]}>└</Text> : null}
-            <Text style={[st.catName, {fontSize: px(18)}, r.depth > 0 && {fontWeight: 'normal'}, on && {color: '#ffffff'}]} numberOfLines={1}>{r.name || 'All'}</Text>
+            <Text style={[st.catName, {fontSize: px(18)}, r.depth > 0 && {fontWeight: 'normal'}, on && {color: '#ffffff'}]} numberOfLines={1}>{r.label || r.name || allLabel}</Text>
             <Text style={[st.fCount, on && {color: '#ffffff'}]}>{r.count}</Text>
           </Pressable>
         );
       })}
     </View>
   );
+  // drops down from the title; everything else is dimmed, tap there to close
   return (
-    <View style={st.sheetWrap}>
-      <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel="Close" />
-      <View style={st.sheet}>
-        <Pressable onPress={onClose} hitSlop={px(12)} style={{alignItems: 'center'}}>
-          <View style={st.handle} />
-          <Text style={st.sheetTitle}>Category</Text>
-        </Pressable>
-        <View style={{flexDirection: 'row', height: Math.max(left.length, right.length) * px(52), marginTop: px(8)}}>
+    <View style={st.dropWrap}>
+      <View style={st.drop}>
+        <View style={{flexDirection: 'row', height: Math.max(left.length, right.length) * px(52)}}>
           {col(left)}
-          {right.length ? <View style={{width: px(10)}} /> : null}
-          {right.length ? col(right) : null}
+          <View style={{width: px(10)}} />
+          {right.length ? col(right) : <View style={{flex: 1}} />}
         </View>
         {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
       </View>
+      <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel={`Close ${title.toLowerCase()} list`} />
     </View>
   );
 }
@@ -2972,15 +3026,41 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
   onDelete?: () => void;
 }) {
   const [c, setC] = useState<Coll>(start || {id: Date.now().toString(36), name: '', rules: [], match: 'all', add: [], remove: []});
-  const [pick, setPick] = useState<{title: string; options: string[]; onPick: (v: string) => void; typed?: boolean} | null>(null);
+  const [pick, setPick] = useState<{title: string; options: string[]; onPick: (v: string) => void; typed?: boolean; row: number; current?: string} | null>(null);
+  const rowsY = useRef(0);
+  const rowY = useRef<{[i: number]: number}>({});
   const [typed, setTyped] = useState('');
   const [sure, setSure] = useState(false);
   const setRule = (i: number, r: Partial<Rule>) => setC({...c, rules: c.rules.map((x, j) => (j === i ? {...x, ...r} : x))});
   const fieldName = (f: RuleField) => RULE_FIELDS.find(x => x.id === f)?.label || f;
   const n = count(c);
+  const openField = (i: number) => setPick({row: i, title: 'Look at', current: fieldName(c.rules[i].field), options: RULE_FIELDS.map(x => x.label), onPick: v => setRule(i, {field: RULE_FIELDS.find(x => x.label === v)!.id, value: ''})});
+  const openValue = (i: number) => {
+    const r = c.rules[i];
+    setPick(r.field === 'title'
+      ? {row: i, title: 'Words in the title', options: [], typed: true, onPick: v => setRule(i, {value: v})}
+      : {row: i, title: fieldName(r.field), current: r.value, options: values(r.field), typed: r.field !== 'status' && r.field !== 'fav' && r.field !== 'library', onPick: v => setRule(i, {value: v})});
+  };
+  const ruleRow = (r: Rule, i: number, open?: 'field' | 'value') => (
+    <View style={st.ruleRow}>
+      <Pressable style={[st.ruleBit, open === 'field' && st.ruleOpen]} onPress={() => (open ? setPick(null) : openField(i))} accessibilityLabel="Rule field">
+        <Text style={st.ruleText} numberOfLines={1}>{fieldName(r.field)}</Text>
+        <Icon name={open === 'field' ? 'up' : 'down'} size={px(18)} />
+      </Pressable>
+      <Pressable style={[st.ruleBit, r.op === 'not' && st.btnDark]} onPress={() => setRule(i, {op: r.op === 'has' ? 'not' : 'has'})} accessibilityLabel="Include or exclude">
+        <Text style={[st.ruleText, r.op === 'not' && {color: '#ffffff'}]}>{r.field === 'title' ? (r.op === 'has' ? 'has' : "doesn't have") : r.op === 'has' ? 'is' : 'is not'}</Text>
+      </Pressable>
+      <Pressable style={[st.ruleBit, {flex: 1}, open === 'value' && st.ruleOpen]} onPress={() => (open ? setPick(null) : openValue(i))} accessibilityLabel="Rule value">
+        <Text style={[st.ruleText, !r.value && {color: '#888888'}]} numberOfLines={1}>{r.value || 'choose…'}</Text>
+        <Icon name={open === 'value' ? 'up' : 'down'} size={px(18)} />
+      </Pressable>
+      <IconBtn name="close" label="Remove rule" onPress={() => { setPick(null); setC({...c, rules: c.rules.filter((_, j) => j !== i)}); }} size={px(40)} style={{marginLeft: px(6)}} />
+    </View>
+  );
   return (
     <>
       <Header title={start ? 'Edit collection' : 'New collection'} left="Back" onLeft={onCancel} />
+      <View style={{flex: 1}}>
       <View style={[st.pad, {flex: 1}]}>
         {!start ? (
           <>
@@ -3001,25 +3081,11 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
             <Pill label="any of these fits" active={c.match === 'any'} onPress={() => setC({...c, match: 'any'})} />
           </View>
         ) : null}
-        {c.rules.map((r, i) => (
-          <View key={i} style={st.ruleRow}>
-            <Pressable style={st.ruleBit} onPress={() => setPick({title: 'Look at', options: RULE_FIELDS.map(x => x.label), onPick: v => setRule(i, {field: RULE_FIELDS.find(x => x.label === v)!.id, value: ''})})} accessibilityLabel="Rule field">
-              <Text style={st.ruleText} numberOfLines={1}>{fieldName(r.field)}</Text>
-              <Icon name="down" size={px(18)} />
-            </Pressable>
-            <Pressable style={[st.ruleBit, r.op === 'not' && st.btnDark]} onPress={() => setRule(i, {op: r.op === 'has' ? 'not' : 'has'})} accessibilityLabel="Include or exclude">
-              <Text style={[st.ruleText, r.op === 'not' && {color: '#ffffff'}]}>{r.field === 'title' ? (r.op === 'has' ? 'has' : "doesn't have") : r.op === 'has' ? 'is' : 'is not'}</Text>
-            </Pressable>
-            <Pressable
-              style={[st.ruleBit, {flex: 1}]}
-              onPress={() => (r.field === 'title' ? setPick({title: 'Words in the title', options: [], typed: true, onPick: v => setRule(i, {value: v})}) : setPick({title: fieldName(r.field), options: values(r.field), typed: r.field !== 'status' && r.field !== 'fav' && r.field !== 'library', onPick: v => setRule(i, {value: v})}))}
-              accessibilityLabel="Rule value">
-              <Text style={[st.ruleText, !r.value && {color: '#888888'}]} numberOfLines={1}>{r.value || 'choose…'}</Text>
-              <Icon name="down" size={px(18)} />
-            </Pressable>
-            <IconBtn name="close" label="Remove rule" onPress={() => setC({...c, rules: c.rules.filter((_, j) => j !== i)})} size={px(40)} style={{marginLeft: px(6)}} />
-          </View>
-        ))}
+        <View onLayout={e => (rowsY.current = e.nativeEvent.layout.y)}>
+          {c.rules.map((r, i) => (
+            <View key={i} onLayout={e => (rowY.current[i] = e.nativeEvent.layout.y)}>{ruleRow(r, i)}</View>
+          ))}
+        </View>
         <Btn small icon="plus" label="Add a rule" onPress={() => setC({...c, rules: [...c.rules, {field: 'genre', op: 'has', value: ''}]})} style={{marginTop: px(6)}} />
         <Text style={[st.small, {marginTop: px(10)}]}>{c.rules.length ? `${n} book${n === 1 ? '' : 's'} in it now${c.add.length ? ` (${c.add.length} added by hand)` : ''}. Rules keep it up to date by themselves.` : 'No rules: only books you add from a book page.'}</Text>
         <View style={{flex: 1}} />
@@ -3035,26 +3101,29 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
           )
         ) : null}
       </View>
-      {pick ? (
-        <View style={st.sheetWrap}>
-          <Pressable style={{flex: 1}} onPress={() => setPick(null)} accessibilityLabel="Close" />
-          <View style={st.sheet}>
-            <Pressable onPress={() => setPick(null)} hitSlop={px(12)} style={{alignItems: 'center'}}>
-              <View style={st.handle} />
-              <Text style={st.sheetTitle}>{pick.title}</Text>
-            </Pressable>
-            {pick.typed ? (
-              <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(10)}}>
-                <TextInput style={[st.input, {flex: 1, marginBottom: 0}]} value={typed} onChangeText={setTyped} placeholder="Type it" />
-                <IconBtn dark name="check" label="Use this" onPress={() => { if (typed.trim()) { pick.onPick(typed.trim()); setTyped(''); setPick(null); } }} style={{marginLeft: px(8)}} />
-              </View>
-            ) : null}
-            <View style={[st.pillWrap, {marginTop: px(10)}]}>
-              {pick.options.slice(0, 40).map(o => <Pill key={o} label={o} onPress={() => { pick.onPick(o); setPick(null); }} />)}
+      {pick && c.rules[pick.row] ? (
+        // drops down under the rule; everything else is dimmed (tap there to close)
+        <View style={StyleSheet.absoluteFill}>
+          <Pressable style={[StyleSheet.absoluteFill, {backgroundColor: 'rgba(0,0,0,0.3)'}]} onPress={() => setPick(null)} accessibilityLabel="Close the list" />
+          <View style={{position: 'absolute', left: 0, right: 0, top: rowsY.current + (rowY.current[pick.row] || 0) - px(6), paddingHorizontal: px(10)}}>
+            <View style={st.ruleDrop}>
+              {ruleRow(c.rules[pick.row], pick.row, pick.title === 'Look at' ? 'field' : 'value')}
+              {pick.typed ? (
+                <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(4)}}>
+                  <TextInput style={[st.input, {flex: 1, marginBottom: 0}]} value={typed} onChangeText={setTyped} placeholder={pick.options.length ? 'Or type a new one' : 'Type the words'} />
+                  <IconBtn dark name="check" label="Use this" onPress={() => { if (typed.trim()) { pick.onPick(typed.trim()); setTyped(''); setPick(null); } }} style={{marginLeft: px(8)}} />
+                </View>
+              ) : null}
+              {pick.options.length ? (
+                <View style={[st.pillWrap, {marginTop: px(8)}]}>
+                  {pick.options.slice(0, 48).map(o => <Pill key={o} label={o} active={o === pick.current} onPress={() => { pick.onPick(o); setPick(null); }} />)}
+                </View>
+              ) : null}
             </View>
           </View>
         </View>
       ) : null}
+      </View>
     </>
   );
 }
@@ -3156,6 +3225,60 @@ function HelpPage({q, setQ, onOpen}: {q: string; setQ: (q: string) => void; onOp
   );
 }
 
+
+
+// ---------- the grid of collections ----------
+function CollectionGrid({items, onOpen, onNew}: {
+  items: {id: string; name: string; count: number; covers: {cover: string | null; title: string}[]; auto: boolean}[];
+  onOpen: (id: string) => void;
+  onNew: () => void;
+}) {
+  const [pg, setPg] = useState(0);
+  const cols = 3, rows = 3;
+  const cells = [...items.map(x => ({...x, add: false})), {id: '+', name: 'New collection', count: 0, covers: [], auto: false, add: true}];
+  const per = cols * rows;
+  const pages = Math.max(1, Math.ceil(cells.length / per));
+  const p = Math.min(pg, pages - 1);
+  const avail = H - px(64) - px(64) - TASK_H - px(30);
+  const cellW = Math.floor((W - px(24) - (cols - 1) * px(14)) / cols);
+  const cellH = Math.floor(avail / rows) - px(14);
+  const coverH = cellH - px(70);
+  const cw = Math.floor((cellW - px(16) - px(6)) / 2);
+  const ch = Math.floor((coverH - px(6)) / 2);
+  return (
+    <>
+      <View style={{flex: 1, paddingHorizontal: px(12), paddingTop: px(14)}}>
+        {Array.from({length: rows}).map((_, r) => (
+          <View key={r} style={{flexDirection: 'row', marginBottom: px(14)}}>
+            {cells.slice(p * per + r * cols, p * per + r * cols + cols).map((c, i) => (
+              <Pressable key={c.id} onPress={() => (c.add ? onNew() : onOpen(c.id))} style={[st.colTile, {width: cellW, height: cellH, marginLeft: i ? px(14) : 0}, c.add && {borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center'}]} accessibilityLabel={c.add ? 'New collection' : `Open ${c.name}`}>
+                {c.add ? (
+                  <>
+                    <Icon name="plus" size={px(36)} />
+                    <Text style={[st.small, {marginTop: px(8)}]}>New collection</Text>
+                  </>
+                ) : (
+                  <>
+                    <View style={{height: coverH, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', backgroundColor: '#f2f2f2', borderRadius: px(10), padding: c.covers.length ? 0 : px(8)}}>
+                      {c.covers.length ? c.covers.map((x, k) => <Cover key={k} uri={x.cover} w={cw} h={ch} title={x.title} />) : <Text style={[st.small, {margin: px(8)}]}>Empty</Text>}
+                    </View>
+                    <Text style={[st.rowTitle, {fontSize: px(18), marginTop: px(8)}]} numberOfLines={1}>{c.name}</Text>
+                    <Text style={st.small} numberOfLines={1}>{`${c.count} book${c.count === 1 ? '' : 's'}${c.auto ? '  ·  auto' : ''}`}</Text>
+                  </>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        ))}
+      </View>
+      <View style={st.pager}>
+        <IconBtn name="back" label="Previous page" disabled={p <= 0} onPress={() => setPg(p - 1)} />
+        <Text style={st.pageText}>{`${p + 1} / ${pages}`}</Text>
+        <IconBtn name="forward" label="Next page" disabled={p >= pages - 1} onPress={() => setPg(p + 1)} />
+      </View>
+    </>
+  );
+}
 
 // ---------- data and storage ----------
 function DataPage(props: {
@@ -3630,7 +3753,7 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
   );
 }
 
-function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove, top = 0}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; grid: boolean; setGrid: (g: boolean) => void; empty: string; onOpen: (x: Snap) => void; onRemove: (x: Snap) => void; top?: number}) {
+function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove, top = 0}: {items: Snap[]; libs: Lib[]; paging: Settings['paging']; grid: boolean; setGrid: (g: boolean) => void; empty: string; onOpen: (x: Snap) => void; onRemove?: (x: Snap) => void; top?: number}) {
   const [which, setWhich] = useState('all');
   const opts = [{id: 'all', label: 'All'}, ...libs.filter(l => items.some(x => x.lib === l.path)).map(l => ({id: l.path, label: l.name}))];
   const shown = items.filter(x => which === 'all' || x.lib === which);
@@ -3652,7 +3775,7 @@ function SnapList({items, libs, paging, grid, setGrid, empty, onOpen, onRemove, 
           cover: x.cover,
           pills: x.genres,
           onPress: () => onOpen(x),
-          action: {icon: 'bookmark-remove', label: 'Remove bookmark', onPress: () => onRemove(x)},
+          action: onRemove ? {icon: 'close', label: 'Remove bookmark', onPress: () => onRemove(x)} : undefined,
         }))}
       />
     </>
@@ -4319,11 +4442,22 @@ const st = StyleSheet.create({
   editText: {fontSize: px(17), color: BLACK},
   infoLabel: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(4)},
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
-  taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
-  task: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
+  notch: {position: 'absolute', top: -px(30), alignSelf: 'center', width: px(88), height: px(88), borderRadius: px(44), borderWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
+  notchCover: {position: 'absolute', top: -2, alignSelf: 'center', width: px(92), height: px(62), backgroundColor: '#ffffff'},
+  taskCta: {position: 'absolute', top: -px(22), alignSelf: 'center', width: px(72), height: px(72), borderRadius: px(36), borderWidth: px(5), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
+  taskLabel: {position: 'absolute', bottom: px(8), fontSize: px(14), color: '#555555'},
+  taskLabelOn: {fontWeight: 'bold', fontSize: px(15), color: BLACK},
+  task: {flex: 1, alignItems: 'center', justifyContent: 'flex-start'},
   taskIcon: {width: px(64), height: px(48), borderRadius: px(24), alignItems: 'center', justifyContent: 'center'},
   taskText: {fontSize: px(13), color: BLACK, marginTop: px(1)},
-  toast: {position: 'absolute', left: px(24), right: px(24), bottom: TASK_H + px(14), backgroundColor: BLACK, borderRadius: px(14), paddingVertical: px(12), paddingHorizontal: px(18)},
+  dropWrap: {position: 'absolute', left: 0, right: 0, top: px(64), bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 20},
+  drop: {backgroundColor: '#ffffff', borderBottomWidth: 2, borderColor: BLACK, borderBottomLeftRadius: px(18), borderBottomRightRadius: px(18), padding: px(12)},
+  ruleOpen: {borderWidth: 3},
+  ruleDrop: {backgroundColor: '#ffffff', borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(6), paddingBottom: px(10)},
+  editBar: {flexDirection: 'row', alignItems: 'center', height: px(58), paddingHorizontal: px(16), borderBottomWidth: 1, borderColor: '#888888', backgroundColor: '#f2f2f2'},
+  colTile: {borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(8), overflow: 'hidden'},
+  toast: {position: 'absolute', left: px(24), right: px(24), bottom: TASK_H + px(34), backgroundColor: BLACK, borderRadius: px(14), paddingVertical: px(12), paddingHorizontal: px(18)},
   toastText: {color: '#ffffff', fontSize: px(17), textAlign: 'center'},
   triRow: {flexDirection: 'row', alignItems: 'center', height: px(50), borderBottomWidth: 1, borderColor: '#dddddd'},
   triBox: {width: px(30), height: px(30), borderWidth: 2, borderColor: BLACK, borderRadius: px(7), alignItems: 'center', justifyContent: 'center', marginRight: px(14)},
