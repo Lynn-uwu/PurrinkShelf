@@ -28,6 +28,18 @@ const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
 const TASK_H = px(80);
 const DIP_IMG = require('./assets/taskbar-dip.png'); // drawn in tools/logo/taskbar-dip.svg
+// the Cat look (Settings): hand-drawn cats, drawn in tools/cat/draw.py
+const CAT_IMG = {
+  peek: require('./assets/cat/peek.png'),
+  ears: require('./assets/cat/ears.png'),
+  paw: require('./assets/cat/paw.png'),
+  sit: require('./assets/cat/sit.png'),
+  divider: require('./assets/cat/divider.png'),
+};
+let CAT = false; // set from Settings on every render
+const CatImg = ({name, w, h, style}: {name: keyof typeof CAT_IMG; w: number; h: number; style?: any}) => (
+  <Image source={CAT_IMG[name]} style={[{width: w, height: h, pointerEvents: 'none'}, style]} resizeMode="contain" />
+);
 // picture sizes (the Supernote screen is 300 pixels per inch: 600 px is about 51 mm)
 const SIZE_COVER = '2:3 tall, e.g. 600 × 900 px (about 51 × 76 mm on the screen)';
 const SIZE_COLL = '4:3 wide, e.g. 800 × 600 px (about 68 × 51 mm on the screen)';
@@ -416,6 +428,7 @@ function InkShelfApp(): React.JSX.Element {
 
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
   setDashAuthor(settings.dashAuthor !== false);
+  CAT = settings.look === 'cat';
   const titleOf = (b: Book) => shownTitle(b, metaOf(b));
 
   const lastBase = useRef<Screen>({kind: 'home'});
@@ -1458,7 +1471,7 @@ function InkShelfApp(): React.JSX.Element {
         <View style={st.toastStack} pointerEvents="none">
           {toasts.map((x, i) => (
             <View key={x.id} style={[st.toast, i < toasts.length - 1 && {opacity: 0.75}]}>
-              <Icon name="clock" size={px(18)} />
+              {CAT ? <CatImg name="paw" w={px(18)} h={px(18)} /> : <Icon name="clock" size={px(18)} />}
               <Text style={st.toastText} numberOfLines={2}>{x.t}</Text>
             </View>
           ))}
@@ -3043,7 +3056,7 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
                     onPress={() => (picking ? setPicked(sel ? picked.filter(x => x !== n.id) : [...picked, n.id]) : setEditing(n))}
                     style={[st.sticky, {width: nw, height: nh, backgroundColor: noteBg(n.color), transform: [{rotate: `${tilt(n.id, i)}deg`}]}, sel && {borderWidth: 3.5, borderColor: BLACK}]}
                     accessibilityLabel={picking ? `${sel ? 'Unselect' : 'Select'} note ${i + 1}` : `Note ${i + 1}: ${n.title || n.text.slice(0, 30)}`}>
-                    <View style={st.pin} />
+                    {CAT ? <CatImg name="paw" w={px(22)} h={px(22)} style={{position: 'absolute', top: px(2), left: '50%', marginLeft: -px(11)}} /> : <View style={st.pin} />}
                     {n.title ? <Text style={st.stickyTitle} numberOfLines={1}>{n.title}</Text> : null}
                     {n.rating ? <View style={{marginBottom: px(4)}}><Stars value={n.rating} size={px(20)} /></View> : null}
                     <Text style={st.stickyText} numberOfLines={(n.title ? lines - 1 : lines) - (n.rating ? 1 : 0)}>{n.text}</Text>
@@ -3349,7 +3362,7 @@ function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) =
       <View style={[st.board, {width: boardW, height: boardH, marginTop: 0}]}>
         {!list.length ? (
           <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', padding: px(30)}}>
-            <Icon name="quote" size={px(44)} />
+            {CAT ? <CatImg name="sit" w={px(120)} h={px(133)} /> : <Icon name="quote" size={px(44)} />}
             <Text style={[st.para, {textAlign: 'center', marginTop: px(10)}]}>{all.length ? 'No notes match.' : 'Notes you pin on books show up here, all together. Open a book and tap the sticky note to add one.'}</Text>
           </View>
         ) : (
@@ -3358,7 +3371,7 @@ function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) =
               {list.slice(p * per + r * cols, p * per + r * cols + cols).map((x, c) => (
                 <View key={x.f.lib.path + x.f.book.key + x.n.id} style={st.boardSlot}>
                   <Pressable onPress={() => onOpen(x.f)} style={[st.sticky, {width: nw, height: nh, backgroundColor: noteBg(x.n.color), transform: [{rotate: `${tilt(x.n.id, r * cols + c)}deg`}]}]} accessibilityLabel={`Note on ${x.title}: ${x.n.title || x.n.text.slice(0, 40)}`}>
-                    <View style={st.pin} />
+                    {CAT ? <CatImg name="paw" w={px(22)} h={px(22)} style={{position: 'absolute', top: px(2), left: '50%', marginLeft: -px(11)}} /> : <View style={st.pin} />}
                     <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(6)}}>
                       <Cover uri={cover(x.f)} w={px(30)} h={px(45)} title={x.title} />
                       <View style={{flex: 1, marginLeft: px(8)}}>
@@ -3415,7 +3428,7 @@ function WishlistPage({wishes, onChange}: {wishes: Wish[]; onChange: (w: Wish[])
       <View style={{flex: 1, paddingHorizontal: px(16)}}>
         {!wishes.length ? (
           <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', padding: px(30)}}>
-            <Icon name="wish" size={px(48)} />
+            {CAT ? <CatImg name="sit" w={px(120)} h={px(133)} /> : <Icon name="wish" size={px(48)} />}
             <Text style={[st.para, {textAlign: 'center', marginTop: px(10)}]}>Books you want to read but don't have yet. Tap + to add one.</Text>
           </View>
         ) : (
@@ -3491,6 +3504,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
                 {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
                 <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
+                {CAT ? <CatImg name="ears" w={px(80)} h={px(27)} style={{position: 'absolute', top: -px(58), alignSelf: 'center'}} /> : null}
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -3596,20 +3610,21 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
             <Seg
               options={[
-                {label: 'Off', on: settings.dashAuthor === false, onPress: () => change({dashAuthor: false})},
-                {label: 'On', on: settings.dashAuthor !== false, onPress: () => change({dashAuthor: true})},
+                {label: 'Plain', on: settings.look !== 'cat', onPress: () => change({look: 'plain'})},
+                {label: <View style={{flexDirection: 'row', alignItems: 'center'}}><Image source={CAT_IMG.paw} style={{width: px(20), height: px(20), marginRight: px(6)}} /><Text style={[st.segText, settings.look === 'cat' && {fontWeight: 'bold'}]}>Cat</Text></View>, on: settings.look === 'cat', onPress: () => change({look: 'cat'})},
               ]}
             />
-            <Text style={st.tileLabel}>{'"Title - Author" file names'}</Text>
+            <Text style={st.tileLabel}>Look</Text>
           </View>
+
         </View>
 
-        <View style={{flexDirection: 'row', marginTop: px(18)}}>
+        <View style={{flexDirection: 'row', marginTop: px(12)}}>
           <Tile label="Library view">{view('libraryGrid')}</Tile>
           <Tile label="Volumes view">{view('volumeGrid')}</Tile>
         </View>
 
-        <View style={{flexDirection: 'row', marginTop: px(18)}}>
+        <View style={{flexDirection: 'row', marginTop: px(12)}}>
           <RoundBtn label="Data and storage" onPress={onLibraries}>
             <Icon name="database" size={px(30)} />
           </RoundBtn>
@@ -3620,7 +3635,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Icon name="clock" size={px(30)} />
           </RoundBtn>
         </View>
-        <View style={{flexDirection: 'row', marginTop: px(14)}}>
+        <View style={{flexDirection: 'row', marginTop: px(8)}}>
           <RoundBtn label="How to use" onPress={onHelp}>
             <Icon name="help" size={px(30)} />
           </RoundBtn>
@@ -3650,8 +3665,9 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
         <View style={st.pillWrap}>
           <Pill label={(settings.length ? '✓ ' : '') + 'How long it takes to read'} active={settings.length} onPress={() => change({length: !settings.length})} />
           <Pill label={(settings.warnings ? '✓ ' : '') + 'Content warnings'} active={settings.warnings} onPress={() => change({warnings: !settings.warnings})} />
+          <Pill label={(settings.dashAuthor !== false ? '✓ ' : '') + 'Author after the dash in file names'} active={settings.dashAuthor !== false} onPress={() => change({dashAuthor: settings.dashAuthor === false})} />
         </View>
-        <Text style={[st.small, {marginTop: px(14), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
+        <Text style={[st.small, {marginTop: px(10), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
       </View>
     </ModalCard>
   );
@@ -4780,7 +4796,8 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
     return (
       <View style={[st.pad, {flex: 1}]}>
         {wait}
-        <Text style={st.para}>{ready ? 'All caught up. Every book has a genre and a summary.' : 'Looking through your libraries…'}</Text>
+        {CAT && ready ? <CatImg name="sit" w={px(120)} h={px(133)} style={{alignSelf: 'center', marginVertical: px(20)}} /> : null}
+        <Text style={[st.para, CAT && {textAlign: 'center'}]}>{ready ? 'All caught up. Every book has a genre and a summary.' : 'Looking through your libraries…'}</Text>
       </View>
     );
   }
@@ -5451,6 +5468,7 @@ function ModalCard({onOutside, children}: {onOutside: () => void; children: Reac
     <View style={st.cardWrap}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onOutside} accessibilityLabel="Outside the page" />
       <View style={st.pageCard}>{children}</View>
+      {CAT ? <CatImg name="peek" w={px(130)} h={px(65)} style={{position: 'absolute', top: Math.max(0, CARD_Y - px(47)), left: CARD_X + px(112)}} /> : null}
     </View>
   );
 }
