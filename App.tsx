@@ -24,9 +24,10 @@ const px = (n: number) => Math.round(n * S);
 const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
 const TASK_H = px(80);
-const DIP_F = px(14); // how round the bar's shoulders are where it dips under the open tab
-const DIP_R = px(51);
-const DIP_DX = DIP_R - Math.sqrt(DIP_R * DIP_R - (DIP_F + 3) * (DIP_F + 3)); // where the dip's curve is at the shoulder's foot
+const DIP_IMG = require('./assets/taskbar-dip.png'); // drawn in tools/logo/taskbar-dip.svg
+// picture sizes (the Supernote screen is 300 pixels per inch: 600 px is about 51 mm)
+const SIZE_COVER = '2:3 tall, e.g. 600 × 900 px (about 51 × 76 mm on the screen)';
+const SIZE_COLL = '4:3 wide, e.g. 800 × 600 px (about 68 × 51 mm on the screen)';
 const GRID_PER_PAGE = 12;
 const READ = 'plugin.permission.FILE:READ';
 const WRITE = 'plugin.permission.FILE:WRITE';
@@ -1043,8 +1044,45 @@ function InkShelfApp(): React.JSX.Element {
     return out;
   }, [shelf, meta]);
 
+  /** move a book's details to the file the reader picks (when they were joined to the wrong one) */
+  async function relinkBook(b: Book) {
+    if (!lib) return;
+    let picked = '';
+    try {
+      const r: any = await FileSelector.selectFile({selectType: 1, suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'], maxNum: 1, title: 'Choose the right file', needSelectFolder: lib.path, rightButtonText: 'OK'});
+      const list: any[] = Array.isArray(r) ? r : r?.result || [];
+      picked = list.length ? String(list[0]).replace(/^file:\/\//, '') : '';
+    } catch (e) {
+      log('relink picker failed', String(e));
+    }
+    if (!picked) return;
+    const target = books.find(x => x.files.includes(picked));
+    if (!target) {
+      const other = libs.find(l => l.path !== lib.path && picked.startsWith(l.path + '/'));
+      setMessage(other ? `That file is in your "${other.name}" library. Open that library and pick it from there.` : "That file isn't in this library. Add its folder in Data and storage first, then try again.");
+      return;
+    }
+    if (target.key === b.key) return say('That is already the file for this book.');
+    const cur = metaRef.current;
+    const old = cur.books[b.key] || {};
+    const {seen, ...details} = old;
+    const next: MetaStore = {...cur, books: {...cur.books, [target.key]: {...(cur.books[target.key] || {}), ...details}}, missing: {...(cur.missing || {})}};
+    delete next.books[b.key];
+    delete next.missing![b.key];
+    metaRef.current = next;
+    setMeta(next);
+    setLibData(d => ({...d, [lib.path]: {books, meta: next}}));
+    await saveMeta(lib.path, next);
+    const fix = (l: Snap[]) => l.map(x => (x.lib === lib.path && x.key === b.key ? {...x, key: target.key} : x));
+    changeApp(a => ({...a, recent: fix(a.recent), bookmarks: fix(a.bookmarks)}));
+    const oldId = `${lib.path}|${b.key}`, newId = `${lib.path}|${target.key}`;
+    changeCollections(list => list.map(c => ({...c, add: c.add.map(x => (x === oldId ? newId : x)), remove: c.remove.map(x => (x === oldId ? newId : x))})));
+    log('relinked by hand', b.key, '->', target.key);
+    say(`Details moved to "${(picked.split('/').pop() || '').replace(/\.[^.]+$/, '')}"`);
+    setScreen({kind: 'book', key: target.key, from: screen.kind === 'edit' || screen.kind === 'book' ? screen.from : undefined});
+  }
+
   async function pickCover(): Promise<string | null> {
-    if (!lib) return null;
     try {
       const dir = await screenshotDir();
       log('cover picker in', dir);
@@ -1211,6 +1249,7 @@ function InkShelfApp(): React.JSX.Element {
           cover={coverUri(b)}
           onPickCover={pickCover}
           onSplit={b.series ? () => splitBook(b) : undefined}
+          onRelink={() => relinkBook(b)}
           onCancel={backFromEdit}
           onSave={async m => {
             await updateMeta(b.key, m);
@@ -1469,7 +1508,7 @@ function InkShelfApp(): React.JSX.Element {
         <>
           <Header title="Collections" right={<IconBtn bare name="plus" label="New collection" onPress={() => setScreen({kind: 'coledit', id: null})} iconSize={px(28)} style={{marginRight: px(4)}} />} />
           <CollectionGrid
-            items={all.map(c => ({id: c.id, name: c.name, count: c.items.length, covers: c.items.slice(0, 4).map(i => ({cover: i.cover, title: i.title})), auto: !!collections.find(x => x.id === c.id)?.rules.length}))}
+            items={all.map(c => ({id: c.id, name: c.name, count: c.items.length, covers: c.items.slice(0, 4).map(i => ({cover: i.cover, title: i.title})), auto: !!collections.find(x => x.id === c.id)?.rules.length, pic: collections.find(x => x.id === c.id)?.cover}))}
             onOpen={id => { setColSel(id); setColEdit(false); }}
             onNew={() => setScreen({kind: 'coledit', id: null})}
           />
@@ -1575,6 +1614,7 @@ function InkShelfApp(): React.JSX.Element {
           values={values}
           count={c => index.filter(f => inCollection(c, factsOf(f))).length}
           onCancel={() => setScreen({kind: 'bookmarks'})}
+          onPickPicture={pickCover}
           onSave={c => {
             changeCollections(list => (list.some(x => x.id === c.id) ? list.map(x => (x.id === c.id ? c : x)) : [...list, c]));
             setColSel(c.id);
@@ -2731,16 +2771,8 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
             {on ? (
               <>
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
-                <View style={st.dipWrap}>
-                  <View style={st.notchClip}>
-                    <View style={st.notch} />
-                  </View>
-                  {/* soft shoulders where the bar bends into the dip */}
-                  <View style={[st.dipCover, {left: 0}]} />
-                  <View style={[st.dipCover, {right: 0}]} />
-                  <View style={[st.dipFillet, {left: 0, borderRightWidth: 2, borderTopRightRadius: DIP_F}]} />
-                  <View style={[st.dipFillet, {right: 0, borderLeftWidth: 2, borderTopLeftRadius: DIP_F}]} />
-                </View>
+                {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
+                <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -3144,7 +3176,8 @@ function CategorySheet({tree, total, current, onPick, onClose, title = 'Category
 }
 
 // ---------- collection editor ----------
-function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
+function CollectionEditor({start, values, count, onSave, onCancel, onDelete, onPickPicture}: {
+  onPickPicture: () => Promise<string | null>;
   start: Coll | null;
   values: (f: RuleField) => string[];
   count: (c: Coll) => number;
@@ -3197,8 +3230,19 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
             </View>
           </>
         ) : null}
-        <Text style={st.label}>Name</Text>
-        <TextInput style={st.input} value={c.name} onChangeText={t => setC({...c, name: t})} placeholder="e.g. Cosy reads, To reread, Book club" />
+        <View style={{flexDirection: 'row', alignItems: 'flex-end'}}>
+          <View style={{flex: 1}}>
+            <Text style={st.label}>Name</Text>
+            <TextInput style={[st.input, {marginBottom: 0}]} value={c.name} onChangeText={t => setC({...c, name: t})} placeholder="e.g. Cosy reads, To reread, Book club" />
+          </View>
+          <Pressable onPress={async () => { const p = await onPickPicture(); if (p) setC({...c, cover: p}); }} style={[st.collPic, {marginLeft: px(12)}]} accessibilityLabel="Choose a picture">
+            {c.cover ? <Image source={{uri: c.cover.startsWith('/') ? 'file://' + c.cover : c.cover}} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <Icon name="image" size={px(30)} />}
+          </Pressable>
+        </View>
+        <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(6)}}>
+          <Text style={[st.small, {flex: 1}]}>{`Picture (tap the box): ${SIZE_COLL}. Without one, the first book covers are shown.`}</Text>
+          {c.cover ? <Btn small icon="close" label="No picture" onPress={() => setC({...c, cover: undefined})} style={{marginLeft: px(8)}} /> : null}
+        </View>
         <View style={[st.dataHead, {marginTop: px(16)}]}>
           <Text style={st.dataTitle}>Add books by themselves when</Text>
         </View>
@@ -3356,7 +3400,7 @@ function HelpPage({q, setQ, onOpen}: {q: string; setQ: (q: string) => void; onOp
 
 // ---------- the grid of collections ----------
 function CollectionGrid({items, onOpen, onNew}: {
-  items: {id: string; name: string; count: number; covers: {cover: string | null; title: string}[]; auto: boolean}[];
+  items: {id: string; name: string; count: number; covers: {cover: string | null; title: string}[]; auto: boolean; pic?: string}[];
   onOpen: (id: string) => void;
   onNew: () => void;
 }) {
@@ -3386,9 +3430,13 @@ function CollectionGrid({items, onOpen, onNew}: {
                   </>
                 ) : (
                   <>
-                    <View style={{height: coverH, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', backgroundColor: '#f2f2f2', borderRadius: px(10), padding: c.covers.length ? 0 : px(8)}}>
-                      {c.covers.length ? c.covers.map((x, k) => <Cover key={k} uri={x.cover} w={cw} h={ch} title={x.title} />) : <Text style={[st.small, {margin: px(8)}]}>Empty</Text>}
-                    </View>
+                    {c.pic ? (
+                      <Image source={{uri: c.pic.startsWith('/') ? 'file://' + c.pic : c.pic}} style={{height: coverH, borderRadius: px(10)}} resizeMode="cover" />
+                    ) : (
+                      <View style={{height: coverH, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', backgroundColor: '#f2f2f2', borderRadius: px(10), padding: c.covers.length ? 0 : px(8)}}>
+                        {c.covers.length ? c.covers.map((x, k) => <Cover key={k} uri={x.cover} w={cw} h={ch} title={x.title} />) : <Text style={[st.small, {margin: px(8)}]}>Empty</Text>}
+                      </View>
+                    )}
                     <Text style={[st.rowTitle, {fontSize: px(18), marginTop: px(8)}]} numberOfLines={1}>{c.name}</Text>
                     <Text style={st.small} numberOfLines={1}>{`${c.count} book${c.count === 1 ? '' : 's'}${c.auto ? '  ·  auto' : ''}`}</Text>
                   </>
@@ -4348,7 +4396,8 @@ function PillEditor({label, values, setValues, used, placeholder}: {label: strin
   );
 }
 
-function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCancel, onPickCover, onSplit}: {
+function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCancel, onPickCover, onSplit, onRelink}: {
+  onRelink: () => void;
   book: Book;
   meta: Meta;
   allGenres: string[];
@@ -4425,6 +4474,7 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
               if (p) setImg(p);
             }} />
             <Text style={[st.small, {marginTop: px(6)}]}>{'Opens your screenshots. Take a screenshot of any cover, then pick it here.'}</Text>
+            <Text style={[st.small, {marginTop: px(4), color: BLACK}]}>{`Best: ${SIZE_COVER}. Other sizes are cropped to fit.`}</Text>
             {img ? <Btn small label="Use the book's own cover" onPress={() => setImg(undefined)} style={{marginTop: px(8)}} /> : null}
           </View>
         </View>
@@ -4436,6 +4486,12 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
           onPress={() => onSave(result())}
           style={{marginTop: px(24)}}
         />
+        <Text style={st.label}>{book.missing ? 'File (missing)' : book.files.length > 1 ? 'Files' : 'File'}</Text>
+        <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
+          <Text style={[st.small, {color: BLACK}]} numberOfLines={2}>{book.missing ? `Was: ${book.key.replace(/#(vols|series)$/, '').replace(/^\//, '')}` : `${book.dir ? book.dir + ' › ' : ''}${(book.files[0] || '').split('/').pop()}${book.files.length > 1 ? `  (+${book.files.length - 1} more)` : ''}`}</Text>
+          <Btn small icon="unlink" label={book.missing ? 'Find its file' : 'Link these details to a different file'} onPress={onRelink} style={{marginTop: px(8)}} />
+          <Text style={[st.small, {marginTop: px(4)}]}>{"If InkShelf joined the details to the wrong file, pick the right one. The tags, notes and status move with them."}</Text>
+        </View>
         {onSplit ? (
           <View style={[st.missingNote, {marginTop: px(24)}]}>
             <Text style={[st.small, {color: BLACK, fontWeight: 'bold'}]}>{`One book made of ${book.files.length} files`}</Text>
@@ -4569,14 +4625,10 @@ const st = StyleSheet.create({
   editText: {fontSize: px(17), color: BLACK},
   infoLabel: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(4)},
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
-  taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
+  taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: px(2), borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
   // a half circle cut down into the bar (only its lower half shows), with the button sitting in it
-  dipWrap: {position: 'absolute', top: -2, alignSelf: 'center', width: px(102) + DIP_F * 2, height: px(51) + 2},
-  dipCover: {position: 'absolute', top: 0, width: DIP_F + DIP_DX + 4, height: DIP_F + 3, backgroundColor: '#ffffff'},
-  dipFillet: {position: 'absolute', top: 0, width: DIP_F + 2 + DIP_DX, height: DIP_F + 4, borderTopWidth: 2, borderColor: BLACK, backgroundColor: 'transparent'},
-  notchClip: {position: 'absolute', top: 0, left: DIP_F, width: px(102), height: px(51) + 2, overflow: 'hidden'},
-  notch: {position: 'absolute', top: -px(51) + 1, left: 0, width: px(102), height: px(102), borderRadius: px(51), borderWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
-  taskCta: {position: 'absolute', top: -px(35) - 1, alignSelf: 'center', width: px(70), height: px(70), borderRadius: px(35), borderWidth: px(5), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
+  dip: {position: 'absolute', top: -px(3), alignSelf: 'center', width: px(160), height: px(51)},
+  taskCta: {position: 'absolute', top: -px(36), alignSelf: 'center', width: px(70), height: px(70), borderRadius: px(35), borderWidth: px(5), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
   taskLabel: {position: 'absolute', bottom: px(6), fontSize: px(14), color: '#555555'},
   taskLabelOn: {fontWeight: 'bold', fontSize: px(15), color: BLACK},
   task: {flex: 1, alignItems: 'center', justifyContent: 'flex-start'},
@@ -4586,6 +4638,7 @@ const st = StyleSheet.create({
   drop: {backgroundColor: '#ffffff', borderBottomWidth: 2, borderColor: BLACK, borderBottomLeftRadius: px(18), borderBottomRightRadius: px(18), padding: px(12)},
   ruleOpen: {borderWidth: 3},
   ruleDrop: {backgroundColor: '#ffffff', borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(6), paddingBottom: px(10)},
+  collPic: {width: px(116), height: px(87), borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(12), alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
   editBar: {flexDirection: 'row', alignItems: 'center', height: px(58), paddingHorizontal: px(16), borderBottomWidth: 1, borderColor: '#888888', backgroundColor: '#f2f2f2'},
   colTile: {borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(8), overflow: 'hidden'},
   toast: {position: 'absolute', left: px(24), right: px(24), bottom: TASK_H + px(34), backgroundColor: BLACK, borderRadius: px(14), paddingVertical: px(12), paddingHorizontal: px(18)},

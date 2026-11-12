@@ -1,0 +1,18 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots11'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const L = s => p.getByLabel(s, {exact: true}).first();
+  const tab = name => p.getByRole('button', {name, exact: true}).last();
+  const shot = async n => { await p.waitForTimeout(400); await p.screenshot({path: path.join(out, n + '.png')}); console.log('shot', n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1'); await p.waitForTimeout(1500);
+  await tab('Collections').click(); await p.waitForTimeout(6000);
+  await L('New collection').click(); await p.getByPlaceholder('e.g. Cosy reads, To reread, Book club').fill('Court dramas'); await shot('01-collection-picture-empty');
+  await L('Choose a picture').click(); await p.waitForTimeout(500); await shot('02-collection-picture');
+  await p.getByText('Add a rule').click(); await L('Rule value').click(); await p.getByText('Historical', {exact: true}).last().click();
+  await p.getByText('Save collection').click(); await p.waitForTimeout(300);
+  await L('All collections').click(); await shot('03-grid-with-picture');
+  await tab('Library').click(); await p.waitForTimeout(800);
+  await p.getByText('Crane and the Clockmaker').first().click(); await p.waitForTimeout(400);
+  await L('Edit details').click(); await p.mouse.move(350, 500); await p.mouse.wheel(0, 1300); await p.waitForTimeout(300); await shot('04-edit-cover-size-and-file');
+  await b.close(); })();

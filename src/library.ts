@@ -64,6 +64,7 @@ export type Collection = {
   match: 'all' | 'any';
   add: string[]; // "lib|key" added by hand
   remove: string[]; // "lib|key" taken out by hand (even if the rules match)
+  cover?: string; // its own picture (otherwise the first book covers)
 };
 export const RULE_FIELDS: {id: RuleField; label: string}[] = [
   {id: 'status', label: 'Reading status'},
