@@ -4656,7 +4656,7 @@ function DataPage(props: {
         <Text style={st.small}>{sheet.when ? `Updated ${ago(sheet.when)}` : ''}</Text>
       </View>
       <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
-        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › PurrinkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. PurrinkShelf reads the changes by itself.`}</Text>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={5}>{`Fill in many books at once on a computer: open Document › PurrinkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. With Supernote Cloud Auto Sync and the Partner app, there's no copying (How to use › Supernote Cloud). PurrinkShelf reads the changes by itself.`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(8)}}>
           <Btn small icon="save" label="Make the sheet" onPress={sheet.onMake} style={{flex: 1}} />
           <Btn small icon="restore" label="Read changes now" onPress={sheet.onRead} style={{flex: 1, marginLeft: px(8)}} />

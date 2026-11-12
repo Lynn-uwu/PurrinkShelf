@@ -1,0 +1,15 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots23'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1'); await p.waitForTimeout(14000);
+  await p.getByLabel('Settings', {exact: true}).first().click(); await p.waitForTimeout(400);
+  await p.getByText('Data and storage', {exact: true}).click(); await p.waitForTimeout(500);
+  await p.getByText('Backup and sheet', {exact: true}).click(); await p.waitForTimeout(600);
+  await p.screenshot({path: path.join(out, '1-backup-sheet.png')});
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1'); await p.waitForTimeout(14000);
+  await p.getByLabel('Settings', {exact: true}).first().click(); await p.waitForTimeout(400);
+  await p.getByText('How to use', {exact: true}).click(); await p.waitForTimeout(500);
+  await p.getByPlaceholder(/Search/).first().fill('cloud'); await p.waitForTimeout(500);
+  await p.getByText('Edit the sheet with Supernote Cloud (no copying)').first().click(); await p.waitForTimeout(600);
+  await p.screenshot({path: path.join(out, '2-guide.png')});
+  await b.close(); })();

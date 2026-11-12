@@ -41,7 +41,7 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 - **Paper books:** list the books on your shelf too, in their own folder, with lending.
 - **Profile:** books finished per month, an optional yearly goal, time spent reading, reading days in a row, and your top genres.
 - **Notes and quotes:** every note from every book on one searchable board.
-- **On a computer:** PurrinkShelf writes `Document/PurrinkShelf/PurrinkShelf books.xlsx`. It opens in Excel, Google Sheets or Numbers, with drop-downs for genres, tags, categories, status and collections. Fill it in, copy it back, and PurrinkShelf reads the changes.
+- **On a computer:** PurrinkShelf writes `Document/PurrinkShelf/PurrinkShelf books.xlsx`. It opens in Excel, Google Sheets or Numbers, with drop-downs for genres, tags, categories, status and collections. Fill it in, copy it back, and PurrinkShelf reads the changes. With **Supernote Cloud** there's no copying: turn on Auto Sync (Settings › Drive) and open the sheet from the **Supernote Partner** app's folder on your computer; edits sync back by themselves.
 - **Goodreads and StoryGraph:** import their export file (status, dates, ratings, reviews), or make a file they can import.
 - **Activity:** every message PurrinkShelf shows is kept in Settings › Activity.
 - **Appearance:** the Original look, or Cats: hand-drawn lines, cat toggles, paw prints on notes and little cats around the pages.
