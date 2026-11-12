@@ -103,7 +103,7 @@ if (new URLSearchParams(location.search).get('lib')) {
 
 export const PluginManager = {
   init() {}, registerButton() {}, closePluginView: async () => { window.__closed = 1; return true; },
-  hasPermission: async p => (window.__perm?.[p] ?? (new URLSearchParams(location.search).get('perm') ? 0 : 2)), requestPermission: async p => { window.__perm = {...(window.__perm || {}), [p]: 2}; return 2; }, getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
+  hasPermission: async p => (window.__perm?.[p] ?? (new URLSearchParams(location.search).get('perm') ? 0 : 1)), requestPermission: async p => { const pick = Number(new URLSearchParams(location.search).get('pick') || 2); window.__perm = {...(window.__perm || {}), [p]: pick ? 1 : 0}; return pick; }, // like Supernote: hasPermission says 0/1; the question returns 0 no, 1 this time, 2 always getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
 };
 export const FileUtils = {exists: async () => true, getExternalDirPath: async () => ['/storage/emulated/0', SD]};
 // ?state=1: the reader added two books since InkShelf last looked (they show as NEW)

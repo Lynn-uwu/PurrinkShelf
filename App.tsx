@@ -499,19 +499,24 @@ function PurrinkShelfApp(): React.JSX.Element {
   // ---------- permissions: one card that asks for everything PurrinkShelf needs ----------
   const [perm, setPerm] = useState<{[p: string]: number}>({});
   const [permOpen, setPermOpen] = useState(false);
+  // what was picked in Supernote's question this time: 1 = this time only, 2 = always (Supernote can only say allowed or not)
+  const [permChoice, setPermChoice] = useState<{[p: string]: number}>({});
   const saveWarned = useRef(false);
   async function allowAll() {
+    const picked: {[p: string]: number} = {...permChoice};
     for (const p of PERMS) {
-      if ((perm[p.id] || 0) >= 1) continue; // already allowed: don't make Supernote ask again
+      if ((perm[p.id] || 0) >= 1 && picked[p.id] !== 1) continue; // already allowed: don't make Supernote ask again
       try {
-        await PluginManager.requestPermission(p.id, `PurrinkShelf needs this to ${p.why.toLowerCase()}.`);
+        picked[p.id] = Number(await PluginManager.requestPermission(p.id, `PurrinkShelf needs this to ${p.why.toLowerCase()}.`));
       } catch (e) {}
     }
+    setPermChoice(picked);
     const r = await permStatus();
     setPerm(r);
-    log('permissions after asking', r);
+    log('permissions after asking', r, picked);
     if (Object.values(r).every(v => v >= 1)) {
-      setPermOpen(false);
+      // "this time only" works for now, but the card stays to say Supernote will ask again
+      if (!PERMS.some(p => picked[p.id] === 1)) setPermOpen(false);
       await loadAll();
     }
   }
@@ -1664,9 +1669,11 @@ function PurrinkShelfApp(): React.JSX.Element {
         <View style={st.overlay}>
           <View style={st.dialog}>
             <Text style={[st.h2, {marginTop: 0}]}>Let PurrinkShelf use your files</Text>
-            <Text style={[st.para, {fontSize: px(18)}]}>{'Supernote asks once for each of these. Choose "Always allow" so it never asks again.'}</Text>
+            <Text style={[st.para, {fontSize: px(18)}]}>{'The button below opens Supernote\'s own question, once for each of these. Choose "Always allow" in it: plugins can\'t pick that for you, and "Allow this time only" means Supernote asks again next time.'}</Text>
             {PERMS.map(p => {
               const v = perm[p.id] || 0;
+              const once = permChoice[p.id] === 1;
+              const state = v >= 1 ? (once ? 'This time only' : 'Allowed') : 'Not yet';
               return (
                 <View key={p.id} style={st.permRow}>
                   <Icon name={p.icon} size={px(30)} />
@@ -1674,17 +1681,17 @@ function PurrinkShelfApp(): React.JSX.Element {
                     <Text style={st.choiceTitle}>{p.label}</Text>
                     <Text style={st.small}>{p.why}</Text>
                   </View>
-                  <View style={[st.permState, v >= 2 && st.btnDark]}>
-                    <Text style={[st.small, {fontWeight: 'bold', color: v >= 2 ? '#ffffff' : BLACK}]}>{v >= 2 ? 'Always' : v === 1 ? 'This time' : 'Not yet'}</Text>
+                  <View style={[st.permState, v >= 1 && !once && st.btnDark]}>
+                    <Text style={[st.small, {fontWeight: 'bold', color: v >= 1 && !once ? '#ffffff' : BLACK}]}>{state}</Text>
                   </View>
                 </View>
               );
             })}
-            {Object.values(perm).every(v => v >= 2) && Object.keys(perm).length ? (
+            {Object.keys(perm).length && PERMS.every(p => (perm[p.id] || 0) >= 1 && permChoice[p.id] !== 1) ? (
               <Btn dark icon="check" label="All allowed" onPress={() => { setPermOpen(false); closedLayer(); }} style={{marginTop: px(14)}} />
             ) : (
               <>
-                <Btn dark icon="check" label="Allow all" onPress={allowAll} style={{marginTop: px(14)}} />
+                <Btn dark icon="check" label="Ask Supernote" onPress={allowAll} style={{marginTop: px(14)}} />
                 <Btn small label="Not now" onPress={() => { setPermOpen(false); closedLayer(); }} style={{marginTop: px(10)}} />
               </>
             )}
