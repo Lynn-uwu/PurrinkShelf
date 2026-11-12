@@ -3613,7 +3613,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Icon name="save" size={px(30)} />
           </RoundBtn>
           <RoundBtn label="Activity" note={`${activityCount} message${activityCount === 1 ? '' : 's'}`} onPress={onActivity}>
-            <Icon name="clock" size={px(30)} />
+            <Icon name="list" size={px(30)} />
           </RoundBtn>
         </View>
 
@@ -3636,8 +3636,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <Pill label={(settings.length ? '✓ ' : '') + 'How long it takes to read'} active={settings.length} onPress={() => change({length: !settings.length})} />
           <Pill label={(settings.warnings ? '✓ ' : '') + 'Content warnings'} active={settings.warnings} onPress={() => change({warnings: !settings.warnings})} />
         </View>
-        <View style={{flex: 1}} />
-        <Btn dark icon="check" a11y="Done" onPress={onClose} style={{marginTop: px(12)}} />
+        <Text style={[st.small, {marginTop: px(14), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
       </View>
     </ModalCard>
   );
