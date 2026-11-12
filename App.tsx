@@ -244,22 +244,16 @@ function InkShelfApp(): React.JSX.Element {
   const [covers, setCovers] = useState<{[k: string]: string | null}>({});
   const coverCache = useRef<{[k: string]: string | null}>({});
   const [message, setMessage] = useState<string | null>(null);
-  // a short note at the bottom that goes away by itself (never blocks the page)
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<any>(null);
-  // a message that arrives while another is showing waits its turn instead of replacing it
-  const toastQ = useRef<{t: string; at: number}[]>([]);
-  const showNext = () => {
-    const n = toastQ.current.shift();
-    clearTimeout(toastTimer.current);
-    setToast(n ? n.t : null);
-    toastTimer.current = n ? setTimeout(showNext, toastQ.current.length ? 3000 : 4500) : null;
-  };
+  // short notes at the bottom that go away by themselves (never block the page).
+  // A new one appears at the bottom and pushes the older ones up; each leaves 4.5 s after it came.
+  const [toasts, setToasts] = useState<{id: number; t: string}[]>([]);
+  const toastId = useRef(0);
   const say = (t: string) => {
-    if (toastQ.current.some(x => x.t === t)) return;
+    if (!t) return;
     changeApp(a => ({...a, activity: [{t, at: Date.now()}, ...(a.activity || [])].slice(0, 150)})); // kept in Settings › Activity
-    toastQ.current.push({t, at: Date.now()});
-    if (!toastTimer.current) showNext();
+    const id = ++toastId.current;
+    setToasts(l => [...l.filter(x => x.t !== t), {id, t}].slice(-3)); // at most three at once
+    setTimeout(() => setToasts(l => l.filter(x => x.id !== id)), 4500);
   };
   const [scanning, setScanning] = useState<{[path: string]: boolean}>({});
 
@@ -1448,11 +1442,15 @@ function InkShelfApp(): React.JSX.Element {
           counts={{searches: app.searches.length, recent: app.recent.length}}
         />
       )}
-      {toast && !message && !sheet && !showSettings ? (
+      {toasts.length && !message && !sheet && !showSettings ? (
         // see-through and not tappable: taps go to whatever is underneath; everything is kept in Settings › Activity
-        <View style={st.toast} pointerEvents="none">
-          <Icon name="clock" size={px(18)} />
-          <Text style={st.toastText} numberOfLines={2}>{toast}</Text>
+        <View style={st.toastStack} pointerEvents="none">
+          {toasts.map((x, i) => (
+            <View key={x.id} style={[st.toast, i < toasts.length - 1 && {opacity: 0.75}]}>
+              <Icon name="clock" size={px(18)} />
+              <Text style={st.toastText} numberOfLines={2}>{x.t}</Text>
+            </View>
+          ))}
         </View>
       ) : null}
       {paperOpen ? <PaperCard libs={libs} lib={lib} onClose={() => setPaperOpen(false)} onAdd={addPaperBook} /> : null}
@@ -5508,7 +5506,8 @@ const st = StyleSheet.create({
   collPic: {width: px(116), height: px(87), borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(12), alignItems: 'center', justifyContent: 'center', overflow: 'hidden'},
   editBar: {flexDirection: 'row', alignItems: 'center', height: px(58), paddingHorizontal: px(16), borderBottomWidth: 1, borderColor: '#888888', backgroundColor: '#f2f2f2'},
   colTile: {borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(8), overflow: 'hidden'},
-  toast: {position: 'absolute', left: px(70), right: px(70), bottom: TASK_H + px(76), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.72)', borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.55)', borderRadius: px(20), paddingVertical: px(6), paddingHorizontal: px(14)},
+  toastStack: {position: 'absolute', left: px(70), right: px(70), bottom: TASK_H + px(76)},
+  toast: {marginTop: px(6), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.72)', borderWidth: 1.5, borderColor: 'rgba(0,0,0,0.55)', borderRadius: px(20), paddingVertical: px(6), paddingHorizontal: px(14)},
   toastText: {color: BLACK, fontSize: px(15), textAlign: 'center', marginLeft: px(6), flexShrink: 1},
   triRow: {flexDirection: 'row', alignItems: 'center', height: px(50), borderBottomWidth: 1, borderColor: '#dddddd'},
   triBox: {width: px(30), height: px(30), borderWidth: 2, borderColor: BLACK, borderRadius: px(7), alignItems: 'center', justifyContent: 'center', marginRight: px(14)},
