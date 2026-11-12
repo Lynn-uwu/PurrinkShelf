@@ -390,6 +390,7 @@ function InkShelfApp(): React.JSX.Element {
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
   const titleOf = (b: Book) => metaOf(b).title || b.fileTitle;
 
+  const lastBase = useRef<Screen>({kind: 'home'}); // the page under a card (Data and storage)
   const libRef = useRef<Lib | null>(null);
   libRef.current = lib;
   async function openLibrary(l: Lib, then?: Screen, filter?: TagState) {
@@ -616,7 +617,7 @@ function InkShelfApp(): React.JSX.Element {
     const p: Meta = {};
     const v = (k: keyof Row) => (r[k] ?? '').trim();
     const clear = (k: keyof Row) => v(k) === '-';
-    if (v('Title')) p.title = clear('Title') || v('Title') === b.fileTitle ? undefined : v('Title');
+    if (v('Title') && v('Title') !== (old.title || b.fileTitle)) p.title = clear('Title') || v('Title') === b.fileTitle ? undefined : v('Title');
     if (v('Categories')) {
       const c = clear('Categories') ? [] : cells(v('Categories'));
       p.categories = JSON.stringify(c) === JSON.stringify(folderCats(b)) ? undefined : c;
@@ -656,6 +657,7 @@ function InkShelfApp(): React.JSX.Element {
         const old = m.books[key] || {};
         const next = {...old, ...rowPatch(r, b, old)};
         if (JSON.stringify(next) !== JSON.stringify(old)) {
+          log('sheet changed', key, JSON.stringify(old), '=>', JSON.stringify(next));
           m.books[key] = next;
           changed++;
         }
@@ -1054,6 +1056,7 @@ function InkShelfApp(): React.JSX.Element {
   // ----- book page and edit page: a card over the page you came from (tap outside to close) -----
   let card: React.ReactNode = null;
   let view: Screen = screen;
+  if (!['libraries', 'book', 'edit', 'missing', 'exclude', 'browse', 'pickroot', 'coledit'].includes(screen.kind)) lastBase.current = screen;
   if (screen.kind === 'book' || screen.kind === 'edit') {
     view = {kind: screen.from || 'library'} as Screen;
     const close = () => setScreen(view);
@@ -1166,6 +1169,67 @@ function InkShelfApp(): React.JSX.Element {
     );
     }
     }
+  }
+
+
+  if (screen.kind === 'libraries') {
+    // Data and storage opens as a card over the page you were on; closing it goes back there
+    view = lastBase.current;
+    const closeData = () => setScreen(lastBase.current);
+    const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
+    const allMissing = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key]})) : []; });
+    card = (
+      <ModalCard onOutside={closeData}>
+        <CardHeader title="Data and storage" onBack={closeData} onClose={closeData} />
+        <DataPage
+          libs={libs}
+          info={l => {
+            const d = dataOf(l);
+            const n = d?.meta.newKeys?.length || 0;
+            const miss = d ? Object.keys(d.meta.missing || {}).length : 0;
+            return {
+              books: d ? d.books.length : null,
+              line: d ? [`${d.books.length} book${d.books.length === 1 ? '' : 's'}`, n ? `${n} new` : '', miss ? `${miss} missing link${miss === 1 ? '' : 's'}` : '', readOnlyLibs.has(l.path) ? 'details kept on Supernote' : ''].filter(Boolean).join('  ·  ') : 'Not read yet',
+              when: d?.meta.lastScan ? ago(d.meta.lastScan) : '',
+              busy: !!scanning[l.path],
+            };
+          }}
+          missing={settings.missing}
+          setMissing={v => changeSettings({missing: v})}
+          missingCount={allMissing.length}
+          onOpen={l => openLibrary(l)}
+          onRefresh={l => (l ? refreshAll(l) : refreshAll())}
+          onRemove={async l => {
+            const n = libs.filter(x => x.path !== l.path);
+            setLibs(n);
+            await saveLibraries(n);
+            if (lib?.path === l.path) { setLib(null); setBooks([]); }
+            say(`Removed ${l.name}. Your books and details are still in the folder.`);
+          }}
+          onAdd={addLibrary}
+          onPicker={addFromBook}
+          onMissing={() => setScreen({kind: 'missing'})}
+          onExclude={l => setScreen({kind: 'exclude', lib: l.path, path: ''})}
+          sheet={{
+            when: app.sheetAt || null,
+            onMake: async () => say((await exportSheet()) ? `Saved: Document › InkShelf › ${SHEET_NAME}` : "Couldn't make the sheet"),
+            onRead: () => importSheet(),
+            onHelp: () => setScreen({kind: 'help', topic: 'sheet'}),
+          }}
+          backup={{
+            dir: settings.backupDir || DEFAULT_BACKUP_DIR,
+            when: lastBackup,
+            onNow: async () => { if (await backupNow()) say('Backed up'); else setPermOpen(true); },
+            onMove: () => setScreen({kind: 'browse', path: '/storage/emulated/0/Document', for: 'backup'}),
+            onRestore: async () => {
+              const dir = settings.backupDir || DEFAULT_BACKUP_DIR;
+              if (await readBackup(dir)) await restoreFromFolder(dir);
+              else setScreen({kind: 'browse', path: null, for: 'restore'});
+            },
+          }}
+        />
+      </ModalCard>
+    );
   }
 
 
@@ -1394,63 +1458,6 @@ function InkShelfApp(): React.JSX.Element {
   }
 
   // ----- data and storage (Mihon-style): libraries, refresh, remove, missing books -----
-  if (view.kind === 'libraries') {
-    const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
-    const allMissing = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key]})) : []; });
-    return shell(
-      <>
-        <Header title="Data and storage" left="Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'home'})} />
-        <DataPage
-          libs={libs}
-          info={l => {
-            const d = dataOf(l);
-            const n = d?.meta.newKeys?.length || 0;
-            const miss = d ? Object.keys(d.meta.missing || {}).length : 0;
-            return {
-              books: d ? d.books.length : null,
-              line: d ? [`${d.books.length} book${d.books.length === 1 ? '' : 's'}`, n ? `${n} new` : '', miss ? `${miss} missing link${miss === 1 ? '' : 's'}` : '', readOnlyLibs.has(l.path) ? 'details kept on Supernote' : ''].filter(Boolean).join('  ·  ') : 'Not read yet',
-              when: d?.meta.lastScan ? ago(d.meta.lastScan) : '',
-              busy: !!scanning[l.path],
-            };
-          }}
-          missing={settings.missing}
-          setMissing={v => changeSettings({missing: v})}
-          missingCount={allMissing.length}
-          onOpen={l => openLibrary(l)}
-          onRefresh={l => (l ? refreshAll(l) : refreshAll())}
-          onRemove={async l => {
-            const n = libs.filter(x => x.path !== l.path);
-            setLibs(n);
-            await saveLibraries(n);
-            if (lib?.path === l.path) { setLib(null); setBooks([]); }
-            say(`Removed ${l.name}. Your books and details are still in the folder.`);
-          }}
-          onAdd={addLibrary}
-          onPicker={addFromBook}
-          onMissing={() => setScreen({kind: 'missing'})}
-          onExclude={l => setScreen({kind: 'exclude', lib: l.path, path: ''})}
-          sheet={{
-            when: app.sheetAt || null,
-            onMake: async () => say((await exportSheet()) ? `Saved: Document › InkShelf › ${SHEET_NAME}` : "Couldn't make the sheet"),
-            onRead: () => importSheet(),
-            onHelp: () => setScreen({kind: 'help', topic: 'sheet'}),
-          }}
-          backup={{
-            dir: settings.backupDir || DEFAULT_BACKUP_DIR,
-            when: lastBackup,
-            onNow: async () => { if (await backupNow()) say('Backed up'); else setPermOpen(true); },
-            onMove: () => setScreen({kind: 'browse', path: '/storage/emulated/0/Document', for: 'backup'}),
-            onRestore: async () => {
-              const dir = settings.backupDir || DEFAULT_BACKUP_DIR;
-              if (await readBackup(dir)) await restoreFromFolder(dir);
-              else setScreen({kind: 'browse', path: null, for: 'restore'});
-            },
-          }}
-        />
-      </>,
-    );
-  }
-
   // ----- books whose files are gone, but whose details are kept -----
   if (view.kind === 'missing') {
     const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
@@ -2903,13 +2910,25 @@ function CategorySheet({tree, total, current, onPick, onClose}: {
   onClose: () => void;
 }) {
   const rows: {name: string | null; depth: number; count: number}[] = [{name: null, depth: 0, count: total}, ...tree];
-  const perCol = Math.min(9, Math.max(1, Math.ceil(rows.length / 2)));
-  const per = perCol * 2; // two columns, filled evenly
-  const start = Math.max(0, Math.floor(rows.findIndex(r => r.name === current) / per));
+  // a category and its sub-categories stay together; a second column only when one is full
+  const perCol = 9;
+  const blocks: (typeof rows)[] = [];
+  rows.forEach(r => (r.depth === 0 || !blocks.length ? blocks.push([r]) : blocks[blocks.length - 1].push(r)));
+  const columns: (typeof rows)[] = [[]];
+  for (const bl of blocks) {
+    let cur = columns[columns.length - 1];
+    if (cur.length && cur.length + bl.length > perCol) columns.push((cur = []));
+    for (const r of bl) {
+      if (cur.length >= perCol) columns.push((cur = []));
+      cur.push(r);
+    }
+  }
+  const pages = Math.max(1, Math.ceil(columns.length / 2));
+  const start = Math.max(0, Math.floor(columns.findIndex(c => c.some(r => r.name === current)) / 2));
   const [pg, setPg] = useState(start);
-  const pages = Math.max(1, Math.ceil(rows.length / per));
   const p = Math.min(pg, pages - 1);
-  const shown = rows.slice(p * per, (p + 1) * per);
+  const left = columns[p * 2] || [];
+  const right = columns[p * 2 + 1] || [];
   const col = (list: typeof rows) => (
     <View style={{flex: 1}}>
       {list.map(r => {
@@ -2932,10 +2951,10 @@ function CategorySheet({tree, total, current, onPick, onClose}: {
           <View style={st.handle} />
           <Text style={st.sheetTitle}>Category</Text>
         </Pressable>
-        <View style={{flexDirection: 'row', height: perCol * px(52), marginTop: px(8)}}>
-          {col(shown.slice(0, perCol))}
-          <View style={{width: px(10)}} />
-          {col(shown.slice(perCol))}
+        <View style={{flexDirection: 'row', height: Math.max(left.length, right.length) * px(52), marginTop: px(8)}}>
+          {col(left)}
+          {right.length ? <View style={{width: px(10)}} /> : null}
+          {right.length ? col(right) : null}
         </View>
         {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
       </View>
@@ -3158,12 +3177,27 @@ function DataPage(props: {
   const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing, backup, onExclude, sheet} = props;
   const [confirm, setConfirm] = useState<string | null>(null);
   const [pg, setPg] = useState(0);
-  const per = 2;
+  const [tab, setTab] = useState<'libs' | 'backup' | 'missing'>('libs');
+  const per = 4;
   const pages = Math.max(1, Math.ceil(libs.length / per));
   const p = Math.min(pg, pages - 1);
   const where = (path: string) => (path === '/storage/emulated/0' ? 'Supernote' : path.replace('/storage/emulated/0', 'Supernote').replace(/^\/storage\/[^/]+/, 'SD card'));
+  const tabs: {t: typeof tab; label: string}[] = [
+    {t: 'libs', label: 'Libraries'},
+    {t: 'backup', label: 'Backup and sheet'},
+    {t: 'missing', label: `Missing books${missingCount ? ` (${missingCount})` : ''}`},
+  ];
   return (
     <View style={[st.pad, {flex: 1}]}>
+      <View style={[st.sheetTabs, {marginBottom: px(14)}]}>
+        {tabs.map(x => (
+          <Pressable key={x.t} onPress={() => setTab(x.t)} style={[st.sheetTab, tab === x.t && st.sheetTabOn]} accessibilityLabel={x.label}>
+            <Text style={[st.sheetTabText, tab === x.t && {fontWeight: 'bold'}]} numberOfLines={1}>{x.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {tab === 'libs' ? (
+      <>
       {!hasNative() && <Text style={st.warn}>This copy of InkShelf is missing its native part, so it can't read folders or open books.</Text>}
       <View style={st.dataHead}>
         <Text style={st.dataTitle}>Libraries</Text>
@@ -3211,7 +3245,11 @@ function DataPage(props: {
       </View>
       {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
 
-      <View style={[st.dataHead, {marginTop: px(12)}]}>
+      </>
+      ) : null}
+      {tab === 'backup' ? (
+      <>
+      <View style={st.dataHead}>
         <Text style={st.dataTitle}>Backup</Text>
         <Text style={st.small}>{backup.when ? `Saved ${ago(backup.when)}` : 'Saves by itself after every change'}</Text>
       </View>
@@ -3232,14 +3270,18 @@ function DataPage(props: {
         <Text style={st.small}>{sheet.when ? `Updated ${ago(sheet.when)}` : ''}</Text>
       </View>
       <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
-        <Text style={[st.small, {color: BLACK}]} numberOfLines={2}>{`Fill in many books at once on a computer: open Document › InkShelf › ${SHEET_NAME} in Excel or Google Sheets, then copy it back. InkShelf reads the changes by itself.`}</Text>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › InkShelf › ${SHEET_NAME} in Excel or Google Sheets, then copy it back. InkShelf reads the changes by itself.`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(8)}}>
           <Btn small icon="save" label="Make the sheet" onPress={sheet.onMake} style={{flex: 1}} />
           <Btn small icon="restore" label="Read changes now" onPress={sheet.onRead} style={{flex: 1, marginLeft: px(8)}} />
           <IconBtn name="help" label="How to fill in the sheet" onPress={sheet.onHelp} style={{marginLeft: px(8)}} />
         </View>
       </View>
-      <Text style={[st.dataTitle, {marginTop: px(8), marginBottom: px(6)}]}>When a book's file disappears</Text>
+      </>
+      ) : null}
+      {tab === 'missing' ? (
+      <>
+      <Text style={[st.dataTitle, {marginBottom: px(6)}]}>When a book's file disappears</Text>
       <View style={{flexDirection: 'row'}}>
         <Pressable style={[st.dChoice, {flex: 1, marginRight: px(8)}, missing === 'flag' && st.dChoiceOn]} onPress={() => setMissing('flag')} accessibilityLabel="Keep details and flag it">
           <View style={[st.dRadio, missing === 'flag' && st.dRadioOn]} />
@@ -3258,9 +3300,12 @@ function DataPage(props: {
       </View>
       <Pressable style={[st.libCard, {height: px(58), marginBottom: 0}]} onPress={onMissing} accessibilityLabel="Missing links">
         <Icon name="unlink" size={px(28)} />
-        <Text style={[st.choiceTitle, {flex: 1, marginLeft: px(12)}]}>{`Missing links  (${missingCount})`}</Text>
+        <Text style={[st.choiceTitle, {flex: 1, marginLeft: px(12)}]}>{`See the missing links  (${missingCount})`}</Text>
         <Icon name="forward" size={px(24)} />
       </Pressable>
+      <Text style={[st.small, {marginTop: px(10)}]}>{'A missing link is a book whose file was moved, renamed or deleted. Its details are kept and reconnect by themselves when the file is back.'}</Text>
+      </>
+      ) : null}
     </View>
   );
 }

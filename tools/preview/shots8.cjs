@@ -1,0 +1,12 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots7');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const L = s => p.getByLabel(s, {exact: true}).first();
+  const shot = async n => { await p.waitForTimeout(400); await p.screenshot({path: path.join(out, n + '.png')}); console.log('shot', n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1'); await p.waitForTimeout(900);
+  await p.getByRole('button', {name: 'Library', exact: true}).last().click(); await p.waitForTimeout(6000);
+  await L('Data and storage').click(); await shot('d1-libraries');
+  await L('Backup and sheet').click(); await shot('d2-backup');
+  await p.getByLabel(/^Missing books/).click(); await shot('d3-missing');
+  await b.close(); })();
