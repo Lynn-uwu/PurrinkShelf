@@ -35,7 +35,7 @@ jobs:
       - name: Install
         run: npm ci --no-audit --no-fund
 
-      - name: Build InkShelf.snplg (JavaScript + native opener)
+      - name: Build PurrinkShelf.snplg (JavaScript + native opener)
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           bash buildPlugin.sh
@@ -48,7 +48,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: InkShelf
+          name: PurrinkShelf
           path: build/outputs/*.snplg
 
       - name: Save the build to the 'builds' branch
@@ -57,12 +57,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/builds && cd /tmp/builds
-          cp "$GITHUB_WORKSPACE"/build/outputs/*.snplg InkShelf.snplg
-          printf "Latest InkShelf build from %s (%s)\n" "${GITHUB_SHA::7}" "$(date -u +%Y-%m-%dT%H:%MZ)" > BUILD.txt
+          cp "$GITHUB_WORKSPACE"/build/outputs/*.snplg PurrinkShelf.snplg
+          printf "Latest PurrinkShelf build from %s (%s)\n" "${GITHUB_SHA::7}" "$(date -u +%Y-%m-%dT%H:%MZ)" > BUILD.txt
           git init -q -b builds
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add InkShelf.snplg BUILD.txt
+          git add PurrinkShelf.snplg BUILD.txt
           git commit -q -m "Build ${GITHUB_SHA::7}"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" builds:builds
 
@@ -82,7 +82,7 @@ jobs:
           [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           NOTES=".github/release-notes/${TAG}.md"
           [ -f "$NOTES" ] || NOTES=/dev/null
-          cp build/outputs/*.snplg /tmp/InkShelf.snplg
-          FILES="/tmp/InkShelf.snplg"
+          cp build/outputs/*.snplg /tmp/PurrinkShelf.snplg
+          FILES="/tmp/PurrinkShelf.snplg"
           [ -f docs/InkShelf-walkthrough.mp4 ] && FILES="$FILES docs/InkShelf-walkthrough.mp4"
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "InkShelf ${TAG#v}" --notes-file "$NOTES" $FILES
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "PurrinkShelf ${TAG#v}" --notes-file "$NOTES" $FILES

@@ -1,4 +1,4 @@
-// Thin wrapper around InkShelf's native module (android/app/src/main/java/com/inkshelf).
+// Thin wrapper around PurrinkShelf's native module (android/app/src/main/java/com/inkshelf).
 import {NativeModules} from 'react-native';
 import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
 
@@ -55,7 +55,7 @@ export async function openBook(path: string, how: 'reader' | 'explorer' | 'kit' 
       const r: any = await PluginFileAPI.openFile(path, -1);
       if (r && r.success === false) return r.error?.message || 'The reader refused the book.';
     } else {
-      if (!N) return 'InkShelf was installed without its native part.';
+      if (!N) return 'PurrinkShelf was installed without its native part.';
       await N.openDocument(path, how);
     }
     setTimeout(() => {
@@ -78,8 +78,8 @@ export async function copyText(text: string): Promise<boolean> {
 
 const ok = (r: any) => r && r.success !== false;
 
-/** Is InkShelf open on top of a note (so we can paste into it)? */
-/** the document open behind InkShelf right now (a book or a note) */
+/** Is PurrinkShelf open on top of a note (so we can paste into it)? */
+/** the document open behind PurrinkShelf right now (a book or a note) */
 export async function currentFile(): Promise<string | null> {
   try {
     const r: any = await PluginCommAPI.getCurrentFilePath();
@@ -100,11 +100,11 @@ export async function currentNote(): Promise<string | null> {
 }
 
 /**
- * Paste a book into the note InkShelf was opened from: its cover and/or a text box.
+ * Paste a book into the note PurrinkShelf was opened from: its cover and/or a text box.
  * Returns null when it worked, or what went wrong.
  */
 export async function pasteIntoNote(opts: {cover?: string | null; coverOut: string; text?: string}): Promise<string | null> {
-  if (!(await currentNote())) return 'Open InkShelf from a note (the toolbar inside a note) to paste into it. The text is on the clipboard instead.';
+  if (!(await currentNote())) return 'Open PurrinkShelf from a note (the toolbar inside a note) to paste into it. The text is on the clipboard instead.';
   try {
     if (opts.cover && N) {
       const png = await N.prepareImage(opts.cover, opts.coverOut, 600);
@@ -238,7 +238,7 @@ export async function openFileManager(): Promise<string | null> {
   }
 }
 
-/** delete a paper-book listing (a .paper file InkShelf made); real books are never deleted */
+/** delete a paper-book listing (a .paper file PurrinkShelf made); real books are never deleted */
 export async function removePaper(path: string): Promise<boolean> {
   if (!N?.removePaper || !path.endsWith('.paper')) return false;
   try {

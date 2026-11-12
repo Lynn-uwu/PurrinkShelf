@@ -1,6 +1,6 @@
 {
   "name": "inkshelf",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -37,5 +37,5 @@
   "engines": {
     "node": ">=18"
   },
-  "description": "InkShelf: a library for your Supernote"
+  "description": "PurrinkShelf: a library for your Supernote"
 }

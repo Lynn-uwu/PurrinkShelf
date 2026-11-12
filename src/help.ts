@@ -1,4 +1,4 @@
-// How to use InkShelf: short guides, searchable by keyword.
+// How to use PurrinkShelf: short guides, searchable by keyword.
 export type HelpTopic = {id: string; title: string; icon: string; words: string; steps: string[]};
 
 export const HELP: HelpTopic[] = [
@@ -7,11 +7,11 @@ export const HELP: HelpTopic[] = [
       'Open Settings (the gear at the top right), tap Data and storage, then the folder with a +.',
       'Pick Supernote or SD card, open folders until you reach the one that holds your books, then tap ✓ Use this folder.',
       'Every book inside is found, subfolders too. Your subfolders become categories.',
-      "Can't see your SD card? Tap Find my SD card and pick any one book on it with Supernote's file picker. InkShelf remembers the card after that.",
+      "Can't see your SD card? Tap Find my SD card and pick any one book on it with Supernote's file picker. PurrinkShelf remembers the card after that.",
     ]},
   {id: 'refresh', title: 'Find new books', icon: 'refresh', words: 'refresh new added scan update reload',
     steps: [
-      'InkShelf looks for new and removed books by itself each time a library opens.',
+      'PurrinkShelf looks for new and removed books by itself each time a library opens.',
       'To check now, open Settings › Data and storage and tap the refresh arrows on a library (or the ones at the top for every library).',
       'New books get a NEW label and show in the Newly added tab until you open them.',
     ]},
@@ -43,14 +43,14 @@ export const HELP: HelpTopic[] = [
       'Left and right arrows turn the pages of the book page (Overview, Tags, Details). Settings can switch this to scrolling.',
       'The refresh button at the top checks this book\'s files again (added, deleted or renamed volumes).',
       'The button says Start until you open the book, then Continue: it opens the last volume you had open. Opened volumes get a tick.',
-      'Opening a book straight from Supernote counts too: the next time you tap the InkShelf button inside that book, InkShelf notes it.',
+      'Opening a book straight from Supernote counts too: the next time you tap the PurrinkShelf button inside that book, PurrinkShelf notes it.',
     ]},
   {id: 'edit', title: 'Edit details and the cover', icon: 'edit', words: 'edit title description summary genre tag language status cover image screenshot save discard',
     steps: [
       'Open a book and tap the pencil.',
       'Change the title, categories, genres, tags, description, language and status.',
       'For a cover: take a screenshot of any cover, then tap Choose an image. It opens your screenshots.',
-      'Tap ✓ to save. If you leave with changes, InkShelf asks whether to save or discard them.',
+      'Tap ✓ to save. If you leave with changes, PurrinkShelf asks whether to save or discard them.',
     ]},
   {id: 'status', title: 'Reading status and dates', icon: 'clock', words: 'status reading completed rereading plan hold dropped finished date history progress',
     steps: [
@@ -84,13 +84,13 @@ export const HELP: HelpTopic[] = [
   {id: 'author', title: 'Authors', icon: 'text', words: 'author writer by dash name file epub details filter sort',
     steps: [
       'A file named "Title - Author.epub" shows the author in small letters above the book and keeps the title clean. Turn this off in Settings › Show and hide if your titles have dashes.',
-      'InkShelf also reads the author, description and language written inside each EPUB, once. It only fills empty fields and never replaces what you typed.',
+      'PurrinkShelf also reads the author, description and language written inside each EPUB, once. It only fills empty fields and never replaces what you typed.',
       'Change it on the Edit page. Tap an author on a book page to see all their books; the filter panel has an Author tab and the sort has Author.',
     ]},
   {id: 'profile', title: 'Profile and your numbers', icon: 'profile', words: 'profile stats statistics numbers finished year streak days genres chart settings gear',
     steps: [
       'The Profile tab shows how many books you have, finished this year, are reading and love, with a chart of the last 12 months.',
-      'Reading days counts the days you opened a book (in InkShelf, or in Supernote when you tap the InkShelf button inside it).',
+      'Reading days counts the days you opened a book (in PurrinkShelf, or in Supernote when you tap the PurrinkShelf button inside it).',
       'Tap a number or a genre to see those books. Settings is the gear at the top right.',
     ]},
   {id: 'wishlist', title: 'Wishlist', icon: 'wish', words: 'wishlist wish want buy later find get list',
@@ -117,7 +117,7 @@ export const HELP: HelpTopic[] = [
   {id: 'calibre', title: 'Calibre libraries', icon: 'database', words: 'calibre metadata opf series cover tags rating',
     steps: [
       'Copy books with their Calibre folders (each book next to metadata.opf and cover.jpg).',
-      'InkShelf reads the series and number, tags, description, rating and cover once, and only fills empty fields.',
+      'PurrinkShelf reads the series and number, tags, description, rating and cover once, and only fills empty fields.',
     ]},
   {id: 'activity', title: 'Messages and Activity', icon: 'clock', words: 'message messages notification toast activity log history changes',
     steps: [
@@ -132,19 +132,19 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'appearance', title: 'Appearance: Original or Cats', icon: 'image', words: 'appearance look theme cat cats paw drawn hand-drawn original plain style',
     steps: [
-      'Settings › Appearance changes how InkShelf looks. Your books, details and notes stay the same.',
+      'Settings › Appearance changes how PurrinkShelf looks. Your books, details and notes stay the same.',
       'Original has clean, straight lines. Cats has hand-drawn lines, cat-shaped toggles, paw prints on notes and little cats around the pages.',
     ]},
   {id: 'duplicates', title: 'Duplicate files', icon: 'copy', words: 'duplicate duplicates copy twice same name (1) delete keep both',
     steps: [
       'Two files with the same name in the same folder (like "Book.epub" and "Book (1).epub") are flagged on the book page.',
-      'Open files takes you to Supernote\'s file manager so you can delete the one you don\'t want. InkShelf never deletes books.',
+      'Open files takes you to Supernote\'s file manager so you can delete the one you don\'t want. PurrinkShelf never deletes books.',
       'Keep both hides the warning. A small 2× stays next to the title: tap it to jump to the other copy.',
       'The filter panel\'s More tab has Possible duplicate.',
     ]},
   {id: 'sheet', title: 'Fill in many books on a computer', icon: 'save', words: 'sheet spreadsheet excel google sheets xlsx csv computer laptop bulk import export many books fill drop-down collections tags',
     steps: [
-      'InkShelf keeps a spreadsheet of all your books: Document › InkShelf › InkShelf books.xlsx (Data and storage › Make the sheet makes it now).',
+      'PurrinkShelf keeps a spreadsheet of all your books: Document › InkShelf › InkShelf books.xlsx (Data and storage › Make the sheet makes it now).',
       'Copy it to your computer and open it in Excel or Google Sheets. The Books tab has one row per book.',
       'Category, Genre, Tag, Reading, Favourite and Add to collection cells have drop-down lists: click the cell and pick. You can also type something new.',
       'To add a new tag to every drop-down, write it once at the bottom of its column on the Lists tab.',
@@ -160,13 +160,13 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'paste', title: 'Paste a book into a note', icon: 'paste', words: 'paste copy note insert cover details clipboard',
     steps: [
-      'Open InkShelf from the toolbar inside a note.',
+      'Open PurrinkShelf from the toolbar inside a note.',
       'Open a book and tap the paste button (or hold the cover).',
       'Choose the cover, the details, or both. They are added to the page of your note.',
     ]},
   {id: 'missing', title: 'Missing links', icon: 'unlink', words: 'missing link gone deleted moved renamed reconnect lost',
     steps: [
-      'If a book\'s file is moved, renamed or deleted, InkShelf keeps its details and shows it as Missing link.',
+      'If a book\'s file is moved, renamed or deleted, PurrinkShelf keeps its details and shows it as Missing link.',
       'When a file with the same name (or a similar name in the same folder) turns up again, it reconnects by itself.',
       'Data and storage › Missing links lists them; delete the ones you don\'t need. You can also choose to delete details right away.',
     ]},
@@ -178,13 +178,13 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'backup', title: 'Backup and reinstalling', icon: 'save', words: 'backup restore reinstall save copy file document inkshelf move',
     steps: [
-      'InkShelf saves a backup by itself after every change: Document › InkShelf › InkShelf backup.json.',
-      'After reinstalling InkShelf it reads the backup back by itself.',
+      'PurrinkShelf saves a backup by itself after every change: Document › InkShelf › InkShelf backup.json.',
+      'After reinstalling PurrinkShelf it reads the backup back by itself.',
       'In Data and storage you can back up now, choose another folder, or restore from a backup.',
     ]},
   {id: 'perms', title: 'Permissions', icon: 'gear', words: 'permission permissions allow write read access denied ask',
     steps: [
-      'InkShelf needs to read your book folders and write its own files (details, covers, backup).',
+      'PurrinkShelf needs to read your book folders and write its own files (details, covers, backup).',
       'When it asks, choose Always allow, so Supernote doesn\'t ask again.',
       'Settings › Permissions shows what is allowed and can ask again.',
     ]},

@@ -1,5 +1,5 @@
 /**
- * InkShelf - a library for the Supernote.
+ * PurrinkShelf - a library for the Supernote.
  * Pick any folder as a library; books are listed by file name; add titles, tags,
  * descriptions and covers on the device; filter by folder and tag; tap to read.
  */
@@ -14,7 +14,7 @@ import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
 import {SHEET_NAME, list as cells, parseCsv} from './src/sheet';
 import {makeWorkbook, readWorkbook} from './src/xlsx';
-const SITE_EXPORT = 'InkShelf for Goodreads and StoryGraph.csv';
+const SITE_EXPORT = 'InkShelf for Goodreads and StoryGraph.csv'; // file names keep the old name, so backups and sheets from 1.0 still match
 const XLSX_NAME = 'InkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
@@ -361,7 +361,7 @@ function Header({left, title, onLeft, right, onHelp}: {left?: string; title: str
     <View style={st.header}>
       <View style={{minWidth: px(110), flexDirection: 'row'}}>
         {left && onLeft ? <IconBtn bare name="back" label={left} onPress={onLeft} iconSize={px(30)} /> : null}
-        {onHelp ? <IconBtn bare name="help" label="How to use InkShelf" onPress={onHelp} iconSize={px(30)} /> : null}
+        {onHelp ? <IconBtn bare name="help" label="How to use PurrinkShelf" onPress={onHelp} iconSize={px(30)} /> : null}
       </View>
       <Text style={st.headerTitle} numberOfLines={1}>{title}</Text>
       <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
@@ -371,12 +371,12 @@ function Header({left, title, onLeft, right, onHelp}: {left?: string; title: str
     </View>
   );
 }
-const CloseBtn = () => <IconBtn bare name="close" label="Close InkShelf" onPress={() => PluginManager.closePluginView()} iconSize={px(30)} />;
+const CloseBtn = () => <IconBtn bare name="close" label="Close PurrinkShelf" onPress={() => PluginManager.closePluginView()} iconSize={px(30)} />;
 
 // ---------- the app ----------
 installGlobalHandler();
 
-/** Shows what went wrong instead of letting InkShelf close, so it can be reported. */
+/** Shows what went wrong instead of letting PurrinkShelf close, so it can be reported. */
 class Guard extends React.Component<{children: React.ReactNode}, {err: {message: string; stack?: string} | null}> {
   state = {err: null as {message: string; stack?: string} | null};
   componentDidMount() {
@@ -394,7 +394,7 @@ class Guard extends React.Component<{children: React.ReactNode}, {err: {message:
     return (
       <View style={[st.screen, {padding: px(24)}]}>
         <Text style={st.h2}>Something went wrong</Text>
-        <Text style={[st.para, {fontSize: px(18)}]}>{'InkShelf stopped this instead of closing. A photo of this screen helps fix it.'}</Text>
+        <Text style={[st.para, {fontSize: px(18)}]}>{'PurrinkShelf stopped this instead of closing. A photo of this screen helps fix it.'}</Text>
         <View style={{borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), padding: px(12), marginVertical: px(12)}}>
           <Text style={{fontSize: px(17), fontWeight: 'bold', color: BLACK}}>{err.message}</Text>
           <Text style={{fontSize: px(12), color: '#333333', marginTop: px(6)}} numberOfLines={10}>{err.stack || ''}</Text>
@@ -404,7 +404,7 @@ class Guard extends React.Component<{children: React.ReactNode}, {err: {message:
         <Text style={[st.small, {marginTop: px(10)}]}>{`Full log: ${LOG_PATH.replace('/storage/emulated/0/', '')}`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(16)}}>
           <Btn dark icon="home" label="Back to Home" onPress={() => this.setState({err: null})} style={{flex: 1, marginRight: px(10)}} />
-          <Btn icon="close" a11y="Close InkShelf" onPress={() => PluginManager.closePluginView()} />
+          <Btn icon="close" a11y="Close PurrinkShelf" onPress={() => PluginManager.closePluginView()} />
         </View>
       </View>
     );
@@ -495,7 +495,7 @@ function InkShelfApp(): React.JSX.Element {
     });
   };
 
-  // ---------- permissions: one card that asks for everything InkShelf needs ----------
+  // ---------- permissions: one card that asks for everything PurrinkShelf needs ----------
   const [perm, setPerm] = useState<{[p: string]: number}>({});
   const [permOpen, setPermOpen] = useState(false);
   const saveWarned = useRef(false);
@@ -503,7 +503,7 @@ function InkShelfApp(): React.JSX.Element {
     for (const p of PERMS) {
       if ((perm[p.id] || 0) >= 1) continue; // already allowed: don't make Supernote ask again
       try {
-        await PluginManager.requestPermission(p.id, `InkShelf needs this to ${p.why.toLowerCase()}.`);
+        await PluginManager.requestPermission(p.id, `PurrinkShelf needs this to ${p.why.toLowerCase()}.`);
       } catch (e) {}
     }
     const r = await permStatus();
@@ -517,11 +517,11 @@ function InkShelfApp(): React.JSX.Element {
 
   useEffect(() => {
     (async () => {
-      log('InkShelf started', hasNative() ? 'native ok' : 'NO NATIVE MODULE');
+      log('PurrinkShelf started', hasNative() ? 'native ok' : 'NO NATIVE MODULE');
       const pr = await permStatus();
       setPerm(pr);
       log('permissions', pr);
-      if (Object.values(pr).some(v => v < 1)) setPermOpen(true); // one InkShelf card asks for all of them
+      if (Object.values(pr).some(v => v < 1)) setPermOpen(true); // one PurrinkShelf card asks for all of them
       // a fresh install: bring everything back from the backup file, if there is one
       if (!(await isSetUp())) {
         const bk = await readBackup(DEFAULT_BACKUP_DIR);
@@ -530,7 +530,7 @@ function InkShelfApp(): React.JSX.Element {
       await loadAll();
       ready.current = true;
     })();
-    // Supernote's own settings entry for InkShelf opens the settings sheet
+    // Supernote's own settings entry for PurrinkShelf opens the settings sheet
     return on('settings', () => setShowSettings(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -567,7 +567,7 @@ function InkShelfApp(): React.JSX.Element {
     return true;
   }
 
-  // ---------- backup file (Document/InkShelf by default): everything InkShelf wrote ----------
+  // ---------- backup file (Document/InkShelf by default): everything PurrinkShelf wrote ----------
   const ready = useRef(false); // never write a backup before the saved data has been read
   const indexReadyRef = useRef(false);
   const [lastBackup, setLastBackup] = useState<number | null>(null);
@@ -624,7 +624,7 @@ function InkShelfApp(): React.JSX.Element {
     setTags(filter || {});
     setCat(null);
     setPage(1);
-    // show what InkShelf saw last time straight away, then look for changes quietly
+    // show what PurrinkShelf saw last time straight away, then look for changes quietly
     const have = libData[l.path] || (await loadCache(l.path));
     setBooks(have?.books || []);
     setMeta(have?.meta || {version: 1, books: {}});
@@ -802,7 +802,7 @@ function InkShelfApp(): React.JSX.Element {
     }
   }
 
-  // storage roots InkShelf has already seen (from libraries and books picked with Supernote's picker)
+  // storage roots PurrinkShelf has already seen (from libraries and books picked with Supernote's picker)
   const rootOf = (p: string) => (p.match(/^\/storage\/(?!emulated|self)[^/]+/) || [])[0];
   const knownRoots = Array.from(new Set([...(app.knownRoots || []), ...libs.map(l => rootOf(l.path))].filter(Boolean) as string[]));
 
@@ -831,7 +831,7 @@ function InkShelfApp(): React.JSX.Element {
       }
     } catch (e) {
       log('picker failed', e);
-      setScreen({kind: 'browse', path: null}); // fall back to InkShelf's own folder list
+      setScreen({kind: 'browse', path: null}); // fall back to PurrinkShelf's own folder list
     }
   }
   async function useFolder(p: string) {
@@ -1129,7 +1129,7 @@ function InkShelfApp(): React.JSX.Element {
   const dupOf = (libPath: string, key: string) => dupGroups[`${libPath}|${key}`]?.others || [];
   const indexReady = libs.every(l => libData[l.path] || (l.path === lib?.path && books.length));
   useEffect(() => {
-    // InkShelf was opened from inside a book: count it as reading that book
+    // PurrinkShelf was opened from inside a book: count it as reading that book
     if (indexReady && index.length && !detectedOnce.current) {
       detectedOnce.current = true;
       detectRef.current();
@@ -1358,13 +1358,13 @@ function InkShelfApp(): React.JSX.Element {
   async function removePaperBook(b: Book) {
     if (!lib || b.ext !== 'paper') return;
     const ok = await removePaper(b.files[0]);
-    if (!ok) return setMessage("Couldn't remove it. Allow InkShelf to delete files (Settings › Permissions), or delete the .paper file in the library's Paper books folder.");
+    if (!ok) return setMessage("Couldn't remove it. Allow PurrinkShelf to delete files (Settings › Permissions), or delete the .paper file in the library's Paper books folder.");
     await patchBook(lib, b.key, {notes: undefined, reading: undefined, paper: undefined});
     say(`Removed the paper book "${titleOf(b)}"`);
     await scanLib(lib);
     setScreen({kind: 'library'});
   }
-  /** InkShelf is opened from Supernote's toolbar inside a document: if that document is one of your books, note it */
+  /** PurrinkShelf is opened from Supernote's toolbar inside a document: if that document is one of your books, note it */
   const detectRef = useRef<() => void>(() => {});
   detectRef.current = async () => {
     const path = await currentFile();
@@ -1662,7 +1662,7 @@ function InkShelfApp(): React.JSX.Element {
       {permOpen ? (
         <View style={st.overlay}>
           <View style={st.dialog}>
-            <Text style={[st.h2, {marginTop: 0}]}>Let InkShelf use your files</Text>
+            <Text style={[st.h2, {marginTop: 0}]}>Let PurrinkShelf use your files</Text>
             <Text style={[st.para, {fontSize: px(18)}]}>{'Supernote asks once for each of these. Choose "Always allow" so it never asks again.'}</Text>
             {PERMS.map(p => {
               const v = perm[p.id] || 0;
@@ -1688,7 +1688,7 @@ function InkShelfApp(): React.JSX.Element {
               </>
             )}
             {readOnlyLibs.size ? (
-              <Text style={[st.small, {marginTop: px(12)}]}>{"Note: plugins can't write on this SD card, so InkShelf keeps your details on the Supernote itself (and in the backup). Nothing to change."}</Text>
+              <Text style={[st.small, {marginTop: px(12)}]}>{"Note: plugins can't write on this SD card, so PurrinkShelf keeps your details on the Supernote itself (and in the backup). Nothing to change."}</Text>
             ) : null}
           </View>
         </View>
@@ -1854,7 +1854,7 @@ function InkShelfApp(): React.JSX.Element {
             onIgnore: () => changeApp(a => ({...a, dupIgnore: [...(a.dupIgnore || []), d.group]})),
             onFiles: async () => {
               const app2 = await openFileManager();
-              if (!app2) setMessage(`InkShelf couldn't open the file manager. The copies are in: ${b.dir || lib.name}`);
+              if (!app2) setMessage(`PurrinkShelf couldn't open the file manager. The copies are in: ${b.dir || lib.name}`);
             },
           };
         })()}
@@ -1941,13 +1941,13 @@ function InkShelfApp(): React.JSX.Element {
   }
 
 
-  // ----- how to use InkShelf: guides you can search -----
+  // ----- how to use PurrinkShelf: guides you can search -----
   if (view.kind === 'help') {
     const tid = view.topic;
     const topic = HELP.find(t => t.id === tid);
     return shell(
       <>
-        <Header title="How to use InkShelf" left="Back" onLeft={() => { setScreen(beforeHelp.current); closedLayer(); }} />
+        <Header title="How to use PurrinkShelf" left="Back" onLeft={() => { setScreen(beforeHelp.current); closedLayer(); }} />
         <HelpPage q={helpQ} setQ={setHelpQ} onOpen={t => setScreen({kind: 'help', topic: t.id})} />
         {topic ? (
           <ModalCard onOutside={() => setScreen({kind: 'help'})}>
@@ -1984,7 +1984,7 @@ function InkShelfApp(): React.JSX.Element {
         <Header title="" onHelp={() => setScreen({kind: 'help'})} right={<IconBtn bare name="gear" label="Settings" onPress={() => setShowSettings(true)} iconSize={px(30)} style={{marginRight: px(4)}} />} />
         <View style={st.brand} pointerEvents="none">
           <Icon name="logo" size={px(34)} />
-          <Text style={st.brandText}>InkShelf</Text>
+          <Text style={st.brandText}>PurrinkShelf</Text>
         </View>
         <Home
           libs={libs}
@@ -2372,7 +2372,7 @@ function InkShelfApp(): React.JSX.Element {
   if (!shelf.length) {
     content = lib && scanning[lib.path]
       ? <Text style={[st.para, {padding: px(10)}]}>Looking for books in this folder…</Text>
-      : <Text style={[st.para, {padding: px(10)}]}>No books found in this folder. InkShelf looks for EPUB, PDF, CBZ, FB2, XPS, MOBI, TXT and DOCX files (folders starting with _ or . are skipped).</Text>;
+      : <Text style={[st.para, {padding: px(10)}]}>No books found in this folder. PurrinkShelf looks for EPUB, PDF, CBZ, FB2, XPS, MOBI and TXT files (folders starting with _ or . are skipped).</Text>;
   } else if (!results.length) {
     content = (
       <View style={{padding: px(10)}}>
@@ -2490,7 +2490,7 @@ function InkShelfApp(): React.JSX.Element {
           {libs.length > 1 && lib ? <Text style={[st.small, {marginTop: -px(2)}]} numberOfLines={1}>{lib.name}</Text> : null}
         </Pressable>
         <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
-          <IconBtn bare name="help" label="How to use InkShelf" onPress={() => setScreen({kind: 'help'})} iconSize={px(30)} />
+          <IconBtn bare name="help" label="How to use PurrinkShelf" onPress={() => setScreen({kind: 'help'})} iconSize={px(30)} />
           <IconBtn bare name="gear" label="Settings" onPress={() => setShowSettings(true)} iconSize={px(30)} style={{marginRight: px(4)}} />
           <CloseBtn />
         </View>
@@ -3119,7 +3119,7 @@ function BookPage(props: {
   );
 }
 
-// ---------- paste a book into the note InkShelf was opened from ----------
+// ---------- paste a book into the note PurrinkShelf was opened from ----------
 function PasteSheet({cover, title, onPick, onClose}: {cover: string | null; title: string; onPick: (w: 'cover' | 'details' | 'both' | 'copy') => void; onClose: () => void}) {
   const opt = (w: 'cover' | 'details' | 'both' | 'copy', icon: IconName, label: string, dark?: boolean) => (
     <Pressable onPress={() => onPick(w)} style={{flex: 1, alignItems: 'center'}} accessibilityLabel={label}>
@@ -3793,7 +3793,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
       <ModalCard onOutside={back}>
         <CardHeader title="Appearance" onBack={back} onClose={onClose} />
         <View style={[st.pad, {flex: 1}]}>
-          <Text style={[st.small, {marginBottom: px(12)}]}>How InkShelf looks. Your books and details stay the same.</Text>
+          <Text style={[st.small, {marginBottom: px(12)}]}>How PurrinkShelf looks. Your books and details stay the same.</Text>
           {choice(settings.look !== 'drawn', 'Original', 'Clean, straight lines.', () => change({look: 'plain', cats: false}))}
           {choice(settings.look === 'drawn', 'Cats', 'Hand-drawn lines, cat toggles, paw prints on notes and little cats around the pages.', () => change({look: 'drawn', cats: true}), <CatImg name="loaf" w={px(70)} style={{marginLeft: px(10)}} />)}
           <View style={{flex: 1}} />
@@ -4503,7 +4503,7 @@ function DataPage(props: {
       </View>
       {tab === 'libs' ? (
       <>
-      {!hasNative() && <Text style={st.warn}>This copy of InkShelf is missing its native part, so it can't read folders or open books.</Text>}
+      {!hasNative() && <Text style={st.warn}>This copy of PurrinkShelf is missing its native part, so it can't read folders or open books.</Text>}
       <View style={st.dataHead}>
         <Text style={st.dataTitle}>Libraries</Text>
         <View style={{flexDirection: 'row'}}>
@@ -4513,7 +4513,7 @@ function DataPage(props: {
       </View>
       {libs.length === 0 ? (
         <View style={st.welcome}>
-          <Text style={st.para}>Add a folder with your books (EPUB, PDF and more). InkShelf finds every book inside it, including subfolders.</Text>
+          <Text style={st.para}>Add a folder with your books (EPUB, PDF and more). PurrinkShelf finds every book inside it, including subfolders.</Text>
           <Btn dark icon="folder-plus" label="Add a folder" onPress={onAdd} />
           <Btn small icon="search" label="Or pick a book with Supernote's file picker" onPress={onPicker} style={{marginTop: px(10)}} />
         </View>
@@ -4560,7 +4560,7 @@ function DataPage(props: {
       </View>
       <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
         <Text style={[st.small, {color: BLACK}]} numberOfLines={2}>
-          {'Everything InkShelf wrote (libraries, details, notes, covers chosen, bookmarks, settings) in one file. After reinstalling InkShelf, it reads it back by itself.'}
+          {'Everything PurrinkShelf wrote (libraries, details, notes, covers chosen, bookmarks, settings) in one file. After reinstalling PurrinkShelf, it reads it back by itself.'}
         </Text>
         <Text style={[st.choiceTitle, {fontSize: px(17), marginTop: px(6)}]} numberOfLines={1}>{`${where(backup.dir).replace('Supernote/', '')}  ›  ${BACKUP_NAME}`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(8)}}>
@@ -4575,7 +4575,7 @@ function DataPage(props: {
         <Text style={st.small}>{sheet.when ? `Updated ${ago(sheet.when)}` : ''}</Text>
       </View>
       <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
-        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › InkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. InkShelf reads the changes by itself.`}</Text>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › InkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. PurrinkShelf reads the changes by itself.`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(8)}}>
           <Btn small icon="save" label="Make the sheet" onPress={sheet.onMake} style={{flex: 1}} />
           <Btn small icon="restore" label="Read changes now" onPress={sheet.onRead} style={{flex: 1, marginLeft: px(8)}} />
@@ -5214,7 +5214,7 @@ function Home(props: {
     <>
       {!libs.length ? (
         <View style={[st.welcome, {marginHorizontal: px(16)}]}>
-          <Text style={st.h2}>Welcome to InkShelf</Text>
+          <Text style={st.h2}>Welcome to PurrinkShelf</Text>
           <Text style={[st.para, {fontSize: px(18)}]}>Pick a folder with your books (EPUB, PDF and more) and it becomes a library you can filter, search and bookmark.</Text>
           <Btn dark icon="folder-plus" label="Add your first library" onPress={onAddLibrary} />
         </View>
@@ -5310,7 +5310,7 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots, 
         setEntries((await listDir(path)).filter(e => e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt)$/i.test(e.name)));
       } else {
         const r = [{label: 'Supernote (internal storage)', path: '/storage/emulated/0'}];
-        // SD cards: Android's storage APIs, plus places InkShelf already knows (libraries, picked books)
+        // SD cards: Android's storage APIs, plus places PurrinkShelf already knows (libraries, picked books)
         const found = await storageRoots();
         log('storage roots', found.how, found.roots);
         // one row per card: the same card can be reported under several paths
@@ -5353,7 +5353,7 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots, 
             {searched && roots.length < 2 ? (
               <View style={[st.welcome, {marginTop: px(16)}]}>
                 <Text style={[st.para, {fontSize: px(18), marginBottom: px(6)}]}>{"Can't see your SD card?"}</Text>
-                <Text style={[st.small, {marginBottom: px(12)}]}>{'Pick any one book on the card with Supernote\'s file picker. InkShelf then remembers where the card is, and it shows up here with a ✓ from then on.'}</Text>
+                <Text style={[st.small, {marginBottom: px(12)}]}>{'Pick any one book on the card with Supernote\'s file picker. PurrinkShelf then remembers where the card is, and it shows up here with a ✓ from then on.'}</Text>
                 {onBookPicker ? <Btn small dark icon="search" label="Find my SD card" onPress={onBookPicker} /> : null}
               </View>
             ) : onBookPicker ? (
@@ -5561,7 +5561,7 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
         {onRemovePaper ? (
           <View style={[st.missingNote, {marginTop: px(24)}]}>
             <Text style={[st.small, {color: BLACK, fontWeight: 'bold'}]}>Paper book</Text>
-            <Text style={st.small}>{'Listed by hand. Removing it takes it off InkShelf, with its notes.'}</Text>
+            <Text style={st.small}>{'Listed by hand. Removing it takes it off PurrinkShelf, with its notes.'}</Text>
             <Btn small icon="trash" label="Remove this paper book" onPress={onRemovePaper} style={{marginTop: px(8)}} />
           </View>
         ) : null}
@@ -5570,13 +5570,13 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
         <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
           <Text style={[st.small, {color: BLACK}]} numberOfLines={2}>{book.missing ? `Was: ${book.key.replace(/#(vols|series)$/, '').replace(/^\//, '')}` : `${book.dir ? book.dir + ' › ' : ''}${(book.files[0] || '').split('/').pop()}${book.files.length > 1 ? `  (+${book.files.length - 1} more)` : ''}`}</Text>
           <Btn small icon="unlink" label={book.missing ? 'Find its file' : 'Link these details to a different file'} onPress={onRelink} style={{marginTop: px(8)}} />
-          <Text style={[st.small, {marginTop: px(4)}]}>{"If InkShelf joined the details to the wrong file, pick the right one. The tags, notes and status move with them."}</Text>
+          <Text style={[st.small, {marginTop: px(4)}]}>{"If PurrinkShelf joined the details to the wrong file, pick the right one. The tags, notes and status move with them."}</Text>
         </View>
         </>}
         {onSplit ? (
           <View style={[st.missingNote, {marginTop: px(24)}]}>
             <Text style={[st.small, {color: BLACK, fontWeight: 'bold'}]}>{`One book made of ${book.files.length} files`}</Text>
-            <Text style={st.small}>{book.series === 'group' ? 'You combined these files.' : 'InkShelf combined these because they share a folder named after them.'}</Text>
+            <Text style={st.small}>{book.series === 'group' ? 'You combined these files.' : 'PurrinkShelf combined these because they share a folder named after them.'}</Text>
             <Btn small icon="split" label="Split into separate books" onPress={onSplit} style={{marginTop: px(8)}} />
           </View>
         ) : null}
@@ -5635,7 +5635,7 @@ function PaperCard({libs, lib, onClose, onAdd, onWish}: {libs: Lib[]; lib: Lib |
           <>
             <Text style={[st.small, {marginBottom: px(3), marginTop: px(6)}]}>Where to get it</Text>
             <TextInput style={st.input} value={where} onChangeText={setWhere} placeholder="A shop, a site… (optional)" placeholderTextColor="#888888" maxLength={120} />
-            <Text style={[st.small, {marginTop: px(8)}]}>{'The file isn\'t on your Supernote yet, so it goes on your wishlist and waits in the New tab. Copy the EPUB into a library folder (by USB, Supernote Cloud or Browse & Access) and InkShelf finds it, then takes it off the list by itself.'}</Text>
+            <Text style={[st.small, {marginTop: px(8)}]}>{'The file isn\'t on your Supernote yet, so it goes on your wishlist and waits in the New tab. Copy the EPUB into a library folder (by USB, Supernote Cloud or Browse & Access) and PurrinkShelf finds it, then takes it off the list by itself.'}</Text>
           </>
         ) : (
           <>
@@ -5657,7 +5657,7 @@ function PaperCard({libs, lib, onClose, onAdd, onWish}: {libs: Lib[]; lib: Lib |
   );
 }
 
-// ---------- activity: every message InkShelf showed (new books, filled details, arrivals…) ----------
+// ---------- activity: every message PurrinkShelf showed (new books, filled details, arrivals…) ----------
 function ActivityCard({items, onClose, onClear}: {items: {t: string; at: number}[]; onClose: () => void; onClear: () => void}) {
   const [pg, setPg] = useState(0);
   const per = 11;
