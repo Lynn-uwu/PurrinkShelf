@@ -28,7 +28,7 @@ const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
 const TASK_H = px(80);
 const DIP_IMG = require('./assets/taskbar-dip.png'); // drawn in tools/logo/taskbar-dip.svg
-// the Cat look (Settings): chubby cats, drawn in tools/cat2/cats.py
+// the Cat look (Settings): cat pictures cut from tools/cats/source-sheet.png by tools/cats/cut.py
 const CAT_IMG = {
   peek: require('./assets/cat/peek.png'),
   ears: require('./assets/cat/ears.png'),
@@ -38,9 +38,11 @@ const CAT_IMG = {
   sleepy: require('./assets/cat/sleepy.png'),
   stretch: require('./assets/cat/stretch.png'),
 };
+// height / width of each picture
+const CAT_RATIO: {[k in keyof typeof CAT_IMG]: number} = {peek: 0.5349, ears: 0.4848, paw: 0.8213, loaf: 0.7054, sitting: 1.0231, sleepy: 0.8558, stretch: 0.9286};
 let CAT = false; // set from Settings on every render
-const CatImg = ({name, w, h, style}: {name: keyof typeof CAT_IMG; w: number; h: number; style?: any}) => (
-  <Image source={CAT_IMG[name]} style={[{width: w, height: h, pointerEvents: 'none'}, style]} resizeMode="contain" />
+const CatImg = ({name, w, style}: {name: keyof typeof CAT_IMG; w: number; h?: number; style?: any}) => (
+  <Image source={CAT_IMG[name]} style={[{width: w, height: Math.round(w * CAT_RATIO[name]), pointerEvents: 'none'}, style]} resizeMode="contain" />
 );
 // picture sizes (the Supernote screen is 300 pixels per inch: 600 px is about 51 mm)
 const SIZE_COVER = '2:3 tall, e.g. 600 × 900 px (about 51 × 76 mm on the screen)';
@@ -3025,7 +3027,7 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
     <View style={[StyleSheet.absoluteFill, {backgroundColor: '#ffffff'}]}>
       <View style={st.header}>
         <IconBtn bare name="back" label="Back to the book" onPress={onClose} iconSize={px(30)} />
-        <View style={{flex: 1, marginLeft: CAT ? px(186) : px(6)}}>
+        <View style={{flex: 1, marginLeft: CAT ? px(170) : px(6)}}>
           <Text style={st.headerName} numberOfLines={1}>Notes</Text>
           <Text style={st.small} numberOfLines={1}>{`${title}  ·  ${notes.length} / ${MAX_NOTES}`}</Text>
         </View>
@@ -3364,7 +3366,7 @@ function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) =
       <View style={[st.board, {width: boardW, height: boardH, marginTop: 0}]}>
         {!list.length ? (
           <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', padding: px(30)}}>
-            {CAT ? <CatImg name="sitting" w={px(130)} h={px(120)} /> : <Icon name="quote" size={px(44)} />}
+            {CAT ? <CatImg name="sitting" w={px(120)} /> : <Icon name="quote" size={px(44)} />}
             <Text style={[st.para, {textAlign: 'center', marginTop: px(10)}]}>{all.length ? 'No notes match.' : 'Notes you pin on books show up here, all together. Open a book and tap the sticky note to add one.'}</Text>
           </View>
         ) : (
@@ -3430,7 +3432,7 @@ function WishlistPage({wishes, onChange}: {wishes: Wish[]; onChange: (w: Wish[])
       <View style={{flex: 1, paddingHorizontal: px(16)}}>
         {!wishes.length ? (
           <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', padding: px(30)}}>
-            {CAT ? <CatImg name="loaf" w={px(172)} h={px(120)} /> : <Icon name="wish" size={px(48)} />}
+            {CAT ? <CatImg name="loaf" w={px(150)} /> : <Icon name="wish" size={px(48)} />}
             <Text style={[st.para, {textAlign: 'center', marginTop: px(10)}]}>Books you want to read but don't have yet. Tap + to add one.</Text>
           </View>
         ) : (
@@ -3506,7 +3508,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
                 {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
                 <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
-                {CAT ? <CatImg name="ears" w={px(96)} h={px(32)} style={{position: 'absolute', top: -px(58), alignSelf: 'center'}} /> : null}
+                {CAT ? <CatImg name="ears" w={px(84)} style={{position: 'absolute', top: -px(60), alignSelf: 'center'}} /> : null}
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -4798,7 +4800,7 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
     return (
       <View style={[st.pad, {flex: 1}]}>
         {wait}
-        {CAT ? <CatImg name={ready ? 'sleepy' : 'stretch'} w={px(170)} h={px(ready ? 126 : 140)} style={{alignSelf: 'center', marginVertical: px(20)}} /> : null}
+        {CAT ? <CatImg name={ready ? 'sleepy' : 'stretch'} w={px(150)} style={{alignSelf: 'center', marginVertical: px(20)}} /> : null}
         <Text style={[st.para, CAT && {textAlign: 'center'}]}>{ready ? 'All caught up. Every book has a genre and a summary.' : 'Looking through your libraries…'}</Text>
       </View>
     );
@@ -5470,7 +5472,7 @@ function ModalCard({onOutside, children}: {onOutside: () => void; children: Reac
     <View style={st.cardWrap}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onOutside} accessibilityLabel="Outside the page" />
       <View style={st.pageCard}>{children}</View>
-      {CAT ? <CatImg name="peek" w={px(92)} h={px(79)} style={{position: 'absolute', top: CARD_Y + px(32) - px(59), left: CARD_X + px(128)}} /> : null}
+      {CAT ? <CatImg name="peek" w={px(78)} style={{position: 'absolute', top: Math.max(0, CARD_Y - Math.round(px(78) * CAT_RATIO.peek * 0.82)), left: CARD_X + px(150)}} /> : null}
     </View>
   );
 }
