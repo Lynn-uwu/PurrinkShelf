@@ -42,6 +42,7 @@ const CAT_IMG = {
 const CAT_RATIO: {[k in keyof typeof CAT_IMG]: number} = {peek: 0.5349, ears: 0.4848, paw: 0.8213, loaf: 0.7054, sitting: 1.0231, sleepy: 0.8558, stretch: 0.9286};
 let CAT = false; // set from Settings on every render
 const TOGGLE_EARS = require('./assets/cat/toggle-ears.png'); // cut from tools/cats/toggle-source.png
+const TOGGLE_EARS_OFF = require('./assets/cat/toggle-ears-off.png'); // the same ears in outline, filled white (tools/cats/toggle_off.py)
 
 // ---------- the hand-drawn look (Settings › Look): every ink border becomes a slightly wobbly pen line ----------
 // The line pictures (tools/sketch/make.py) are cropped, never stretched, so the wobble looks the same on short and long edges.
@@ -284,14 +285,20 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
 
 function Pill({label, onPress, active, small, width}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; width?: number}) {
   return (
-    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, CAT && {marginTop: px(5), marginBottom: px(3)}, CAT && active && {paddingLeft: px(6), overflow: 'visible'}, width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
-      {CAT && active ? <Image source={TOGGLE_EARS} style={{position: 'absolute', left: width ? px(14) : px(5), top: -px(7), width: px(30), height: px(8)}} resizeMode="stretch" /> : null}
-      {CAT && active ? (
-        // the Cats look: a switched-on toggle is a little black cat, ears on top and eyes where the tick was
+    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, CAT && {marginTop: px(5), marginBottom: px(3), paddingLeft: px(6), overflow: 'visible'}, width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
+      {/* the Cats look: every toggle is a little cat. On: a black cat with white eyes (where the tick was). Off: the same cat in outline. */}
+      {CAT ? (
+        active ? (
+          <Image source={TOGGLE_EARS} style={{position: 'absolute', zIndex: 2, left: width ? px(14) : px(5), top: -px(7), width: px(30), height: px(8)}} resizeMode="stretch" />
+        ) : (
+          <Image source={TOGGLE_EARS_OFF} style={{position: 'absolute', zIndex: 2, left: (width ? px(14) : px(5)) - px(2.37), top: -px(9.25), width: px(34.7), height: px(12.75)}} resizeMode="stretch" />
+        )
+      ) : null}
+      {CAT ? (
         <RNView style={{flexDirection: 'row', alignItems: 'center'}}>
-          <RNView style={st.catEye} />
-          <RNView style={[st.catEye, {marginLeft: px(4), marginRight: px(7)}]} />
-          <Text style={[st.pillText, small && {fontSize: px(14)}, {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
+          <RNView style={[st.catEye, !active && {backgroundColor: BLACK}]} />
+          <RNView style={[st.catEye, !active && {backgroundColor: BLACK}, {marginLeft: px(4), marginRight: px(7)}]} />
+          <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
         </RNView>
       ) : (
         <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label}</Text>
