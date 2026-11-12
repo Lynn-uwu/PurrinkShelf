@@ -284,26 +284,27 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
   );
 }
 
-function Pill({label, onPress, active, small, width}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; width?: number}) {
+function Pill({label, onPress, active, small, width, toggle}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; width?: number; toggle?: boolean}) {
+  const cat = CAT && toggle; // only switches become cats; tags and labels stay plain pills
   return (
-    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, CAT && {marginTop: px(5), marginBottom: px(3), overflow: 'visible'}, CAT && (active ? {paddingLeft: px(6)} : {paddingRight: px(6)}), width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
+    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, cat && {marginTop: px(5), marginBottom: px(3), overflow: 'visible'}, cat && (active ? {paddingLeft: px(6)} : {paddingRight: px(6)}), width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
       {/* the Cats look: every toggle is a little cat. On: a black cat with white eyes (where the tick was). Off: the same cat in outline. */}
-      {CAT ? (
+      {cat ? (
         active ? (
           <Image source={TOGGLE_EARS} style={{position: 'absolute', zIndex: 2, left: width ? px(14) : px(5), top: -px(7), width: px(30), height: px(8)}} resizeMode="stretch" />
         ) : (
           <Image source={TOGGLE_EARS_OFF} style={{position: 'absolute', zIndex: 2, right: (width ? px(14) : px(5)) - px(2.37), top: -px(9.25), width: px(34.7), height: px(12.75), transform: [{scaleX: -1}]}} resizeMode="stretch" />
         )
       ) : null}
-      {CAT ? (
+      {cat ? (
         // Off faces the other way: words first, then the eyes, ears on the right
         <RNView style={{flexDirection: active ? 'row' : 'row-reverse', alignItems: 'center'}}>
           <RNView style={[st.catEye, !active && {backgroundColor: BLACK}]} />
           <RNView style={[st.catEye, !active && {backgroundColor: BLACK}, active ? {marginLeft: px(4), marginRight: px(7)} : {marginRight: px(4), marginLeft: px(7)}]} />
-          <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
+          <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, active && {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
         </RNView>
       ) : (
-        <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label}</Text>
+        <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, active && {color: '#ffffff'}]}>{label}</Text>
       )}
     </Pressable>
   );
@@ -2401,6 +2402,10 @@ function PurrinkShelfApp(): React.JSX.Element {
       const stars = ratingOf(m);
       const au = authorOf(b, m);
       const dups = lib ? dupOf(lib.path, b.key) : [];
+      // the description gets whatever height is left, in whole lines (never a line cut in half)
+      const titleLines = (titleOf(b).length + (sub ? sub.length * 0.8 + 3 : 0)) * px(18) * 0.55 > resW - Math.round((ch * 2) / 3) - px(40) - (dups.length ? px(44) : 0) ? 2 : 1;
+      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(40);
+      const teaserLines = Math.max(0, Math.min(2, Math.floor(left / px(19))));
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
           <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} isNew={isNewB(b)} badge={badgeOf(b)} />
@@ -2423,7 +2428,7 @@ function PurrinkShelfApp(): React.JSX.Element {
                 // only whole pills: show what fits on one line, then "+N"
                 const all = Array.from(new Set([...cats.slice(-1), ...(m.genres || [])]));
                 const room = resW - Math.round((ch * 2) / 3) - px(40);
-                const pw = (t: string) => t.length * px(15) * 0.56 + px(29);
+                const pw = (t: string) => t.length * px(15) * 0.56 + px(33);
                 const shown: string[] = [];
                 let used = 0;
                 for (let i = 0; i < all.length; i++) {
@@ -2447,8 +2452,8 @@ function PurrinkShelfApp(): React.JSX.Element {
             ) : null}
             {b.missing ? (
               <Text style={st.teaser} numberOfLines={2}>{"The file isn't in the library any more. Its details are kept and come back when the file does."}</Text>
-            ) : m.description ? (
-              <Text style={st.teaser} numberOfLines={titleOf(b).length > (showFilters ? 34 : 50) ? 1 : 2}>{m.description.replace(/\s+/g, ' ')}</Text>
+            ) : m.description && teaserLines ? (
+              <Text style={st.teaser} numberOfLines={teaserLines}>{m.description.replace(/\s+/g, ' ')}</Text>
             ) : null}
           </View>
         </Pressable>
@@ -2529,8 +2534,8 @@ function PurrinkShelfApp(): React.JSX.Element {
                   {fKind !== 'f' && fKind !== 'a' ? (
                     <View style={st.modeRow}>
                       <Text style={st.small}>Match </Text>
-                      <Pill label="All" active={mode === 'all'} onPress={() => { setMode('all'); setPage(1); }} />
-                      <Pill label="Any" active={mode === 'any'} onPress={() => { setMode('any'); setPage(1); }} />
+                      <Pill toggle label="All" active={mode === 'all'} onPress={() => { setMode('all'); setPage(1); }} />
+                      <Pill toggle label="Any" active={mode === 'any'} onPress={() => { setMode('any'); setPage(1); }} />
                     </View>
                   ) : null}
                   <Text style={st.hint}>Tap once to include, again to exclude.</Text>
@@ -3556,7 +3561,7 @@ function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) =
           <TextInput style={[st.searchInput, {marginLeft: px(8)}]} value={q} onChangeText={t => { setQ(t); setPg(0); }} placeholder="Search your notes and quotes" placeholderTextColor="#666666" />
           {q ? <Pressable onPress={() => setQ('')} accessibilityLabel="Clear search"><Icon name="close" size={px(22)} /></Pressable> : null}
         </View>
-        <View style={{marginLeft: px(10)}}><Pill label="Rated" active={onlyRated} onPress={() => { setOnlyRated(!onlyRated); setPg(0); }} /></View>
+        <View style={{marginLeft: px(10)}}><Pill toggle label="Rated" active={onlyRated} onPress={() => { setOnlyRated(!onlyRated); setPg(0); }} /></View>
       </View>
       <View style={[st.board, {width: boardW, height: boardH, marginTop: 0}]}>
         {!list.length ? (
@@ -3880,7 +3885,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <Text style={[st.small, {marginTop: px(3)}]}>{text}</Text>
           {on && extra ? extra : null}
         </View>
-        <Pill label={on ? 'On' : 'Off'} active={on} onPress={flip} width={px(84)} />
+        <Pill toggle label={on ? 'On' : 'Off'} active={on} onPress={flip} width={px(84)} />
       </View>
     );
     const prof = (id: keyof Settings['profile']) => [settings.profile[id], () => change({profile: {...settings.profile, [id]: !settings.profile[id]}})] as const;
@@ -3920,7 +3925,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <>
             <Text style={st.section}>Library</Text>
             <View style={st.pillWrap}>
-              {libs.map(l => <Pill key={l.path} label={l.name} active={l.path === lib?.path} onPress={() => onLib(l)} />)}
+              {libs.map(l => <Pill toggle key={l.path} label={l.name} active={l.path === lib?.path} onPress={() => onLib(l)} />)}
             </View>
           </>
         ) : null}
@@ -4070,8 +4075,8 @@ function LibrarySheet(props: {
     <View style={[st.modeRow, {justifyContent: 'space-between'}]}>
       <View style={{flexDirection: 'row', alignItems: 'center'}}>
         <Text style={st.small}>Match </Text>
-        <Pill small label="All" active={mode === 'all'} onPress={() => setMode('all')} />
-        <Pill small label="Any" active={mode === 'any'} onPress={() => setMode('any')} />
+        <Pill toggle small label="All" active={mode === 'all'} onPress={() => setMode('all')} />
+        <Pill toggle small label="Any" active={mode === 'any'} onPress={() => setMode('any')} />
       </View>
       <Text style={st.hint}>Tap: include  ·  again: exclude</Text>
     </View>
@@ -4327,8 +4332,8 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete, onP
         </View>
         {c.rules.length > 1 ? (
           <View style={st.modeRow}>
-            <Pill label="all of these fit" active={c.match === 'all'} onPress={() => setC({...c, match: 'all'})} />
-            <Pill label="any of these fits" active={c.match === 'any'} onPress={() => setC({...c, match: 'any'})} />
+            <Pill toggle label="all of these fit" active={c.match === 'all'} onPress={() => setC({...c, match: 'all'})} />
+            <Pill toggle label="any of these fits" active={c.match === 'any'} onPress={() => setC({...c, match: 'any'})} />
           </View>
         ) : null}
         <View onLayout={e => (rowsY.current = e.nativeEvent.layout.y)}>
@@ -4366,7 +4371,7 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete, onP
               ) : null}
               {pick.options.length ? (
                 <View style={[st.pillWrap, {marginTop: px(8)}]}>
-                  {pick.options.slice(0, 48).map(o => <Pill key={o} label={o} active={o === pick.current} onPress={() => { pick.onPick(o); setPick(null); }} />)}
+                  {pick.options.slice(0, 48).map(o => <Pill toggle key={o} label={o} active={o === pick.current} onPress={() => { pick.onPick(o); setPick(null); }} />)}
                 </View>
               ) : null}
             </View>
@@ -5600,7 +5605,7 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
 
         <Text style={st.label}>Completely translated</Text>
         <View style={st.pillWrap}>
-          {(['Yes', 'No'] as const).map(v => <Pill key={v} label={v} active={translated === v} onPress={() => setTranslated(translated === v ? undefined : v)} />)}
+          {(['Yes', 'No'] as const).map(v => <Pill toggle key={v} label={v} active={translated === v} onPress={() => setTranslated(translated === v ? undefined : v)} />)}
         </View>
 
         <Text style={st.label}>Got it from</Text>
@@ -5608,7 +5613,7 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
 
         <Text style={st.label}>Lent or borrowed</Text>
         <View style={st.pillWrap}>
-          {(['lent', 'borrowed'] as const).map(d => <Pill key={d} label={d === 'lent' ? 'Lent to someone' : 'Borrowed from someone'} active={loanDir === d} onPress={() => setLoanDir(loanDir === d ? null : d)} />)}
+          {(['lent', 'borrowed'] as const).map(d => <Pill toggle key={d} label={d === 'lent' ? 'Lent to someone' : 'Borrowed from someone'} active={loanDir === d} onPress={() => setLoanDir(loanDir === d ? null : d)} />)}
         </View>
         {loanDir ? <TextInput style={st.input} value={loanWho} onChangeText={setLoanWho} placeholder={loanDir === 'lent' ? 'Who has it?' : 'Whose is it?'} placeholderTextColor="#888888" /> : null}
         {loanDir ? <Text style={st.small}>{'Tap the chosen one again when it comes back.'}</Text> : null}
@@ -5718,7 +5723,7 @@ function PaperCard({libs, lib, onClose, onAdd, onWish}: {libs: Lib[]; lib: Lib |
             {libs.length > 1 ? (
               <>
                 <Text style={[st.small, {marginBottom: px(3), marginTop: px(6)}]}>List it in</Text>
-                <View style={st.pillWrap}>{libs.map(l => <Pill key={l.path} label={l.name} active={into?.path === l.path} onPress={() => setInto(l)} />)}</View>
+                <View style={st.pillWrap}>{libs.map(l => <Pill toggle key={l.path} label={l.name} active={into?.path === l.path} onPress={() => setInto(l)} />)}</View>
               </>
             ) : null}
             <Text style={[st.small, {marginTop: px(8)}]}>{`It goes in its own "${PAPER_DIR}" folder, apart from your e-books, and works like any book: genres, tags, notes, reading status, collections. Next you can add its cover and details.`}</Text>
@@ -5859,11 +5864,11 @@ const st = StyleSheet.create({
   resBar: {height: px(58), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(10), paddingTop: px(8)},
   resCount: {fontSize: px(19), fontWeight: 'bold', color: BLACK},
   pillWrap: {flexDirection: 'row', flexWrap: 'wrap', marginVertical: px(4)},
-  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(4), marginBottom: px(2), height: px(28)},
-  pill: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(10), paddingVertical: px(2), marginRight: px(6), marginBottom: px(6)},
-  pillSmall: {paddingHorizontal: px(8), paddingVertical: px(1), marginRight: px(5), marginBottom: px(5)},
+  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(4), marginBottom: px(2), height: px(34), alignItems: 'center'},
+  pill: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
+  pillSmall: {paddingHorizontal: px(10), paddingVertical: px(3), marginRight: px(6), marginBottom: px(5)},
   pillActive: {backgroundColor: BLACK},
-  pillText: {fontSize: px(15), color: BLACK},
+  pillText: {fontSize: px(15), lineHeight: px(20), color: BLACK},
   row: {flexDirection: 'row', borderBottomWidth: 1, borderColor: '#888888', paddingVertical: px(7), overflow: 'hidden'},
   rowText: {flex: 1, marginLeft: px(12), overflow: 'hidden'},
   rowTitle: {fontSize: px(18), lineHeight: px(22), fontWeight: 'bold', color: BLACK},
