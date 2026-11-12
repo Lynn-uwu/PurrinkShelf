@@ -152,7 +152,8 @@ export type Settings = {
   goal: number; // books to finish this year (0 = no goal)
   length: boolean; // show how long books take to read
   warnings: boolean; // show content warnings (off: hidden everywhere)
-  look: 'plain' | 'cat'; // plain, or hand-drawn cats on cards, buttons and empty pages
+  look: 'plain' | 'drawn'; // straight lines, or slightly wobbly hand-drawn ones
+  cats: boolean; // little cats on cards, the bottom bar and empty pages
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -175,6 +176,7 @@ export const DEFAULT_SETTINGS: Settings = {
   length: false,
   warnings: true,
   look: 'plain',
+  cats: false,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
@@ -380,6 +382,7 @@ export async function loadSettings(): Promise<Settings> {
   const t = await readText(`${await pluginDir()}/settings.json`);
   try {
     const v = t ? JSON.parse(t) : {};
+    if (v.look === 'cat') { v.look = 'drawn'; v.cats = true; } // the first Cat look had both
     return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}, profile: {...DEFAULT_SETTINGS.profile, ...(v.profile || {})}};
   } catch (e) {
     return DEFAULT_SETTINGS;

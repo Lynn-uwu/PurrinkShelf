@@ -41,16 +41,4 @@ for name, i in zip(expect, rows):
     Image.fromarray(rgba).save(os.path.join(OUT, name + '.png'))
     print(name, x1 - x0, y1 - y0)
 
-# the logo at the sizes the plugin uses: README (512), Home header (72), Supernote toolbar button (48)
-logo = Image.open(os.path.join(OUT, 'logo.png'))
-def square(img, size, pad=0.06):
-    w, h = img.size
-    s = (1 - 2 * pad) * size / max(w, h)
-    small = img.resize((max(1, round(w * s)), max(1, round(h * s))), Image.LANCZOS)
-    out = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    out.paste(small, ((size - small.width) // 2, (size - small.height) // 2), small)
-    return out
-ASSETS = os.path.join(OUT, '..')
-square(logo, 512).save(os.path.join(ASSETS, 'logo-512.png'))
-square(logo, 72, 0.02).save(os.path.join(ASSETS, 'icons', 'logo.png'))
-square(logo, 48, 0.02).save(os.path.join(ASSETS, 'icon.png'))
+# the app logo stays the shelf of books (assets/logo.svg); the winged cat is kept in assets/cat/logo.png

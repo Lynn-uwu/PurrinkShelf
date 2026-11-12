@@ -4,7 +4,7 @@
  * descriptions and covers on the device; filter by folder and tag; tap to read.
  */
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {Dimensions, Image, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {bareTitle, goodreadsCsv, readSiteExport} from './src/sites';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
@@ -41,6 +41,145 @@ const CAT_IMG = {
 // height / width of each picture
 const CAT_RATIO: {[k in keyof typeof CAT_IMG]: number} = {peek: 0.5349, ears: 0.4848, paw: 0.8213, loaf: 0.7054, sitting: 1.0231, sleepy: 0.8558, stretch: 0.9286};
 let CAT = false; // set from Settings on every render
+
+// ---------- the hand-drawn look (Settings › Look): every ink border becomes a slightly wobbly pen line ----------
+// The line pictures (tools/sketch/make.py) are cropped, never stretched, so the wobble looks the same on short and long edges.
+// View, Pressable, Text and TextInput below stand in for React Native's own: with the look off they are the same.
+let SKETCH = false;
+const SK_H = require('./assets/sketch/h.png');
+const SK_V = require('./assets/sketch/v.png');
+const SK_LEN = 1400; // design units long
+const SK_T = 8; // design units across; the line in its middle is about SK_LINE thick
+const SK_LINE = 2.2;
+type Ink = {t: number; r: number; b: number; l: number; color: string; tl: number; tr: number; br: number; bl: number};
+const isInk = (c: any) => typeof c === 'string' && c !== 'transparent' && !/^(#fff\b|#ffffff|white|rgba\(255)/i.test(c);
+function inkOf(f: any): Ink | null {
+  if (!f || f.borderStyle === 'dashed' || f.borderStyle === 'dotted') return null;
+  if (f.borderLeftColor || f.borderTopColor || f.borderRightColor || f.borderBottomColor) return null; // drawn shapes (the note fold)
+  const w = f.borderWidth || 0;
+  const t = f.borderTopWidth ?? w, r = f.borderRightWidth ?? w, b = f.borderBottomWidth ?? w, l = f.borderLeftWidth ?? w;
+  if (!(t || r || b || l)) return null;
+  const color = f.borderColor || BLACK;
+  if (!isInk(color)) return null;
+  const R = f.borderRadius || 0;
+  return {t, r, b, l, color, tl: f.borderTopLeftRadius ?? R, tr: f.borderTopRightRadius ?? R, br: f.borderBottomRightRadius ?? R, bl: f.borderBottomLeftRadius ?? R};
+}
+const pad = (f: any, side: 'Top' | 'Right' | 'Bottom' | 'Left') =>
+  f['padding' + side] ?? (side === 'Top' || side === 'Bottom' ? f.paddingVertical : f.paddingHorizontal) ?? f.padding ?? 0;
+/** the same box without its border: the border's width moves into the padding, so nothing shifts */
+const unborder = (f: any, k: Ink) => ({
+  borderWidth: 0, borderTopWidth: 0, borderRightWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0,
+  paddingTop: pad(f, 'Top') + k.t, paddingRight: pad(f, 'Right') + k.r, paddingBottom: pad(f, 'Bottom') + k.b, paddingLeft: pad(f, 'Left') + k.l,
+});
+function SketchLines({k}: {k: Ink}) {
+  const [size, setSize] = useState<{w: number; h: number} | null>(null);
+  const seed = useRef(Math.floor(Math.random() * 4)).current; // a different stretch of wobble per box
+  const tint = k.color === BLACK || k.color === '#000' ? undefined : k.color;
+  const edge = (side: 'top' | 'bottom' | 'left' | 'right', bw: number, a: number, z: number, i: number) => {
+    if (!bw) return null;
+    const across = side === 'top' || side === 'bottom';
+    const th = Math.max(1, (SK_T * bw) / SK_LINE); // the picture's thickness for this border width
+    const off = bw / 2 - th / 2; // centre the line where the border's middle was
+    const shift = -px(((seed + i) % 4) * 100 + 20); // the picture is longer than the screen plus the biggest shift
+    const box: any = across
+      ? {position: 'absolute', left: a, right: z, height: th, [side]: off, overflow: 'hidden'}
+      : {position: 'absolute', top: a, bottom: z, width: th, [side]: off, overflow: 'hidden'};
+    const pic: any = across ? {width: px(SK_LEN), height: th, marginLeft: shift} : {width: th, height: px(SK_LEN), marginTop: shift};
+    return (
+      <RNView key={side} style={box}>
+        <Image source={across ? SK_H : SK_V} style={[pic, tint ? {tintColor: tint} : null]} resizeMode="stretch" />
+      </RNView>
+    );
+  };
+  const corner = (v: 'top' | 'bottom', hz: 'left' | 'right', rad: number, bw: number) => {
+    if (!size || rad <= 0 || !bw) return null;
+    const r = Math.min(rad, size.w / 2, size.h / 2);
+    if (r < 1) return null;
+    return (
+      <RNView key={v + hz} style={{position: 'absolute', [v]: 0, [hz]: 0, width: r, height: r, overflow: 'hidden'}}>
+        <RNView style={{position: 'absolute', [v]: 0, [hz]: 0, width: 2 * r, height: 2 * r, borderRadius: r, borderWidth: bw, borderColor: k.color}} />
+      </RNView>
+    );
+  };
+  const cl = (rad: number) => (size ? Math.min(rad, size.w / 2, size.h / 2) : rad);
+  return (
+    <RNView pointerEvents="none" style={StyleSheet.absoluteFill} onLayout={e => setSize({w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height})}>
+      {size ? (
+        <>
+          {edge('top', k.t, k.t && k.l ? cl(k.tl) : 0, k.t && k.r ? cl(k.tr) : 0, 0)}
+          {edge('bottom', k.b, k.b && k.l ? cl(k.bl) : 0, k.b && k.r ? cl(k.br) : 0, 1)}
+          {edge('left', k.l, k.l && k.t ? cl(k.tl) : 0, k.l && k.b ? cl(k.bl) : 0, 2)}
+          {edge('right', k.r, k.r && k.t ? cl(k.tr) : 0, k.r && k.b ? cl(k.br) : 0, 3)}
+          {k.t || k.l ? corner('top', 'left', k.tl, Math.max(k.t, k.l)) : null}
+          {k.t || k.r ? corner('top', 'right', k.tr, Math.max(k.t, k.r)) : null}
+          {k.b || k.l ? corner('bottom', 'left', k.bl, Math.max(k.b, k.l)) : null}
+          {k.b || k.r ? corner('bottom', 'right', k.br, Math.max(k.b, k.r)) : null}
+        </>
+      ) : null}
+    </RNView>
+  );
+}
+function View(props: React.ComponentProps<typeof RNView>) {
+  const k = SKETCH ? inkOf(StyleSheet.flatten(props.style)) : null;
+  if (!k) return <RNView {...props} />;
+  const f = StyleSheet.flatten(props.style) as any;
+  // lines go on top, except on a box whose children are meant to stand over its edge (the bottom bar's round button)
+  const under = f.overflow === 'visible';
+  return (
+    <RNView {...props} style={[props.style, unborder(f, k)]}>
+      {under ? <SketchLines k={k} /> : null}
+      {props.children}
+      {under ? null : <SketchLines k={k} />}
+    </RNView>
+  );
+}
+function Pressable(props: React.ComponentProps<typeof RNPressable>) {
+  const k = SKETCH && typeof props.style !== 'function' ? inkOf(StyleSheet.flatten(props.style as any)) : null;
+  if (!k) return <RNPressable {...props} />;
+  return (
+    <RNPressable {...props} style={[props.style as any, unborder(StyleSheet.flatten(props.style as any), k)]}>
+      {props.children as any}
+      <SketchLines k={k} />
+    </RNPressable>
+  );
+}
+// the box half of a style (margins, size, border) goes on a wrapper; the text half stays on the text
+const BOX_KEYS = ['margin', 'marginTop', 'marginBottom', 'marginLeft', 'marginRight', 'marginHorizontal', 'marginVertical', 'flex', 'flexGrow', 'flexShrink', 'flexBasis', 'alignSelf', 'width', 'minWidth', 'maxWidth', 'borderRadius', 'position', 'top', 'left', 'right', 'bottom', 'transform'];
+function split(f: any, k: Ink) {
+  const box: any = {}, inner: any = {};
+  for (const key of Object.keys(f)) {
+    if (key.startsWith('border')) continue;
+    if (BOX_KEYS.includes(key)) box[key] = f[key];
+    else inner[key] = f[key];
+  }
+  box.paddingTop = k.t; box.paddingRight = k.r; box.paddingBottom = k.b; box.paddingLeft = k.l;
+  if (typeof f.height === 'number') inner.height = f.height - k.t - k.b;
+  return {box, inner};
+}
+function Text(props: React.ComponentProps<typeof RNText>) {
+  const f = SKETCH ? StyleSheet.flatten(props.style) : null;
+  const k = f ? inkOf(f) : null;
+  if (!k) return <RNText {...props} />;
+  const {box, inner} = split(f, k);
+  return (
+    <RNView style={box} pointerEvents="box-none">
+      <RNText {...props} style={inner} />
+      <SketchLines k={k} />
+    </RNView>
+  );
+}
+const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTextInput>>((props, ref) => {
+  const f = SKETCH ? StyleSheet.flatten(props.style) : null;
+  const k = f ? inkOf(f) : null;
+  if (!k) return <RNTextInput ref={ref} {...props} />;
+  const {box, inner} = split(f, k);
+  return (
+    <RNView style={box}>
+      <RNTextInput ref={ref} {...props} style={inner} />
+      <SketchLines k={k} />
+    </RNView>
+  );
+});
 const CatImg = ({name, w, style}: {name: keyof typeof CAT_IMG; w: number; h?: number; style?: any}) => (
   <Image source={CAT_IMG[name]} style={[{width: w, height: Math.round(w * CAT_RATIO[name]), pointerEvents: 'none'}, style]} resizeMode="contain" />
 );
@@ -432,7 +571,8 @@ function InkShelfApp(): React.JSX.Element {
 
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
   setDashAuthor(settings.dashAuthor !== false);
-  CAT = settings.look === 'cat';
+  CAT = !!settings.cats;
+  SKETCH = settings.look === 'drawn';
   const titleOf = (b: Book) => shownTitle(b, metaOf(b));
 
   const lastBase = useRef<Screen>({kind: 'home'});
@@ -2705,7 +2845,18 @@ function BookPage(props: {
   }
   right.push({h: px(40), node: <Text style={st.colHead}>Description</Text>});
   const paras = (m.description || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
-  if (!paras.length) right.push({h: px(36), node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
+  if (!paras.length && CAT) {
+    right.push({h: px(200), node: (
+      <View style={{height: px(190), paddingLeft: px(26), paddingTop: px(8)}}>
+        <View style={st.descFrame}>
+          <Text style={[st.small, {textAlign: 'center', marginLeft: px(40)}]}>No description yet.{'\n'}Tap Edit to add one.</Text>
+        </View>
+        {/* the cat sits on the frame's corner; the white behind it leaves a gap in the line, like a drawing */}
+        <RNView pointerEvents="none" style={{position: 'absolute', left: 0, bottom: 0, width: px(96), height: px(98), backgroundColor: '#ffffff', borderTopRightRadius: px(30)}} />
+        <CatImg name="sitting" w={px(88)} style={{position: 'absolute', left: px(2), bottom: 0}} />
+      </View>
+    )});
+  } else if (!paras.length) right.push({h: px(36), node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
   paras.forEach((p, pi) => {
     const lines = wrapWords(p, perLine);
     lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1}));
@@ -3508,7 +3659,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
                 {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
                 <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
-                {CAT ? <CatImg name="ears" w={px(84)} style={{position: 'absolute', top: -px(60), alignSelf: 'center'}} /> : null}
+                {CAT ? <CatImg name="ears" w={px(58)} style={{position: 'absolute', top: -px(36) - px(12), alignSelf: 'center'}} /> : null}
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -3614,11 +3765,12 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
             <Seg
               options={[
-                {label: 'Plain', on: settings.look !== 'cat', onPress: () => change({look: 'plain'})},
-                {label: <View style={{flexDirection: 'row', alignItems: 'center'}}><Image source={CAT_IMG.paw} style={{width: px(20), height: px(20), marginRight: px(6)}} /><Text style={[st.segText, settings.look === 'cat' && {fontWeight: 'bold'}]}>Cat</Text></View>, on: settings.look === 'cat', onPress: () => change({look: 'cat'})},
+                {label: 'Plain', on: settings.look !== 'drawn', onPress: () => change({look: 'plain', cats: false})},
+                {label: 'Drawn', on: settings.look === 'drawn' && !settings.cats, onPress: () => change({look: 'drawn', cats: false})},
+                {label: <View style={{flexDirection: 'row', alignItems: 'center'}}><Image source={CAT_IMG.paw} style={{width: px(20), height: px(20), marginRight: px(6)}} /><Text style={[st.segText, settings.look === 'drawn' && settings.cats && {fontWeight: 'bold'}]}>Cats</Text></View>, on: settings.look === 'drawn' && !!settings.cats, onPress: () => change({look: 'drawn', cats: true})},
               ]}
             />
-            <Text style={st.tileLabel}>Look</Text>
+            <Text style={st.tileLabel}>Look  ·  hand-drawn lines</Text>
           </View>
 
         </View>
@@ -5488,6 +5640,7 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  descFrame: {flex: 1, borderWidth: 2.5, borderColor: BLACK, borderRadius: px(22), alignItems: 'center', justifyContent: 'center'},
   byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
   waitBar: {flexDirection: 'row', alignItems: 'center', height: px(62), marginHorizontal: px(12), marginTop: px(8), paddingHorizontal: px(12), borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(14)},
   rowStars: {position: 'absolute', right: 0, bottom: px(2), backgroundColor: '#ffffff', paddingLeft: px(6)},
