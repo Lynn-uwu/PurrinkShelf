@@ -83,7 +83,7 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'author', title: 'Authors', icon: 'text', words: 'author writer by dash name file epub details filter sort',
     steps: [
-      'A file named "Title - Author.epub" shows the author in small letters above the book and keeps the title clean. Turn this off in Settings if your titles have dashes.',
+      'A file named "Title - Author.epub" shows the author in small letters above the book and keeps the title clean. Turn this off in Settings › Show and hide if your titles have dashes.',
       'InkShelf also reads the author, description and language written inside each EPUB, once. It only fills empty fields and never replaces what you typed.',
       'Change it on the Edit page. Tap an author on a book page to see all their books; the filter panel has an Author tab and the sort has Author.',
     ]},
@@ -126,9 +126,14 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'extras', title: 'Goal, reading time and warnings', icon: 'profile', words: 'goal yearly target reading time length hours words content warnings hide show profile',
     steps: [
-      'Settings › Show on Profile picks what the Profile page shows. Turn on Reading goal and set how many books with the arrows.',
-      'Time spent reading adds up the length of the books you finished this year. Turn on How long it takes to read to see it on book pages.',
-      'Content warnings are their own list on the Edit page and in the filter panel (Warn). Turn them off in Settings to hide them everywhere.',
+      'Settings › Show and hide picks what the Profile page and book pages show. Turn on Reading goal and set how many books with the arrows. Off only hides things; nothing is deleted.',
+      'Time spent reading adds up the length of the books you finished this year. Turn on Reading time in Settings › Show and hide to see it on book pages.',
+      'Content warnings are their own list on the Edit page and in the filter panel (Warn). Turn them off in Settings › Show and hide to hide them everywhere.',
+    ]},
+  {id: 'appearance', title: 'Appearance: Original or Cats', icon: 'image', words: 'appearance look theme cat cats paw drawn hand-drawn original plain style',
+    steps: [
+      'Settings › Appearance changes how InkShelf looks. Your books, details and notes stay the same.',
+      'Original has clean, straight lines. Cats has hand-drawn lines, cat-shaped toggles, paw prints on notes and little cats around the pages.',
     ]},
   {id: 'duplicates', title: 'Duplicate files', icon: 'copy', words: 'duplicate duplicates copy twice same name (1) delete keep both',
     steps: [

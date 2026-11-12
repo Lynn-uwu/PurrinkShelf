@@ -282,13 +282,13 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
   );
 }
 
-function Pill({label, onPress, active, small}: {label: string; onPress?: () => void; active?: boolean; small?: boolean}) {
+function Pill({label, onPress, active, small, width}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; width?: number}) {
   return (
-    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, CAT && {marginTop: px(5), marginBottom: px(3)}, CAT && active && {paddingLeft: px(6), overflow: 'visible'}]}>
+    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, CAT && {marginTop: px(5), marginBottom: px(3)}, CAT && active && {paddingLeft: px(6), overflow: 'visible'}, width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
+      {CAT && active ? <Image source={TOGGLE_EARS} style={{position: 'absolute', left: width ? px(14) : px(5), top: -px(7), width: px(30), height: px(8)}} resizeMode="stretch" /> : null}
       {CAT && active ? (
         // the Cats look: a switched-on toggle is a little black cat, ears on top and eyes where the tick was
         <RNView style={{flexDirection: 'row', alignItems: 'center'}}>
-          <Image source={TOGGLE_EARS} style={{position: 'absolute', left: -px(1), top: -px(11), width: px(30), height: px(8)}} resizeMode="stretch" />
           <RNView style={st.catEye} />
           <RNView style={[st.catEye, {marginLeft: px(4), marginRight: px(7)}]} />
           <Text style={[st.pillText, small && {fontSize: px(14)}, {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
@@ -3768,6 +3768,68 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
       ]}
     />
   );
+  const [page, setPage] = useState<'main' | 'look' | 'show'>('main');
+  const back = () => setPage('main');
+  if (page === 'look') {
+    const choice = (on: boolean, title: string, text: string, pick: () => void, pic?: React.ReactNode) => (
+      <Pressable onPress={pick} style={[st.dChoice, on && st.dChoiceOn, {alignItems: 'center'}]} accessibilityRole="button" accessibilityLabel={title}>
+        <View style={[st.dRadio, on && st.dRadioOn, {marginTop: 0}]} />
+        <View style={{flex: 1}}>
+          <Text style={st.rowTitle}>{title}</Text>
+          <Text style={[st.small, {marginTop: px(2)}]}>{text}</Text>
+        </View>
+        {pic}
+      </Pressable>
+    );
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Appearance" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={[st.small, {marginBottom: px(12)}]}>How InkShelf looks. Your books and details stay the same.</Text>
+          {choice(settings.look !== 'drawn', 'Original', 'Clean, straight lines.', () => change({look: 'plain', cats: false}))}
+          {choice(settings.look === 'drawn', 'Cats', 'Hand-drawn lines, cat toggles, paw prints on notes and little cats around the pages.', () => change({look: 'drawn', cats: true}), <CatImg name="loaf" w={px(70)} style={{marginLeft: px(10)}} />)}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'show') {
+    const row = (title: string, text: string, on: boolean, flip: () => void, extra?: React.ReactNode) => (
+      <View style={st.showRow} key={title}>
+        <View style={{flex: 1, marginRight: px(12)}}>
+          <Text style={st.rowTitle}>{title}</Text>
+          <Text style={[st.small, {marginTop: px(2)}]}>{text}</Text>
+          {on && extra ? extra : null}
+        </View>
+        <Pill label={on ? 'On' : 'Off'} active={on} onPress={flip} width={px(84)} />
+      </View>
+    );
+    const prof = (id: keyof Settings['profile']) => [settings.profile[id], () => change({profile: {...settings.profile, [id]: !settings.profile[id]}})] as const;
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Show and hide" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={[st.small, {marginBottom: px(4)}]}>Off hides a part from view. Nothing is deleted: turn it on again and it's all back.</Text>
+          <Text style={[st.section, {marginTop: px(8)}]}>Profile page</Text>
+          {row('Reading goal', 'How many books you want to finish this year, and how far along you are.', ...prof('goal'), (
+            <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(6)}}>
+              <Text style={[st.small, {color: BLACK, marginRight: px(10)}]}>{`Books in ${new Date().getFullYear()}`}</Text>
+              <IconBtn name="back" label="Fewer" disabled={settings.goal <= 1} onPress={() => change({goal: Math.max(1, (settings.goal || 12) - 1)})} size={px(42)} />
+              <Text style={[st.rowTitle, {width: px(54), textAlign: 'center'}]}>{settings.goal || 12}</Text>
+              <IconBtn name="forward" label="More" onPress={() => change({goal: (settings.goal || 12) + 1})} size={px(42)} />
+            </View>
+          ))}
+          {row('Finished by month', 'A chart of the books you finished in each of the last 12 months.', ...prof('chart'))}
+          {row('Time spent reading', 'About how many hours you read this year, from the length of finished books.', ...prof('time'))}
+          {row('Reading days', 'How many days in a row you opened a book, and your longest run.', ...prof('streak'))}
+          {row('Top genres', 'The genres you read the most.', ...prof('genres'))}
+          <Text style={[st.section, {marginTop: px(14)}]}>Book pages</Text>
+          {row('Reading time', "A book's number of words and about how long it takes to read.", settings.length, () => change({length: !settings.length}))}
+          {row('Content warnings', 'Warnings such as violence. Off hides them on book pages and in the filters.', settings.warnings, () => change({warnings: !settings.warnings}))}
+          {row('Author from the file name', 'For "Title - Author" files, the part after the dash becomes the author.', settings.dashAuthor !== false, () => change({dashAuthor: settings.dashAuthor === false}))}
+        </View>
+      </ModalCard>
+    );
+  }
   return (
     <ModalCard onOutside={onClose}>
       <CardHeader title="Settings" onBack={onClose} onClose={onClose} />
@@ -3781,77 +3843,47 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           </>
         ) : null}
         <View style={{flexDirection: 'row', marginTop: px(16)}}>
-          <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
+          <Tile label="Turn pages  ·  or scroll">
             <Seg
               options={[
                 {label: <Icon name="pages" size={px(30)} />, on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})},
                 {label: <Icon name="scroll" size={px(30)} />, on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})},
               ]}
             />
-            <Text style={st.tileLabel}>Turn pages  ·  or scroll</Text>
-          </View>
-          <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
-            <Seg
-              options={[
-                {label: 'Plain', on: settings.look !== 'drawn', onPress: () => change({look: 'plain', cats: false})},
-                {label: 'Drawn', on: settings.look === 'drawn' && !settings.cats, onPress: () => change({look: 'drawn', cats: false})},
-                {label: <View style={{flexDirection: 'row', alignItems: 'center'}}><Image source={CAT_IMG.paw} style={{width: px(20), height: px(20), marginRight: px(6)}} /><Text style={[st.segText, settings.look === 'drawn' && settings.cats && {fontWeight: 'bold'}]}>Cats</Text></View>, on: settings.look === 'drawn' && !!settings.cats, onPress: () => change({look: 'drawn', cats: true})},
-              ]}
-            />
-            <Text style={st.tileLabel}>Look  ·  hand-drawn lines</Text>
-          </View>
-
-        </View>
-
-        <View style={{flexDirection: 'row', marginTop: px(12)}}>
+          </Tile>
           <Tile label="Library view">{view('libraryGrid')}</Tile>
           <Tile label="Volumes view">{view('volumeGrid')}</Tile>
         </View>
 
-        <View style={{flexDirection: 'row', marginTop: px(12)}}>
+        <View style={{flexDirection: 'row', marginTop: px(18)}}>
           <RoundBtn label="Data and storage" onPress={onLibraries}>
             <Icon name="database" size={px(30)} />
           </RoundBtn>
+          <RoundBtn label="Appearance" note={settings.look === 'drawn' ? 'Cats' : 'Original'} onPress={() => setPage('look')}>
+            <Image source={CAT_IMG.paw} style={{width: px(30), height: px(30)}} resizeMode="contain" />
+          </RoundBtn>
+          <RoundBtn label="Show and hide" note="Profile, book pages" onPress={() => setPage('show')}>
+            <Icon name="eye" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Permissions" note={permNote} onPress={onPerms}>
+            <Icon name="save" size={px(30)} />
+          </RoundBtn>
+        </View>
+        <View style={{flexDirection: 'row', marginTop: px(12)}}>
           <RoundBtn label="Clear searches" note={`${counts.searches} saved`} onPress={onClearSearches} dim={!counts.searches}>
             <Icon name="search" size={px(30)} />
           </RoundBtn>
           <RoundBtn label="Clear history" note={`${counts.recent} recent`} onPress={onClearHistory} dim={!counts.recent}>
             <Icon name="clock" size={px(30)} />
           </RoundBtn>
-        </View>
-        <View style={{flexDirection: 'row', marginTop: px(8)}}>
-          <RoundBtn label="How to use" onPress={onHelp}>
-            <Icon name="help" size={px(30)} />
-          </RoundBtn>
-          <RoundBtn label="Permissions" note={permNote} onPress={onPerms}>
-            <Icon name="save" size={px(30)} />
-          </RoundBtn>
           <RoundBtn label="Activity" note={`${activityCount} message${activityCount === 1 ? '' : 's'}`} onPress={onActivity}>
             <Icon name="list" size={px(30)} />
           </RoundBtn>
+          <RoundBtn label="How to use" onPress={onHelp}>
+            <Icon name="help" size={px(30)} />
+          </RoundBtn>
         </View>
-
-        <Text style={[st.section, {marginTop: px(18)}]}>Show on Profile</Text>
-        <View style={st.pillWrap}>
-          {PROFILE_PARTS.map(x => (
-            <Pill key={x.id} label={(settings.profile[x.id] ? '✓ ' : '') + x.label} active={settings.profile[x.id]} onPress={() => change({profile: {...settings.profile, [x.id]: !settings.profile[x.id]}})} />
-          ))}
-        </View>
-        {settings.profile.goal ? (
-          <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(4)}}>
-            <Text style={[st.small, {color: BLACK, marginRight: px(10)}]}>{`Goal: books to finish in ${new Date().getFullYear()}`}</Text>
-            <IconBtn name="back" label="Fewer" disabled={settings.goal <= 1} onPress={() => change({goal: Math.max(1, (settings.goal || 12) - 1)})} size={px(42)} />
-            <Text style={[st.rowTitle, {width: px(54), textAlign: 'center'}]}>{settings.goal || 12}</Text>
-            <IconBtn name="forward" label="More" onPress={() => change({goal: (settings.goal || 12) + 1})} size={px(42)} />
-          </View>
-        ) : null}
-        <Text style={[st.section, {marginTop: px(12)}]}>On book pages</Text>
-        <View style={st.pillWrap}>
-          <Pill label={(settings.length ? '✓ ' : '') + 'How long it takes to read'} active={settings.length} onPress={() => change({length: !settings.length})} />
-          <Pill label={(settings.warnings ? '✓ ' : '') + 'Content warnings'} active={settings.warnings} onPress={() => change({warnings: !settings.warnings})} />
-          <Pill label={(settings.dashAuthor !== false ? '✓ ' : '') + 'Author after the dash in file names'} active={settings.dashAuthor !== false} onPress={() => change({dashAuthor: settings.dashAuthor === false})} />
-        </View>
-        <Text style={[st.small, {marginTop: px(10), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
+        <Text style={[st.small, {marginTop: px(18), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
       </View>
     </ModalCard>
   );
@@ -5668,6 +5700,7 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(8), borderBottomWidth: 1, borderColor: '#dddddd'},
   catEye: {width: px(7), height: px(7), borderRadius: px(4), backgroundColor: '#ffffff'},
   descFrame: {flex: 1, borderWidth: 2.5, borderColor: BLACK, borderRadius: px(22), alignItems: 'center', justifyContent: 'center'},
   byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
