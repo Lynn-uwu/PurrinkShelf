@@ -1464,7 +1464,7 @@ function InkShelfApp(): React.JSX.Element {
           ))}
         </View>
       ) : null}
-      {paperOpen ? <PaperCard libs={libs} lib={lib} onClose={() => setPaperOpen(false)} onAdd={addPaperBook} /> : null}
+      {paperOpen ? <PaperCard libs={libs} lib={lib} onClose={() => setPaperOpen(false)} onAdd={addPaperBook} onWish={w => { changeApp(a => ({...a, wishlist: [w, ...(a.wishlist || [])]})); setPaperOpen(false); say(`"${w.title}" is on your wishlist and waits in New until its file is in a library`); }} /> : null}
       {showActivity ? <ActivityCard items={app.activity || []} onClose={() => { setShowActivity(false); closedLayer(); }} onClear={() => changeApp(a => ({...a, activity: []}))} /> : null}
       {permOpen ? (
         <View style={st.overlay}>
@@ -1868,7 +1868,7 @@ function InkShelfApp(): React.JSX.Element {
       <>
         <Header title="Wishlist" left="Back" onLeft={() => setScreen(wishBack.current)} />
         <WishlistPage wishes={app.wishlist || []} onChange={w => changeApp(a => ({...a, wishlist: w}))} />
-        {taskbar(wishBack.current.kind === 'bookmarks' ? 'bookmarks' : 'profile')}
+        {taskbar(wishBack.current.kind === 'bookmarks' ? 'bookmarks' : wishBack.current.kind === 'new' ? 'new' : 'profile')}
       </>,
     );
   }
@@ -1878,7 +1878,7 @@ function InkShelfApp(): React.JSX.Element {
     return shell(
       <>
         <Header title="Newly added" right={libs.length ? <IconBtn bare name="refresh" label="Refresh all libraries" onPress={() => refreshAll()} iconSize={px(28)} style={{marginRight: px(4)}} /> : null} />
-        <NewList onAllSeen={markAllSeen} items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
+        <NewList waiting={app.wishlist || []} onWaiting={() => { wishBack.current = {kind: 'new'}; setScreen({kind: 'wishlist'}); }} onAllSeen={markAllSeen} items={fresh} libs={libs} ready={indexReady} paging={settings.paging} grid={isGrid('new')} setGrid={setGridFor('new')} cover={xCover} wantCovers={wantCovers} onEdit={goEdit} onOpen={f => goBook(snapOf(f), 'new')} />
         {taskbar('new')}
       </>,
     );
@@ -2196,8 +2196,8 @@ function InkShelfApp(): React.JSX.Element {
       const sub = [
         settings.badges.vols && b.vols.length > 1 ? `${b.vols.length} vols` : '',
         settings.badges.notes && m.notes?.length ? `${m.notes.length} note${m.notes.length === 1 ? '' : 's'}` : '',
-        ratingOf(m) ? `★ ${ratingOf(m)}` : '',
       ].filter(Boolean).join('  ·  ');
+      const stars = ratingOf(m);
       const au = authorOf(b, m);
       const dups = lib ? dupOf(lib.path, b.key) : [];
       return (
@@ -2240,6 +2240,10 @@ function InkShelfApp(): React.JSX.Element {
                 );
               })()}
             </View>
+            {stars ? (
+              // your rating, bottom right of the row
+              <View style={st.rowStars} pointerEvents="none"><Stars value={stars} size={px(17)} /></View>
+            ) : null}
             {b.missing ? (
               <Text style={st.teaser} numberOfLines={2}>{"The file isn't in the library any more. Its details are kept and come back when the file does."}</Text>
             ) : m.description ? (
@@ -2355,7 +2359,7 @@ function InkShelfApp(): React.JSX.Element {
         </Pressable>
         {active && !showFilters ? <Pill small label="Clear  ✕" onPress={clearAll} /> : null}
         <View style={{flexDirection: 'row'}}>
-          <IconBtn name="plus" label="Add a paper book" onPress={() => setPaperOpen(true)} size={px(44)} style={{marginRight: px(8), borderRadius: px(10)}} />
+          <IconBtn name="plus" label="Add a book" onPress={() => setPaperOpen(true)} size={px(44)} style={{marginRight: px(8), borderRadius: px(10)}} />
           <ViewIcon kind="list" on={!grid && !settings.libFolders} onPress={() => { changeSettings({libraryGrid: false, libFolders: false}); setPage(Math.floor(((pg - 1) * per) / LIST_PER_PAGE) + 1); }} />
           <ViewIcon kind="grid" on={grid && !settings.libFolders} onPress={() => { changeSettings({libraryGrid: true, libFolders: false}); setPage(Math.floor(((pg - 1) * per) / GRID_PER_PAGE) + 1); }} />
           <IconBtn name="folder" label="Folder view" dark={settings.libFolders} onPress={() => changeSettings({libFolders: !settings.libFolders})} size={px(44)} style={{marginLeft: px(8), borderRadius: px(10)}} />
@@ -2644,8 +2648,6 @@ function BookPage(props: {
   else left.push({h: px(28), sec, node: <Text style={st.small}>None</Text>});
   left.push({h: px(6), sec});
   field('Completely translated', m.translated);
-  const stars = ratingOf(m);
-  if (stars) field('Your rating', `${starText(stars)}  ${stars} / 5 (from your notes)`);
   if (m.reading) {
     const n = timesRead(m.reading);
     const done = [...m.reading.history].reverse().find(h => h.state === 'completed');
@@ -2743,7 +2745,9 @@ function BookPage(props: {
     }
   }
 
-  const lPages = scroll ? [left] : pack(left, colH - coverH - px(28) - startH - pagerH - px(4));
+  const rated = ratingOf(m);
+  const starsH = rated ? px(30) : 0; // your rating, under the cover
+  const lPages = scroll ? [left] : pack(left, colH - coverH - starsH - px(28) - startH - pagerH - px(4));
   const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36)); // room for a "continued" line
   rPages.forEach((pg, i) => {
     if (i > 0 && pg[0]?.vol) pg.unshift({h: px(36), node: <Text style={[st.colHead, {fontSize: px(18)}]}>Volumes, continued</Text>});
@@ -2763,6 +2767,12 @@ function BookPage(props: {
       <PostIt notes={m.notes || []} onPress={() => setNotesOpen(true)} style={{position: 'absolute', right: 0, bottom: 0}} />
     </View>
   );
+  const ratingRow = rated ? (
+    <Pressable onPress={() => setNotesOpen(true)} style={{flexDirection: 'row', alignItems: 'center', height: starsH}} accessibilityLabel={`Your rating: ${rated} of 5. Open the notes to change it`}>
+      <Stars value={rated} size={px(22)} />
+      <Text style={[st.small, {marginLeft: px(6)}]}>{String(rated)}</Text>
+    </Pressable>
+  ) : null;
   const start = b.ext === 'paper' ? (
     // a paper book has nothing to open: the button sets where you are with it instead
     <Pressable style={[st.startBtn, {width: lIn, backgroundColor: '#ffffff', borderWidth: 2, borderColor: BLACK}]} onPress={() => setStatusOpen(true)} accessibilityLabel="Paper book: set your reading status">
@@ -2815,6 +2825,7 @@ function BookPage(props: {
           {scroll ? (
             <ScrollView contentContainerStyle={{padding: px(14)}}>
               {top}
+              {ratingRow}
               <View style={{height: px(14)}} />
               {renderItems(left)}
               {start}
@@ -2823,6 +2834,7 @@ function BookPage(props: {
             <>
               <View style={{flex: 1, paddingHorizontal: px(14), paddingTop: px(14), overflow: 'hidden'}}>
                 {top}
+                {ratingRow}
                 <View style={{height: px(14)}} />
                 {renderItems(lPages[lpg])}
               </View>
@@ -4725,7 +4737,9 @@ const dateText = (ms: number) => {
   const d = new Date(ms);
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
-function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, onEdit, onOpen, onAllSeen}: {
+function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, onEdit, onOpen, onAllSeen, waiting, onWaiting}: {
+  waiting: Wish[];
+  onWaiting: () => void;
   onAllSeen: () => void;
   items: Found[];
   libs: Lib[];
@@ -4751,21 +4765,34 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
     {id: 'summary', label: 'No summary'},
     ...(libs.length > 1 ? libs.map(l => ({id: l.path, label: l.name})) : []),
   ];
+  // books you want but whose file isn't here yet (the wishlist): a reminder at the top
+  const wait = waiting.length ? (
+    <Pressable onPress={onWaiting} style={st.waitBar} accessibilityLabel={`${waiting.length} books on your wishlist are not here yet`}>
+      <Icon name="wish" size={px(28)} />
+      <View style={{flex: 1, marginLeft: px(10)}}>
+        <Text style={[st.small, {color: BLACK, fontWeight: 'bold'}]}>{`Not here yet: ${waiting.length} book${waiting.length === 1 ? '' : 's'} from your wishlist`}</Text>
+        <Text style={st.small} numberOfLines={1}>{waiting.slice(0, 4).map(w => w.title).join('  ·  ')}</Text>
+      </View>
+      <Icon name="forward" size={px(22)} />
+    </Pressable>
+  ) : null;
   if (!items.length) {
     return (
       <View style={[st.pad, {flex: 1}]}>
+        {wait}
         <Text style={st.para}>{ready ? 'All caught up. Every book has a genre and a summary.' : 'Looking through your libraries…'}</Text>
       </View>
     );
   }
   return (
     <>
+      {wait}
       <Chips options={opts} value={which} onChange={setWhich} />
       <Toolbar text={`${shown.length} book${shown.length === 1 ? '' : 's'}  ·  newest first`} grid={grid} setGrid={setGrid} extra={justAdded ? <IconBtn name="check" label="Mark all as seen" onPress={onAllSeen} size={px(44)} style={{borderRadius: px(10)}} /> : null} />
       <Collection
         key={which + grid}
         grid={grid}
-        top={px(64) + px(62) + px(60)}
+        top={px(64) + px(62) + px(60) + (waiting.length ? px(70) : 0)}
         paging={paging}
         items={shown.map(f => ({
           key: f.lib.path + f.book.key,
@@ -5330,32 +5357,54 @@ const CARD_Y = px(30);
 const CARD_W = W - CARD_X * 2;
 const CARD_H = H - CARD_Y * 2;
 // ---------- paper books: listed by hand, kept in their own folder ----------
-function PaperCard({libs, lib, onClose, onAdd}: {libs: Lib[]; lib: Lib | null; onClose: () => void; onAdd: (l: Lib, title: string, author: string) => void}) {
+function PaperCard({libs, lib, onClose, onAdd, onWish}: {libs: Lib[]; lib: Lib | null; onClose: () => void; onAdd: (l: Lib, title: string, author: string) => void; onWish: (w: Wish) => void}) {
+  const [kind, setKind] = useState<'ebook' | 'paper'>('ebook');
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
-  const [where, setWhere] = useState<Lib | null>(lib || libs[0] || null);
+  const [where, setWhere] = useState('');
+  const [into, setInto] = useState<Lib | null>(lib || libs[0] || null);
+  const ok = !!title.trim() && (kind === 'ebook' || !!into);
+  const add = () => {
+    if (!ok) return;
+    if (kind === 'paper') return into && onAdd(into, title.trim(), author.trim());
+    onWish({id: Date.now().toString(36), title: title.trim(), author: author.trim() || undefined, where: where.trim() || undefined, added: Date.now(), kind: 'ebook'});
+  };
   return (
     <View style={[st.modalWrap, {justifyContent: 'flex-start', paddingTop: px(80)}]}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Cancel" />
       <View style={[st.profCard, {width: W - px(80), backgroundColor: '#ffffff', padding: px(20)}]}>
-        <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(10)}}>
-          <Icon name="library" size={px(28)} />
-          <Text style={[st.rowTitle, {fontSize: px(21), marginLeft: px(10), flex: 1}]}>Add a paper book</Text>
+        <Text style={[st.rowTitle, {fontSize: px(21), marginBottom: px(10)}]}>Add a book</Text>
+        <View style={[st.sheetTabs, {marginBottom: px(12)}]}>
+          {([['ebook', 'E-book'], ['paper', 'Paper book']] as const).map(([k, label]) => (
+            <Pressable key={k} onPress={() => setKind(k)} style={[st.sheetTab, kind === k && st.sheetTabOn]} accessibilityLabel={label}>
+              <Text style={[st.sheetTabText, kind === k && {fontWeight: 'bold'}]}>{label}</Text>
+            </Pressable>
+          ))}
         </View>
         <Text style={[st.small, {marginBottom: px(3)}]}>Title</Text>
-        <TextInput style={st.input} value={title} onChangeText={setTitle} placeholder="The book on your shelf" placeholderTextColor="#888888" maxLength={120} />
+        <TextInput style={st.input} value={title} onChangeText={setTitle} placeholder={kind === 'ebook' ? 'The book you want to add' : 'The book on your shelf'} placeholderTextColor="#888888" maxLength={120} />
         <Text style={[st.small, {marginBottom: px(3), marginTop: px(6)}]}>Author</Text>
         <TextInput style={st.input} value={author} onChangeText={setAuthor} placeholder="Optional" placeholderTextColor="#888888" maxLength={80} />
-        {libs.length > 1 ? (
+        {kind === 'ebook' ? (
           <>
-            <Text style={[st.small, {marginBottom: px(3), marginTop: px(6)}]}>List it in</Text>
-            <View style={st.pillWrap}>{libs.map(l => <Pill key={l.path} label={l.name} active={where?.path === l.path} onPress={() => setWhere(l)} />)}</View>
+            <Text style={[st.small, {marginBottom: px(3), marginTop: px(6)}]}>Where to get it</Text>
+            <TextInput style={st.input} value={where} onChangeText={setWhere} placeholder="A shop, a site… (optional)" placeholderTextColor="#888888" maxLength={120} />
+            <Text style={[st.small, {marginTop: px(8)}]}>{'The file isn\'t on your Supernote yet, so it goes on your wishlist and waits in the New tab. Copy the EPUB into a library folder (by USB, Supernote Cloud or Browse & Access) and InkShelf finds it, then takes it off the list by itself.'}</Text>
           </>
-        ) : null}
-        <Text style={[st.small, {marginTop: px(8)}]}>{`It goes in its own "${PAPER_DIR}" folder, apart from your e-books, and works like any book: genres, tags, notes, reading status, collections. Next you can add its cover and details.`}</Text>
+        ) : (
+          <>
+            {libs.length > 1 ? (
+              <>
+                <Text style={[st.small, {marginBottom: px(3), marginTop: px(6)}]}>List it in</Text>
+                <View style={st.pillWrap}>{libs.map(l => <Pill key={l.path} label={l.name} active={into?.path === l.path} onPress={() => setInto(l)} />)}</View>
+              </>
+            ) : null}
+            <Text style={[st.small, {marginTop: px(8)}]}>{`It goes in its own "${PAPER_DIR}" folder, apart from your e-books, and works like any book: genres, tags, notes, reading status, collections. Next you can add its cover and details.`}</Text>
+          </>
+        )}
         <View style={{flexDirection: 'row', justifyContent: 'flex-end', marginTop: px(12)}}>
           <IconBtn name="close" label="Cancel" onPress={onClose} style={{marginRight: px(10)}} />
-          <IconBtn dark name="check" label="Add it" disabled={!title.trim() || !where} onPress={() => where && onAdd(where, title.trim(), author.trim())} />
+          <IconBtn dark name="check" label="Add it" disabled={!ok} onPress={add} />
         </View>
       </View>
     </View>
@@ -5418,6 +5467,8 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 
 const st = StyleSheet.create({
   byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
+  waitBar: {flexDirection: 'row', alignItems: 'center', height: px(62), marginHorizontal: px(12), marginTop: px(8), paddingHorizontal: px(12), borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(14)},
+  rowStars: {position: 'absolute', right: 0, bottom: px(2), backgroundColor: '#ffffff', paddingLeft: px(6)},
   dupMark: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), paddingHorizontal: px(6), marginLeft: px(6)},
   dupMarkText: {fontSize: px(13), fontWeight: 'bold', color: BLACK},
   byLine: {fontSize: px(15), color: '#444444', fontWeight: 'bold', marginBottom: px(1)},

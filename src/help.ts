@@ -101,7 +101,7 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'paper', title: 'Paper books', icon: 'library', words: 'paper physical printed book shelf add by hand lend lent borrow borrowed format',
     steps: [
-      'In the library, tap + next to the view buttons and type the title (the author is optional).',
+      'In the library, tap + next to the view buttons, choose Paper book and type the title (the author is optional).',
       'It goes in its own "Paper books" folder inside the library, so it shows as a category apart from your e-books.',
       'It works like any book: cover, genres, tags, notes, reading status and collections. Its button sets your reading status instead of opening a file.',
       'When there are paper books, the filter panel\'s More tab has Paper book and E-book.',

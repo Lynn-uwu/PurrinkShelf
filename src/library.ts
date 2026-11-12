@@ -176,7 +176,7 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
-export type Wish = {id: string; title: string; author?: string; where?: string; note?: string; added: number};
+export type Wish = {id: string; title: string; author?: string; where?: string; note?: string; added: number; kind?: 'ebook' | 'paper'};
 
 // ---------- authors: from the details, the EPUB, or "Title - Author" file names ----------
 /** "Moon Over Jade - Lin Wei" -> {title: "Moon Over Jade", author: "Lin Wei"}; only when the end looks like a name */
