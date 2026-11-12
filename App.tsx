@@ -10,10 +10,12 @@ import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_F
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
-import {Row, SHEET_NAME, list as cells, parseCsv, toCsv} from './src/sheet';
+import {SHEET_NAME, list as cells, parseCsv} from './src/sheet';
+import {makeWorkbook, readWorkbook} from './src/xlsx';
+const XLSX_NAME = 'InkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
-import {readText, writeText} from './src/native';
+import {readText, readZip, writeZip} from './src/native';
 import {Entry, copyImage, copyText, hasNative, listDir, openBook, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
@@ -584,46 +586,105 @@ function InkShelfApp(): React.JSX.Element {
       }),
     [libs, lib, books, meta, libData],
   );
-  // ---------- the book details sheet (Document/InkShelf/InkShelf books.csv), filled in on a computer ----------
-  const sheetPath = `${DEFAULT_BACKUP_DIR}/${SHEET_NAME}`;
-  const sheetMtime = async () => (await listDir(DEFAULT_BACKUP_DIR)).find(e => e.name === SHEET_NAME)?.mtime || 0;
+  // ---------- the book details sheet (Document/InkShelf/InkShelf books.xlsx), filled in on a computer ----------
+  const sheetPath = `${DEFAULT_BACKUP_DIR}/${XLSX_NAME}`;
+  const csvPath = `${DEFAULT_BACKUP_DIR}/${SHEET_NAME}`;
+  const sheetMtime = async () => (await listDir(DEFAULT_BACKUP_DIR)).find(e => e.name === XLSX_NAME)?.mtime || 0;
+  const csvMtime = async () => (await listDir(DEFAULT_BACKUP_DIR)).find(e => e.name === SHEET_NAME)?.mtime || 0;
+  const N_CAT = 3, N_GENRE = 4, N_TAG = 8, N_COL = 3, N_RULE = 4;
+  const nums = (base: string, n: number) => Array.from({length: n}, (_, i) => `${base} ${i + 1}`);
+  const BOOK_HEAD = ['Title', 'Library', 'Folder', 'File', ...nums('Category', N_CAT), ...nums('Genre', N_GENRE), ...nums('Tag', N_TAG), 'Language', 'Status', 'Completely translated', 'Reading', 'Favourite', ...nums('Add to collection', N_COL), 'Description', 'ID'];
+  const COLL_HEAD = ['Name', 'Match', ...Array.from({length: N_RULE}, (_, i) => [`Rule ${i + 1} check`, `Rule ${i + 1} is`, `Rule ${i + 1} value`]).flat(), 'ID'];
+  /** n cells; anything beyond goes into the last one, separated by commas */
+  const spread = (v: string[], n: number) => Array.from({length: n}, (_, i) => (i < n - 1 ? v[i] || '' : v.slice(n - 1).join(', ')));
   async function exportSheet(): Promise<boolean> {
-    const rows: Row[] = index.map(f => ({
-      Title: f.meta.title || f.book.fileTitle,
-      Library: f.lib.name,
-      Folder: f.book.dir,
-      File: (f.book.files[0] || '').split('/').pop() + (f.book.files.length > 1 ? ` (+${f.book.files.length - 1})` : ''),
-      Categories: catsOf(f.book, f.meta).join(', '),
-      Genres: (f.meta.genres || []).join(', '),
-      Tags: (f.meta.tags || []).join(', '),
-      Language: f.meta.language || '',
-      Status: f.meta.status || '',
-      'Completely translated': f.meta.translated || '',
-      Reading: f.meta.reading ? readLabel(f.meta.reading.state) : '',
-      Favourite: f.meta.fav ? 'Yes' : '',
-      Description: f.meta.description || '',
-      ID: `${f.lib.path}|${f.book.key}`,
-    }));
-    if (!rows.length) return false;
-    const ok = await writeText(sheetPath, toCsv(rows));
+    if (!index.length) return false;
+    const uniq = (l: string[]) => Array.from(new Set(l.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    const genres = uniq(index.flatMap(f => f.meta.genres || []));
+    const tags = uniq(index.flatMap(f => f.meta.tags || []));
+    const cats = uniq(index.flatMap(f => catsOf(f.book, f.meta)));
+    const langs = uniq(['Chinese', 'Korean', 'Japanese', 'English', ...index.map(f => f.meta.language || '')]);
+    const books = index.map(f => {
+      const id = `${f.lib.path}|${f.book.key}`;
+      return [
+        f.meta.title || f.book.fileTitle,
+        f.lib.name,
+        f.book.dir,
+        (f.book.files[0] || '').split('/').pop() + (f.book.files.length > 1 ? ` (+${f.book.files.length - 1})` : ''),
+        ...spread(catsOf(f.book, f.meta), N_CAT),
+        ...spread(f.meta.genres || [], N_GENRE),
+        ...spread(f.meta.tags || [], N_TAG),
+        f.meta.language || '',
+        f.meta.status || '',
+        f.meta.translated || '',
+        f.meta.reading ? readLabel(f.meta.reading.state) : '',
+        f.meta.fav ? 'Yes' : '',
+        ...spread(collections.filter(c => c.add.includes(id)).map(c => c.name), N_COL),
+        f.meta.description || '',
+        id,
+      ];
+    });
+    const colls = collections.map(c => [
+      c.name,
+      c.match === 'all' ? 'all rules fit' : 'any rule fits',
+      ...Array.from({length: N_RULE}, (_, i) => {
+        const r = c.rules[i];
+        return r ? [RULE_FIELDS.find(x => x.id === r.field)?.label || r.field, r.op === 'has' ? 'is' : 'is not', r.value] : ['', '', ''];
+      }).flat(),
+      c.id,
+    ]);
+    const lists: {[h: string]: string} = {Language: 'Languages', 'Completely translated': 'Yes / No', Reading: 'Reading', Favourite: 'Yes / No'};
+    nums('Category', N_CAT).forEach(h => (lists[h] = 'Categories'));
+    nums('Genre', N_GENRE).forEach(h => (lists[h] = 'Genres'));
+    nums('Tag', N_TAG).forEach(h => (lists[h] = 'Tags'));
+    nums('Add to collection', N_COL).forEach(h => (lists[h] = 'Collections'));
+    const cLists: {[h: string]: string} = {Match: 'Match'};
+    for (let i = 1; i <= N_RULE; i++) Object.assign(cLists, {[`Rule ${i} check`]: 'Rule: check', [`Rule ${i} is`]: 'Rule: is', [`Rule ${i} value`]: 'Rule values'});
+    const files = makeWorkbook(
+      [
+        {name: 'Books', headers: BOOK_HEAD, rows: books, lists, widths: BOOK_HEAD.map(h => (h === 'Title' ? 34 : h === 'Description' ? 60 : h === 'ID' ? 12 : h === 'File' ? 26 : h === 'Folder' ? 22 : 15))},
+        {name: 'Collections', headers: COLL_HEAD, rows: colls, lists: cLists, widths: COLL_HEAD.map(h => (h === 'Name' ? 24 : h === 'ID' ? 10 : 16))},
+      ],
+      [
+        {name: 'Categories', values: cats},
+        {name: 'Genres', values: genres},
+        {name: 'Tags', values: tags},
+        {name: 'Languages', values: langs},
+        {name: 'Reading', values: READ_STATES.map(x => x.label)},
+        {name: 'Yes / No', values: ['Yes', 'No']},
+        {name: 'Collections', values: collections.map(c => c.name)},
+        {name: 'Rule: check', values: RULE_FIELDS.map(x => x.label)},
+        {name: 'Rule: is', values: ['is', 'is not']},
+        {name: 'Match', values: ['all rules fit', 'any rule fits']},
+        {name: 'Rule values', values: uniq([...READ_STATES.map(x => x.label), 'No status', 'Yes', 'No', ...cats, ...genres, ...tags, ...langs, ...libs.map(l => l.name)])},
+      ],
+    );
+    const ok = await writeZip(sheetPath, files);
     if (ok) {
       const t = await sheetMtime();
       changeApp(a => ({...a, sheetAt: t || Date.now()}));
-    }
+    } else log('sheet: could not write', sheetPath);
     return ok;
   }
-  /** what one row of the sheet changes: an empty cell changes nothing, "-" clears it */
-  const rowPatch = (r: Row, b: Book, old: Meta): Meta => {
+  /** a list column: the numbered cells (Tag 1, Tag 2 …) or a single "Tags" cell; null = nothing filled in */
+  const groupOf = (r: {[h: string]: string}, base: string, plural: string): string[] | null => {
+    const cellsIn = Object.keys(r).filter(k => k === plural || new RegExp(`^${base} \\d+$`).test(k)).map(k => (r[k] || '').trim()).filter(Boolean);
+    if (!cellsIn.length) return null;
+    if (cellsIn.every(v => v === '-')) return [];
+    return Array.from(new Set(cellsIn.filter(v => v !== '-').flatMap(v => cells(v))));
+  };
+  /** what one row changes: an empty cell changes nothing, "-" clears it */
+  const rowPatch = (r: {[h: string]: string}, b: Book, old: Meta): Meta => {
     const p: Meta = {};
-    const v = (k: keyof Row) => (r[k] ?? '').trim();
-    const clear = (k: keyof Row) => v(k) === '-';
+    const v = (k: string) => (r[k] ?? '').trim();
+    const clear = (k: string) => v(k) === '-';
     if (v('Title') && v('Title') !== (old.title || b.fileTitle)) p.title = clear('Title') || v('Title') === b.fileTitle ? undefined : v('Title');
-    if (v('Categories')) {
-      const c = clear('Categories') ? [] : cells(v('Categories'));
-      p.categories = JSON.stringify(c) === JSON.stringify(folderCats(b)) ? undefined : c;
-    }
-    if (v('Genres')) p.genres = clear('Genres') ? [] : cells(v('Genres'));
-    if (v('Tags')) p.tags = clear('Tags') ? [] : cells(v('Tags'));
+    const cs = groupOf(r, 'Category', 'Categories');
+    if (cs) p.categories = JSON.stringify(cs) === JSON.stringify(folderCats(b)) ? undefined : cs;
+    const gs = groupOf(r, 'Genre', 'Genres');
+    if (gs) p.genres = gs;
+    const ts = groupOf(r, 'Tag', 'Tags');
+    if (ts) p.tags = ts;
     if (v('Language')) p.language = clear('Language') ? undefined : v('Language');
     if (v('Status')) p.status = clear('Status') ? undefined : v('Status');
     if (v('Description')) p.description = clear('Description') ? undefined : v('Description');
@@ -637,46 +698,101 @@ function InkShelfApp(): React.JSX.Element {
     return p;
   };
   async function importSheet(quiet = false): Promise<number> {
-    const text = await readText(sheetPath);
-    if (!text) {
-      if (!quiet) setMessage(`There's no sheet yet. Tap "Make the sheet" first; it is saved as Document › InkShelf › ${SHEET_NAME}.`);
+    // the .xlsx (or a .csv, if it was saved that way and is newer)
+    let books: {[h: string]: string}[] = [];
+    let colls: {[h: string]: string}[] | null = null;
+    const [xt, ct] = [await sheetMtime(), await csvMtime()];
+    if (ct > xt + 2000) {
+      books = parseCsv((await readText(csvPath)) || '') as any;
+    } else if (xt) {
+      const z = await readZip(sheetPath);
+      const wb = z ? readWorkbook(z) : {};
+      books = wb.Books || Object.values(wb)[0] || [];
+      colls = wb.Collections || null;
+    }
+    if (!books.length && !colls) {
+      if (!quiet) setMessage(`There's no sheet yet. Tap "Make the sheet" first; it is saved as Document › InkShelf › ${XLSX_NAME}.`);
       return 0;
     }
-    const rows = parseCsv(text).filter(r => r.ID && r.ID.includes('|'));
     let changed = 0;
+    // collections first (renamed or new ones can then be used in the book rows)
+    let nextColls = collections;
+    if (colls) {
+      const fieldOf = (t: string) => RULE_FIELDS.find(x => x.label.toLowerCase() === t.toLowerCase() || x.id === t.toLowerCase())?.id;
+      const list = [...collections];
+      for (const r of colls) {
+        const name = (r.Name || '').trim();
+        if (!name) continue;
+        const i = list.findIndex(c => c.id === r.ID);
+        if (name === '-') { if (i >= 0) { list.splice(i, 1); changed++; } continue; }
+        const rules: Rule[] = [];
+        for (let k = 1; k <= N_RULE; k++) {
+          const f = fieldOf(r[`Rule ${k} check`] || '');
+          const val = (r[`Rule ${k} value`] || '').trim();
+          if (f && val) rules.push({field: f, op: /not|n't/i.test(r[`Rule ${k} is`] || '') ? 'not' : 'has', value: val});
+        }
+        const match: 'all' | 'any' = /any/i.test(r.Match || '') ? 'any' : 'all';
+        const base = i >= 0 ? list[i] : {id: Date.now().toString(36) + list.length, name, rules: [], match: 'all' as const, add: [], remove: []};
+        const nc = {...base, name, match, rules};
+        if (JSON.stringify(nc) !== JSON.stringify(base)) { changed++; if (i >= 0) list[i] = nc; else list.push(nc); }
+      }
+      nextColls = list;
+    }
+    // books
+    const memb: {id: string; names: string[]}[] = [];
     for (const l of libs) {
-      const mine = rows.filter(r => r.ID!.slice(0, r.ID!.indexOf('|')) === l.path);
+      const mine = books.filter(r => r.ID && r.ID.slice(0, r.ID.indexOf('|')) === l.path);
       if (!mine.length) continue;
-      const cur = l.path === lib?.path ? {books, meta: metaRef.current} : libData[l.path];
+      const cur = l.path === lib?.path ? {books: shelf.filter(x => !x.missing), meta: metaRef.current} : libData[l.path];
       if (!cur) continue;
       const m: MetaStore = {...cur.meta, books: {...cur.meta.books}};
+      let here = 0;
       for (const r of mine) {
         const key = r.ID!.slice(r.ID!.indexOf('|') + 1);
         const b = cur.books.find(x => x.key === key);
         if (!b) continue;
+        const names = groupOf(r, 'Add to collection', 'Collections');
+        if (names) memb.push({id: r.ID!, names});
         const old = m.books[key] || {};
         const next = {...old, ...rowPatch(r, b, old)};
         if (JSON.stringify(next) !== JSON.stringify(old)) {
-          log('sheet changed', key, JSON.stringify(old), '=>', JSON.stringify(next));
           m.books[key] = next;
-          changed++;
+          here++;
         }
       }
-      if (!changed) continue;
+      changed += here;
+      if (!here) continue;
       await saveMeta(l.path, m, cur.books);
       setLibData(d => ({...d, [l.path]: {books: cur.books, meta: m}}));
       if (l.path === lib?.path) { metaRef.current = m; setMeta(m); }
     }
-    log('sheet read', rows.length, 'rows', changed, 'changed');
-    if (!quiet || changed) say(changed ? `Updated ${changed} book${changed === 1 ? '' : 's'} from the sheet` : 'The sheet has no changes');
+    // books added to collections by hand
+    if (memb.length) {
+      const before = JSON.stringify(nextColls);
+      nextColls = nextColls.map(c => {
+        let add = [...c.add];
+        let remove = [...c.remove];
+        for (const x of memb) {
+          const want = x.names.some(n => n.toLowerCase() === c.name.toLowerCase());
+          if (want && !add.includes(x.id)) { add.push(x.id); remove = remove.filter(y => y !== x.id); }
+          if (!want && add.includes(x.id)) add = add.filter(y => y !== x.id);
+        }
+        return {...c, add, remove};
+      });
+      if (JSON.stringify(nextColls) !== before) changed++;
+    }
+    if (nextColls !== collections) changeCollections(() => nextColls);
+    log('sheet read', books.length, 'rows', changed, 'changed');
+    if (!quiet || changed) say(changed ? `Updated ${changed} from the sheet` : 'The sheet has no changes');
     return changed;
   }
   /** after changes: read the sheet first if it was edited on a computer, then write it fresh */
   async function syncSheet() {
-    const t = await sheetMtime();
+    const t = Math.max(await sheetMtime(), (await csvMtime()) - 0);
     if (t && t > (app.sheetAt || 0) + 2000) {
       await importSheet(true);
-      return; // written again on the next round, with the new details in it
+      changeApp(a => ({...a, sheetAt: Date.now()})); // written again on the next round, with the new details in it
+      return;
     }
     await exportSheet();
   }
@@ -1214,7 +1330,7 @@ function InkShelfApp(): React.JSX.Element {
           onExclude={l => setScreen({kind: 'exclude', lib: l.path, path: ''})}
           sheet={{
             when: app.sheetAt || null,
-            onMake: async () => say((await exportSheet()) ? `Saved: Document › InkShelf › ${SHEET_NAME}` : "Couldn't make the sheet"),
+            onMake: async () => say((await exportSheet()) ? `Saved: Document › InkShelf › ${XLSX_NAME}` : "Couldn't make the sheet"),
             onRead: () => importSheet(),
             onHelp: () => setScreen({kind: 'help', topic: 'sheet'}),
           }}
@@ -2611,9 +2727,10 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
           <Pressable key={t} onPress={() => onTab(t)} style={st.task} accessibilityRole="button" accessibilityLabel={label}>
             {on ? (
               <>
-                {/* the open tab rises out of the bar in a notch, like a call-to-action button */}
-                <View style={st.notch} />
-                <View style={st.notchCover} />
+                {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
+                <View style={st.notchClip}>
+                  <View style={st.notch} />
+                </View>
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -3393,7 +3510,7 @@ function DataPage(props: {
         <Text style={st.small}>{sheet.when ? `Updated ${ago(sheet.when)}` : ''}</Text>
       </View>
       <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
-        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › InkShelf › ${SHEET_NAME} in Excel or Google Sheets, then copy it back. InkShelf reads the changes by itself.`}</Text>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › InkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. InkShelf reads the changes by itself.`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(8)}}>
           <Btn small icon="save" label="Make the sheet" onPress={sheet.onMake} style={{flex: 1}} />
           <Btn small icon="restore" label="Read changes now" onPress={sheet.onRead} style={{flex: 1, marginLeft: px(8)}} />
@@ -4443,10 +4560,11 @@ const st = StyleSheet.create({
   infoLabel: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(4)},
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
   taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
-  notch: {position: 'absolute', top: -px(30), alignSelf: 'center', width: px(88), height: px(88), borderRadius: px(44), borderWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
-  notchCover: {position: 'absolute', top: -2, alignSelf: 'center', width: px(92), height: px(62), backgroundColor: '#ffffff'},
-  taskCta: {position: 'absolute', top: -px(22), alignSelf: 'center', width: px(72), height: px(72), borderRadius: px(36), borderWidth: px(5), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
-  taskLabel: {position: 'absolute', bottom: px(8), fontSize: px(14), color: '#555555'},
+  // a half circle cut down into the bar (only its lower half shows), with the button sitting in it
+  notchClip: {position: 'absolute', top: -2, alignSelf: 'center', width: px(102), height: px(51) + 2, overflow: 'hidden'},
+  notch: {position: 'absolute', top: -px(51) + 1, left: 0, width: px(102), height: px(102), borderRadius: px(51), borderWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
+  taskCta: {position: 'absolute', top: -px(35) - 1, alignSelf: 'center', width: px(70), height: px(70), borderRadius: px(35), borderWidth: px(5), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
+  taskLabel: {position: 'absolute', bottom: px(6), fontSize: px(14), color: '#555555'},
   taskLabelOn: {fontWeight: 'bold', fontSize: px(15), color: BLACK},
   task: {flex: 1, alignItems: 'center', justifyContent: 'flex-start'},
   taskIcon: {width: px(64), height: px(48), borderRadius: px(24), alignItems: 'center', justifyContent: 'center'},

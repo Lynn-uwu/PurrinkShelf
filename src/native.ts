@@ -156,3 +156,22 @@ export async function screenshotDir(): Promise<string> {
   const hit = names.find(n => /^screenshots?$/i.test(n)) || names.find(n => /^(pictures|export)$/i.test(n));
   return hit ? `${home}/${hit}` : `${home}/SCREENSHOT`;
 }
+
+/** Save a zip from {name: text} (used for the .xlsx sheet). */
+export async function writeZip(path: string, entries: {[name: string]: string}): Promise<boolean> {
+  if (!N?.writeZip) return false;
+  try {
+    return !!(await N.writeZip(path, entries));
+  } catch (e) {
+    return false;
+  }
+}
+/** The text files inside a zip, or null. */
+export async function readZip(path: string): Promise<{[name: string]: string} | null> {
+  if (!N?.readZip) return null;
+  try {
+    return (await N.readZip(path)) || null;
+  } catch (e) {
+    return null;
+  }
+}

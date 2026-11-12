@@ -61,8 +61,10 @@ function svgCover(title) {
 
 window.__opened = [];
 NativeModules.InkShelf = {
-  listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})),
+  listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})).concat(Object.keys(files).filter(f => f.slice(0, f.lastIndexOf('/')) === path && !(tree[path] || []).includes(f.slice(f.lastIndexOf('/') + 1))).map(f => ({name: f.slice(f.lastIndexOf('/') + 1), path: f, isDir: false, size: 1, mtime: (window.__mt || {})[f] || 1}))),
   readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
+  writeZip: async (path, entries) => { files[path] = entries; (window.__mt = window.__mt || {})[path] = Date.now(); window.__zip = entries; return true; },
+  readZip: async path => files[path] || null,
   appendText: async (p, t) => { console.log('LOG', t.trim()); return true; },
   writeText: async (path, text) => { if (new URLSearchParams(location.search).get('ro') && path.startsWith(SD)) return false; files[path] = text; if (path.endsWith('state.json')) window.__state = text; if (path.endsWith('libraries.json')) window.__libs = text; return true; },
   extractEpubCover: async epub => (/Paper Lanterns|Crane/.test(epub) ? null : svgCover(epub.split('/').pop())),

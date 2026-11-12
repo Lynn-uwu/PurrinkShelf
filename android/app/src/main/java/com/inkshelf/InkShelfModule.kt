@@ -15,9 +15,12 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableMap
 import java.io.File
 import java.net.URLDecoder
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 /**
  * InkShelf native helpers.
@@ -266,6 +269,48 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
     }
 
     /** Add a line to a text file (InkShelf's trouble log). */
+    /** Write a zip (an .xlsx spreadsheet is one) from {name: text}. */
+    @ReactMethod
+    fun writeZip(path: String, entries: ReadableMap, promise: Promise) {
+        try {
+            val f = File(path)
+            f.parentFile?.mkdirs()
+            val tmp = File(path + ".tmp")
+            ZipOutputStream(tmp.outputStream()).use { z ->
+                val it = entries.keySetIterator()
+                while (it.hasNextKey()) {
+                    val k = it.nextKey()
+                    z.putNextEntry(ZipEntry(k))
+                    z.write((entries.getString(k) ?: "").toByteArray(Charsets.UTF_8))
+                    z.closeEntry()
+                }
+            }
+            if (f.exists()) f.delete()
+            promise.resolve(tmp.renameTo(f))
+        } catch (e: Throwable) {
+            Log.e(TAG, "writeZip failed", e)
+            promise.resolve(false)
+        }
+    }
+
+    /** Read the text files (xml) inside a zip, e.g. an .xlsx saved by Excel or Google Sheets. */
+    @ReactMethod
+    fun readZip(path: String, promise: Promise) {
+        try {
+            val out = Arguments.createMap()
+            ZipFile(path).use { zf ->
+                for (e in zf.entries()) {
+                    if (e.isDirectory) continue
+                    if (e.name.endsWith(".xml") || e.name.endsWith(".rels")) out.putString(e.name, zf.getInputStream(e).readBytes().toString(Charsets.UTF_8))
+                }
+            }
+            promise.resolve(out)
+        } catch (e: Throwable) {
+            Log.e(TAG, "readZip failed", e)
+            promise.resolve(null)
+        }
+    }
+
     @ReactMethod
     fun appendText(path: String, text: String, promise: Promise) {
         try {
