@@ -320,11 +320,13 @@ export function reconcile(root: string, books: Book[], meta: MetaStore, policy: 
 /** books whose files are gone but whose details are kept */
 export function missingBooks(meta: MetaStore): Book[] {
   return Object.keys(meta.missing || {})
-    .filter(k => meta.books[k])
+    .filter(k => meta.books[k] && !LEFT_OUT.test(k))
     .map(k => ({key: k, fileTitle: keyName(k), folder: keyDir(k).split('/')[0] || '', dir: keyDir(k), files: [], vols: [], ext: '', added: meta.missing![k], missing: true}));
 }
 
-const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx', 'paper']; // .paper: a paper book listed by hand in InkShelf
+// Word files (.doc, .docx) are left out: Supernote opens them, but its reader has no plugin button there, so InkShelf couldn't be reached from them
+const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'paper']; // .paper: a paper book listed by hand in InkShelf
+const LEFT_OUT = /\.docx?$/i; // details kept from older versions stay hidden instead of showing as missing
 const DATA_DIR = '.inkshelf';
 
 // ---------- the list of libraries (kept with the plugin) ----------

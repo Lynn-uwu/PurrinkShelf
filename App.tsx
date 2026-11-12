@@ -816,7 +816,7 @@ function InkShelfApp(): React.JSX.Element {
     try {
       const r: any = await FileSelector.selectFile({
         selectType: 1,
-        suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'],
+        suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt'],
         maxNum: 1,
         title: 'Pick any book in your library',
         ...(knownRoots[0] ? {needSelectFolder: knownRoots[0]} : {}),
@@ -1563,7 +1563,7 @@ function InkShelfApp(): React.JSX.Element {
     if (!lib) return;
     let picked = '';
     try {
-      const r: any = await FileSelector.selectFile({selectType: 1, suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'], maxNum: 1, title: 'Choose the right file', needSelectFolder: lib.path, rightButtonText: 'OK'});
+      const r: any = await FileSelector.selectFile({selectType: 1, suffixList: ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt'], maxNum: 1, title: 'Choose the right file', needSelectFolder: lib.path, rightButtonText: 'OK'});
       const list: any[] = Array.isArray(r) ? r : r?.result || [];
       picked = list.length ? String(list[0]).replace(/^file:\/\//, '') : '';
     } catch (e) {
@@ -4310,7 +4310,7 @@ function ExcludePage({lib, path, onGo, setExclude, onDone}: {lib: Lib; path: str
   useEffect(() => {
     setPg(0);
     listDir(path ? `${lib.path}/${path}` : lib.path).then(list =>
-      setEntries(list.filter(e => !e.name.startsWith('.') && (e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt|docx)$/i.test(e.name))).sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name, undefined, {numeric: true}))),
+      setEntries(list.filter(e => !e.name.startsWith('.') && (e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt)$/i.test(e.name))).sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name, undefined, {numeric: true}))),
     );
   }, [lib.path, path]);
   const rel = (e: Entry) => (path ? `${path}/${e.name}` : e.name);
@@ -5307,7 +5307,7 @@ function FolderBrowser({path, onGo, onPick, onCancel, onBookPicker, knownRoots, 
     (async () => {
       if (path) {
         log('list folder', path);
-        setEntries((await listDir(path)).filter(e => e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt|docx)$/i.test(e.name)));
+        setEntries((await listDir(path)).filter(e => e.isDir || /\.(epub|pdf|cbz|fb2|xps|mobi|txt)$/i.test(e.name)));
       } else {
         const r = [{label: 'Supernote (internal storage)', path: '/storage/emulated/0'}];
         // SD cards: Android's storage APIs, plus places InkShelf already knows (libraries, picked books)
