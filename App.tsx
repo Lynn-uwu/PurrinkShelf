@@ -7,6 +7,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {bareTitle, goodreadsCsv, readSiteExport} from './src/sites';
+import {LICENSE_TEXT, SOURCE, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
 import {AppState, Book, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
@@ -3776,8 +3777,70 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
       ]}
     />
   );
-  const [page, setPage] = useState<'main' | 'look' | 'show'>('main');
-  const back = () => setPage('main');
+  const [page, setPage] = useState<'main' | 'look' | 'show' | 'about' | 'license'>('main');
+  const [licPg, setLicPg] = useState(0);
+  const back = () => setPage(page === 'license' ? 'about' : 'main');
+  if (page === 'about') {
+    const sec = (t: string) => <Text style={[st.section, st.showSection, {fontSize: px(19), marginTop: px(16)}]}>{t}</Text>;
+    const line = (t: string) => <Text style={[st.small, {color: BLACK, fontSize: px(15), lineHeight: px(21), marginTop: px(4)}]}>{t}</Text>;
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="About" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(4)}}>
+            <Icon name="logo" size={px(52)} />
+            <View style={{marginLeft: px(14), flex: 1}}>
+              <Text style={[st.h2, {marginTop: 0, marginBottom: 0}]}>PurrinkShelf</Text>
+              <Text style={st.small}>{`Version ${VERSION}  ·  formerly InkShelf`}</Text>
+            </View>
+          </View>
+          {line('A library for the books on your Supernote.')}
+          {sec('License')}
+          {line('Free to use, but not open source.')}
+          {line('You may: use it on your own devices, share the official release file for free with a link back, and change it for your own private use.')}
+          {line("You may not, without the author's written permission: share changed versions, use its code, design or pictures in another project, or sell it.")}
+          <View style={{flexDirection: 'row', marginTop: px(10)}}>
+            <Btn small icon="text" label="Read the full license" onPress={() => { setLicPg(0); setPage('license'); }} />
+          </View>
+          {sec('Privacy')}
+          {line('No internet: no accounts, ads or tracking, and nothing is uploaded. Your books are only read, never changed. Your details stay on this Supernote (in each library and in Document › InkShelf).')}
+          {sec('Made by')}
+          {line(`Lynn-uwu. Designed and tested on a Nomad, and vibe-coded with Claude (an AI by Anthropic). Ideas and bug reports: ${SOURCE} › Issues.`)}
+          {line('Built with React Native and sn-plugin-lib (both MIT licensed). Opening books follows supernote-plugin-research and supernote-dashboard.')}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'license') {
+    // the LICENSE file, its line breaks undone so it wraps to the card; numbered points keep their own lines
+    const paras = LICENSE_TEXT.split(/\n\s*\n/).map((p, i) => (i === 0 ? p.trim() : p.replace(/\n(?!\d+\. )\s*/g, ' ').trim())).filter(Boolean); // the title block keeps its lines
+    const perLine = Math.floor((W - 2 * CARD_X - px(40)) / (px(15) * 0.43));
+    const room = Math.floor((H - 2 * CARD_Y - TASK_H - px(64) * 2 - px(40)) / px(21));
+    const pages: string[][] = [[]];
+    let used = 0;
+    for (const p of paras) {
+      const n = p.split('\n').reduce((a, l) => a + wrapWords(l, perLine).length, 0) + 0.5; // + the gap after it
+      if (used + n > room && pages[pages.length - 1].length) { pages.push([]); used = 0; }
+      pages[pages.length - 1].push(p);
+      used += n;
+    }
+    const pg = Math.min(licPg, pages.length - 1);
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="License" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          {pages[pg].map((p, i) => (
+            <Text key={i} style={[st.small, {color: BLACK, fontSize: px(15), lineHeight: px(21), marginBottom: px(10)}, i === 0 && pg === 0 && {fontWeight: 'bold'}]}>{p}</Text>
+          ))}
+        </View>
+        <View style={st.pager}>
+          <IconBtn name="back" label="Previous page" disabled={pg <= 0} onPress={() => setLicPg(pg - 1)} />
+          <Text style={st.pageText}>{`${pg + 1} / ${pages.length}`}</Text>
+          <IconBtn name="forward" label="Next page" disabled={pg >= pages.length - 1} onPress={() => setLicPg(pg + 1)} />
+        </View>
+      </ModalCard>
+    );
+  }
   if (page === 'look') {
     const choice = (on: boolean, title: string, text: string, pick: () => void, pic?: React.ReactNode) => (
       <Pressable onPress={pick} style={[st.dChoice, on && st.dChoiceOn, {alignItems: 'center'}]} accessibilityRole="button" accessibilityLabel={title}>
@@ -3896,7 +3959,13 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           </RoundBtn>
         </View>
         <View style={{flex: 1}} />
-        <Text style={[st.small, {marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
+        <Pressable onPress={() => setPage('about')} style={st.aboutLink} accessibilityRole="button" accessibilityLabel="About, license and privacy">
+          <Icon name="logo" size={px(26)} />
+          <Text style={[st.rowTitle, {fontSize: px(16), marginLeft: px(10), flex: 1}]}>{`PurrinkShelf ${VERSION}`}</Text>
+          <Text style={[st.small, {marginRight: px(6)}]}>About, license and privacy</Text>
+          <Icon name="forward" size={px(20)} />
+        </Pressable>
+        <Text style={[st.small, {marginTop: px(10), marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
       </View>
     </ModalCard>
   );
@@ -5713,6 +5782,7 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  aboutLink: {flexDirection: 'row', alignItems: 'center', height: px(56), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(16), paddingHorizontal: px(14)},
   showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},
   showSection: {fontSize: px(22), marginBottom: px(2), paddingBottom: px(5), borderColor: BLACK},
   showTitle: {fontSize: px(16), lineHeight: px(20), fontWeight: '600', color: BLACK},

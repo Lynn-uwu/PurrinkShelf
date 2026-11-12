@@ -1,33 +1,33 @@
-InkShelf License
+PurrinkShelf License (formerly InkShelf)
 Copyright (c) 2026 Lynn-uwu. All rights reserved.
 
-InkShelf is free to use, but it is not open source. The source code is
+PurrinkShelf is free to use, but it is not open source. The source code is
 public so you can see how it works and check what it does with your files.
 
 YOU MAY, free of charge:
 
-1. Install and use InkShelf on your own devices.
-2. Share the official, unmodified release file (InkShelf .snplg) with others,
+1. Install and use PurrinkShelf on your own devices.
+2. Share the official, unmodified release file (.snplg) with others,
    as long as it stays free and you link back to this repository.
 3. Change the code for your own private use on your own devices. Keep those
    changes to yourself.
 
 YOU MAY NOT, unless you have the author's written permission:
 
-4. Share, publish or distribute a changed version of InkShelf, in whole or
+4. Share, publish or distribute a changed version of PurrinkShelf, in whole or
    in part, as source code or as a plugin file.
-5. Use InkShelf's code, design, icons or other assets as the base of, or
+5. Use PurrinkShelf's code, design, icons or other assets as the base of, or
    as part of, another plugin, app or project.
-6. Sell InkShelf or use it in anything that is sold, or charge for it.
+6. Sell PurrinkShelf or use it in anything that is sold, or charge for it.
 7. Remove or change this license or the copyright notice.
 
 To ask for permission, open an issue on this repository on GitHub.
 
-Other people's code: InkShelf is built with open-source libraries (such as
+Other people's code: PurrinkShelf is built with open-source libraries (such as
 React Native and sn-plugin-lib, both MIT licensed). Those parts stay under
-their own licenses; this license covers only InkShelf's own code, design and
+their own licenses; this license covers only PurrinkShelf's own code, design and
 assets.
 
-NO WARRANTY: InkShelf is provided "as is", without any warranty of any kind.
+NO WARRANTY: PurrinkShelf is provided "as is", without any warranty of any kind.
 The author is not liable for any loss or damage from using it, including lost
 or changed files. Keep your own backups of your books and notes.

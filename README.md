@@ -80,7 +80,7 @@ Built and tested on a Supernote Nomad (A6 X2). It may work on the Manta (A5 X2) 
 PurrinkShelf was vibe-coded: I designed it, decided how everything should look and work, and tested it on my own Nomad, while the code was written with Claude (an AI by Anthropic).
 
 ## License
-Free to use, but not open source. You may install it, share the official release, and change it for your own private use. You may not share changed versions, use it as the base of another plugin or app, or sell it, without asking first. See [LICENSE](LICENSE).
+Free to use, but not open source. The full license is also inside the plugin: Settings › About. You may install it, share the official release, and change it for your own private use. You may not share changed versions, use it as the base of another plugin or app, or sell it, without asking first. See [LICENSE](LICENSE).
 
 ## Build (for the curious)
 Pushing to `main` builds `PurrinkShelf.snplg` with GitHub Actions: React Native with [sn-plugin-lib](https://www.npmjs.com/package/sn-plugin-lib), plus a small native module. To build locally you need Node 20, JDK 17 and the Android SDK, then run `bash buildPlugin.sh`. `tools/preview` renders the screens in a browser with a pretend Supernote and demo books.

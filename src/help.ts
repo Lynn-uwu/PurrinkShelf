@@ -135,6 +135,11 @@ export const HELP: HelpTopic[] = [
       'Settings › Appearance changes how PurrinkShelf looks. Your books, details and notes stay the same.',
       'Original has clean, straight lines. Cats has hand-drawn lines, cat-shaped toggles, paw prints on notes and little cats around the pages.',
     ]},
+  {id: 'about', title: 'Version, license and privacy', icon: 'help', words: 'about version license licence privacy internet copyright credits author contact bug report issue',
+    steps: [
+      'Settings › About (the bar at the bottom of Settings) shows the version, the license in short and in full, the privacy promise and the credits.',
+      'Bug reports and ideas go to github.com/Lynn-uwu/InkShelf › Issues.',
+    ]},
   {id: 'duplicates', title: 'Duplicate files', icon: 'copy', words: 'duplicate duplicates copy twice same name (1) delete keep both',
     steps: [
       'Two files with the same name in the same folder (like "Book.epub" and "Book (1).epub") are flagged on the book page.',

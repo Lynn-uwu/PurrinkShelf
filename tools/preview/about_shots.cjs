@@ -1,0 +1,10 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots20'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const shot = async n => { await p.waitForTimeout(600); await p.screenshot({path: path.join(out, n + '.png')}); console.log(n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1&cat=1'); await p.waitForTimeout(14000);
+  await p.getByLabel('Settings', {exact: true}).first().click(); await shot('1-settings');
+  await p.getByLabel('About, license and privacy', {exact: true}).click(); await shot('2-about');
+  await p.getByText('Read the full license', {exact: true}).click(); await shot('3-license');
+  await b.close(); })();
