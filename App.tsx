@@ -24,6 +24,9 @@ const px = (n: number) => Math.round(n * S);
 const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
 const TASK_H = px(80);
+const DIP_F = px(14); // how round the bar's shoulders are where it dips under the open tab
+const DIP_R = px(51);
+const DIP_DX = DIP_R - Math.sqrt(DIP_R * DIP_R - (DIP_F + 3) * (DIP_F + 3)); // where the dip's curve is at the shoulder's foot
 const GRID_PER_PAGE = 12;
 const READ = 'plugin.permission.FILE:READ';
 const WRITE = 'plugin.permission.FILE:WRITE';
@@ -2728,8 +2731,15 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
             {on ? (
               <>
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
-                <View style={st.notchClip}>
-                  <View style={st.notch} />
+                <View style={st.dipWrap}>
+                  <View style={st.notchClip}>
+                    <View style={st.notch} />
+                  </View>
+                  {/* soft shoulders where the bar bends into the dip */}
+                  <View style={[st.dipCover, {left: 0}]} />
+                  <View style={[st.dipCover, {right: 0}]} />
+                  <View style={[st.dipFillet, {left: 0, borderRightWidth: 2, borderTopRightRadius: DIP_F}]} />
+                  <View style={[st.dipFillet, {right: 0, borderLeftWidth: 2, borderTopLeftRadius: DIP_F}]} />
                 </View>
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
@@ -4561,7 +4571,10 @@ const st = StyleSheet.create({
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
   taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
   // a half circle cut down into the bar (only its lower half shows), with the button sitting in it
-  notchClip: {position: 'absolute', top: -2, alignSelf: 'center', width: px(102), height: px(51) + 2, overflow: 'hidden'},
+  dipWrap: {position: 'absolute', top: -2, alignSelf: 'center', width: px(102) + DIP_F * 2, height: px(51) + 2},
+  dipCover: {position: 'absolute', top: 0, width: DIP_F + DIP_DX + 4, height: DIP_F + 3, backgroundColor: '#ffffff'},
+  dipFillet: {position: 'absolute', top: 0, width: DIP_F + 2 + DIP_DX, height: DIP_F + 4, borderTopWidth: 2, borderColor: BLACK, backgroundColor: 'transparent'},
+  notchClip: {position: 'absolute', top: 0, left: DIP_F, width: px(102), height: px(51) + 2, overflow: 'hidden'},
   notch: {position: 'absolute', top: -px(51) + 1, left: 0, width: px(102), height: px(102), borderRadius: px(51), borderWidth: 2, borderColor: BLACK, backgroundColor: '#ffffff'},
   taskCta: {position: 'absolute', top: -px(35) - 1, alignSelf: 'center', width: px(70), height: px(70), borderRadius: px(35), borderWidth: px(5), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
   taskLabel: {position: 'absolute', bottom: px(6), fontSize: px(14), color: '#555555'},
