@@ -424,7 +424,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
     fun copyText(text: String, promise: Promise) {
         try {
             val cm = reactApplicationContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("InkShelf", text))
+            cm.setPrimaryClip(ClipData.newPlainText("PurrinkShelf", text))
             promise.resolve(true)
         } catch (e: Throwable) {
             promise.reject("COPY_FAILED", "${e.javaClass.simpleName}: ${e.message}", e)

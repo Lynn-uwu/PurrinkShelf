@@ -1,5 +1,5 @@
 /**
- * InkShelf - Supernote plugin entry
+ * PurrinkShelf - Supernote plugin entry
  * @format
  */
 import {AppRegistry, Image} from 'react-native';
@@ -14,12 +14,12 @@ PluginManager.init();
 // A "Library" button in the toolbar of books (DOC) and notes (NOTE).
 PluginManager.registerButton(1, ['DOC', 'NOTE'], {
   id: 100,
-  name: 'InkShelf',
+  name: 'PurrinkShelf', // the label Supernote shows for the toolbar button
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
   showType: 1,
 });
 
-// One tap on the toolbar button always opens InkShelf, even if Supernote lost track of
+// One tap on the toolbar button always opens PurrinkShelf, even if Supernote lost track of
 // whether it was showing (that made it take two taps after opening a book).
 import {log} from './src/log';
 import {emit} from './src/events';
@@ -33,8 +33,8 @@ PluginManager.registerButtonListener({
   },
 });
 
-// A settings entry for InkShelf in Supernote's own plugin settings.
-// Tapping it opens InkShelf with the settings sheet showing.
+// A settings entry for PurrinkShelf in Supernote's own plugin settings.
+// Tapping it opens PurrinkShelf with the settings sheet showing.
 PluginManager.registerConfigButton().catch(() => {});
 PluginManager.registerConfigButtonListener({
   onClick() {

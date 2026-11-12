@@ -2,10 +2,10 @@
   "name": "PurrinkShelf",
   "desc": "A library for your Supernote: browse folders of books, add tags and descriptions, filter, and tap to read. Optional cat look.",
   "iconPath": "assets/icon.png",
-  "versionName": "1.1.1",
-  "versionCode": 17,
+  "versionName": "1.1.2",
+  "versionCode": 18,
   "pluginID": "inkshelfw7m46dqz",
-  "pluginKey": "InkShelf",
+  "pluginKey": "PurrinkShelf",
   "jsMainPath": "index",
   "uses-permissions": [
     "plugin.permission.FILE:READ",
