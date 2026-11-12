@@ -2604,14 +2604,17 @@ function BookPage(props: {
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
     const lines = Math.min(3, wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length);
-    left.push(label(name));
+    // the name and its value stay together (never split across two pages)
     left.push({
-      h: lines * px(24) + px(8),
+      h: px(32) + lines * px(24) + px(8),
       sec,
       node: (
-        <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]} numberOfLines={3}>
-          {v}
-        </Text>
+        <View>
+          <Text style={st.infoLabel}>{name}</Text>
+          <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]} numberOfLines={3}>
+            {v}
+          </Text>
+        </View>
       ),
     });
   };
@@ -3460,7 +3463,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
   ];
   const short: {[t in Tab]: string} = {library: 'Library', new: 'New', home: 'Home', bookmarks: 'Collections', profile: 'Profile'};
   return (
-    <View style={st.taskbar}>
+    <View style={st.taskbar} testID="taskbar">
       {items.map(({t, icon, label}) => {
         const on = t === tab;
         const badge =

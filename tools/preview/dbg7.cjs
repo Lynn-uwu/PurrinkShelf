@@ -1,0 +1,12 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1'); await p.waitForTimeout(5000);
+  await p.getByRole('button', {name: 'Library', exact: true}).last().click(); await p.waitForTimeout(500);
+  await p.getByText('Echoes of the Ninth Gate').first().click(); await p.waitForTimeout(600);
+  const all = p.getByLabel('Next', {exact: true}); const n = await all.count();
+  for (let i = 0; i < n; i++) console.log(i, JSON.stringify(await all.nth(i).boundingBox()), await all.nth(i).isEnabled());
+  await p.getByLabel('Reading status', {exact: true}).first().click(); await p.waitForTimeout(400);
+  await p.mouse.click(560, 260); await p.waitForTimeout(400);
+  await p.screenshot({path: '/tmp/claude-0/-home-claude/7d2899c7-f4bf-500b-a740-068dbfbbb129/scratchpad/d7.png'});
+  const c = p.getByLabel('Collections', {exact: true}); for (let i = 0; i < await c.count(); i++) console.log('col', JSON.stringify(await c.nth(i).boundingBox()));
+  await b.close(); })();
