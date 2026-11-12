@@ -3788,6 +3788,8 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <Text style={[st.small, {marginBottom: px(12)}]}>How InkShelf looks. Your books and details stay the same.</Text>
           {choice(settings.look !== 'drawn', 'Original', 'Clean, straight lines.', () => change({look: 'plain', cats: false}))}
           {choice(settings.look === 'drawn', 'Cats', 'Hand-drawn lines, cat toggles, paw prints on notes and little cats around the pages.', () => change({look: 'drawn', cats: true}), <CatImg name="loaf" w={px(70)} style={{marginLeft: px(10)}} />)}
+          <View style={{flex: 1}} />
+          <Text style={[st.small, {marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
         </View>
       </ModalCard>
     );
@@ -3826,6 +3828,8 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           {row('Reading time', "A book's number of words and about how long it takes to read.", settings.length, () => change({length: !settings.length}))}
           {row('Content warnings', 'Warnings such as violence. Off hides them on book pages and in the filters.', settings.warnings, () => change({warnings: !settings.warnings}))}
           {row('Author from the file name', 'For "Title - Author" files, the part after the dash becomes the author.', settings.dashAuthor !== false, () => change({dashAuthor: settings.dashAuthor === false}))}
+          <View style={{flex: 1}} />
+          <Text style={[st.small, {marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
         </View>
       </ModalCard>
     );
@@ -3883,7 +3887,8 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Icon name="help" size={px(30)} />
           </RoundBtn>
         </View>
-        <Text style={[st.small, {marginTop: px(18), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
+        <View style={{flex: 1}} />
+        <Text style={[st.small, {marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
       </View>
     </ModalCard>
   );
