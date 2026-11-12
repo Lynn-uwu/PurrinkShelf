@@ -16,7 +16,7 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
   <img src="docs/screens/profile.png" width="32%" alt="Profile with reading stats">
 </p>
 
-*The screenshots use made-up demo books.* ▶ **[Watch the 6-minute walkthrough](docs/InkShelf-walkthrough.mp4)** of every feature.
+*The screenshots use made-up demo books.* ▶ **[Watch the 6-minute walkthrough](docs/PurrinkShelf-walkthrough.mp4)** of every feature.
 
 ## What it does
 
@@ -41,7 +41,7 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 - **Paper books:** list the books on your shelf too, in their own folder, with lending.
 - **Profile:** books finished per month, an optional yearly goal, time spent reading, reading days in a row, and your top genres.
 - **Notes and quotes:** every note from every book on one searchable board.
-- **On a computer:** PurrinkShelf writes `Document/InkShelf/InkShelf books.xlsx`. It opens in Excel, Google Sheets or Numbers, with drop-downs for genres, tags, categories, status and collections. Fill it in, copy it back, and PurrinkShelf reads the changes.
+- **On a computer:** PurrinkShelf writes `Document/PurrinkShelf/PurrinkShelf books.xlsx`. It opens in Excel, Google Sheets or Numbers, with drop-downs for genres, tags, categories, status and collections. Fill it in, copy it back, and PurrinkShelf reads the changes.
 - **Goodreads and StoryGraph:** import their export file (status, dates, ratings, reviews), or make a file they can import.
 - **Activity:** every message PurrinkShelf shows is kept in Settings › Activity.
 - **Appearance:** the Original look, or Cats: hand-drawn lines, cat toggles, paw prints on notes and little cats around the pages.
@@ -58,9 +58,9 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 Supernote asks once for each permission (read files, write files). Choose **Always allow** so it doesn't ask again.
 
 ## Updating
-Install the new file the same way (**Add Plugin**). It replaces the old version in place (InkShelf 1.0 updates to PurrinkShelf the same way, and keeps using the `Document/InkShelf` folder), and your libraries, details, notes and settings stay. You don't need to uninstall first.
+Install the new file the same way (**Add Plugin**). It replaces the old version in place, and your libraries, details, notes and settings stay. You don't need to uninstall first.
 
-PurrinkShelf also keeps a backup in `Document/InkShelf/InkShelf backup.json` after every change. If you ever remove and reinstall the plugin, it finds the backup and restores everything by itself.
+PurrinkShelf also keeps a backup in `Document/PurrinkShelf/PurrinkShelf backup.json` after every change. If you ever remove and reinstall the plugin, it finds the backup and restores everything by itself.
 
 ## Privacy
 - **No internet.** PurrinkShelf never connects to the internet. There are no accounts, ads, analytics or tracking, and nothing is uploaded anywhere.
@@ -68,7 +68,7 @@ PurrinkShelf also keeps a backup in `Document/InkShelf/InkShelf backup.json` aft
 - **Your books are never changed or deleted.** It only reads them. The only files it ever deletes are its own paper-book listings (`.paper` files), when you remove one. Duplicates are left for you to delete in the file manager.
 - **Where your data lives**, all on the device:
   - a hidden `.inkshelf` folder inside each library (your details travel with your books). If the SD card can't be written to, they are kept with the plugin instead.
-  - `Document/InkShelf/`: the backup, covers you chose, the spreadsheet, the Goodreads/StoryGraph file, and a small log (`InkShelf-log.txt`) of what it did. The log helps with bug reports and only leaves the device if you send it to someone.
+  - `Document/PurrinkShelf/`: the backup, covers you chose, the spreadsheet, the Goodreads/StoryGraph file, and a small log (`PurrinkShelf-log.txt`) of what it did. The log helps with bug reports and only leaves the device if you send it to someone.
 - Imports (Calibre, the spreadsheet, Goodreads or StoryGraph files) read only the files you give it.
 
 ## Status

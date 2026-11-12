@@ -112,7 +112,7 @@ export const HELP: HelpTopic[] = [
       'Goodreads: My Books › Import and export › Export library. StoryGraph: Manage account › Export StoryGraph library. Copy the .csv to the Supernote.',
       'Settings › Data and storage › Backup and sheet › Import their file, then pick the .csv.',
       'Books found in your libraries get their status, finished date, and rating and review (as a note). Books you want to read but don\'t have go on your wishlist.',
-      'Make a file for them saves Document › InkShelf › InkShelf for Goodreads and StoryGraph.csv, which both sites can import.',
+      'Make a file for them saves Document › PurrinkShelf › PurrinkShelf for Goodreads and StoryGraph.csv, which both sites can import.',
     ]},
   {id: 'calibre', title: 'Calibre libraries', icon: 'database', words: 'calibre metadata opf series cover tags rating',
     steps: [
@@ -149,12 +149,12 @@ export const HELP: HelpTopic[] = [
     ]},
   {id: 'sheet', title: 'Fill in many books on a computer', icon: 'save', words: 'sheet spreadsheet excel google sheets xlsx csv computer laptop bulk import export many books fill drop-down collections tags',
     steps: [
-      'PurrinkShelf keeps a spreadsheet of all your books: Document › InkShelf › InkShelf books.xlsx (Data and storage › Make the sheet makes it now).',
+      'PurrinkShelf keeps a spreadsheet of all your books: Document › PurrinkShelf › PurrinkShelf books.xlsx (Data and storage › Make the sheet makes it now).',
       'Copy it to your computer and open it in Excel or Google Sheets. The Books tab has one row per book.',
       'Category, Genre, Tag, Reading, Favourite and Add to collection cells have drop-down lists: click the cell and pick. You can also type something new.',
       'To add a new tag to every drop-down, write it once at the bottom of its column on the Lists tab.',
       'The Collections tab holds your collections and their rules. Add a row to make a new one; write - as the name to delete one.',
-      'An empty cell changes nothing; a - clears it. Leave the ID column alone. Save it (same name, .xlsx) and copy it back to Document › InkShelf.',
+      'An empty cell changes nothing; a - clears it. Leave the ID column alone. Save it (same name, .xlsx) and copy it back to Document › PurrinkShelf.',
     ]},
   {id: 'naming', title: 'Name files so volumes join up', icon: 'layers', words: 'name naming volume vol part chapter ch episode lesson rename join series files',
     steps: [
@@ -181,9 +181,9 @@ export const HELP: HelpTopic[] = [
       'Tap the eye next to any folder or book to leave it out. Tap again to bring it back.',
       'Left-out folders stay out after refreshing, and they are kept in the backup.',
     ]},
-  {id: 'backup', title: 'Backup and reinstalling', icon: 'save', words: 'backup restore reinstall save copy file document inkshelf move',
+  {id: 'backup', title: 'Backup and reinstalling', icon: 'save', words: 'backup restore reinstall save copy file document purrinkshelf move',
     steps: [
-      'PurrinkShelf saves a backup by itself after every change: Document › InkShelf › InkShelf backup.json.',
+      'PurrinkShelf saves a backup by itself after every change: Document › PurrinkShelf › PurrinkShelf backup.json.',
       'After reinstalling PurrinkShelf it reads the backup back by itself.',
       'In Data and storage you can back up now, choose another folder, or restore from a backup.',
     ]},

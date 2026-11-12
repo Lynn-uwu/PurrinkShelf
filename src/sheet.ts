@@ -1,5 +1,5 @@
-// A spreadsheet of every book (Document/InkShelf/InkShelf books.csv) to fill in on a computer.
-export const SHEET_NAME = 'InkShelf books.csv';
+// A spreadsheet of every book (Document/PurrinkShelf/PurrinkShelf books.csv) to fill in on a computer.
+export const SHEET_NAME = 'PurrinkShelf books.csv';
 export const COLUMNS = ['Title', 'Library', 'Folder', 'File', 'Categories', 'Genres', 'Tags', 'Language', 'Status', 'Completely translated', 'Reading', 'Favourite', 'Description', 'ID'] as const;
 export type Row = {[k in (typeof COLUMNS)[number]]?: string};
 

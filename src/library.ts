@@ -41,7 +41,7 @@ export type Meta = {
   paper?: boolean; // a physical book (listed by hand in the Paper books library)
   loan?: {dir: 'lent' | 'borrowed'; who: string; at: number}; // lent to / borrowed from someone
   probed?: boolean; // the EPUB's own details were looked at once
-  progress?: {last: string; opened: string[]; at: number}; // which volumes were opened (from InkShelf or Supernote)
+  progress?: {last: string; opened: string[]; at: number}; // which volumes were opened (from PurrinkShelf or Supernote)
   seen?: string[]; // files (inside the library) this book was last found as, to reconnect it
 };
 // ---------- reading status (like review states: each change is dated) ----------
@@ -146,7 +146,7 @@ export type Settings = {
   sort: {by: SortBy; asc: boolean};
   libFolders: boolean; // library shown as folders instead of books
   badges: {newBadge: boolean; notes: boolean; vols: boolean};
-  backupDir: string; // where the backup file is kept (survives reinstalling InkShelf)
+  backupDir: string; // where the backup file is kept (survives reinstalling PurrinkShelf)
   dashAuthor: boolean; // "Title - Author.epub": show the part after the dash as the author
   profile: ProfileParts; // what the Profile page shows
   goal: number; // books to finish this year (0 = no goal)
@@ -163,8 +163,11 @@ export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
   {id: 'streak', label: 'Reading days'},
   {id: 'genres', label: 'Top genres'},
 ];
-export const DEFAULT_BACKUP_DIR = '/storage/emulated/0/Document/InkShelf';
-export const BACKUP_NAME = 'InkShelf backup.json';
+export const DEFAULT_BACKUP_DIR = '/storage/emulated/0/Document/PurrinkShelf';
+export const BACKUP_NAME = 'PurrinkShelf backup.json';
+// 1.0 used the folder and backup name Document/InkShelf: still read, never written
+export const OLD_BACKUP_DIR = '/storage/emulated/0/Document/InkShelf';
+const OLD_BACKUP_NAME = 'InkShelf backup.json';
 export type SortBy = 'title' | 'read' | 'added' | 'vols' | 'category' | 'author' | 'rating';
 export const DEFAULT_SETTINGS: Settings = {
   paging: 'arrows', libraryGrid: false, volumeGrid: false, showFilters: true, views: {gallery: 'grid'},
@@ -253,7 +256,7 @@ export function folderCats(b: Book): string[] {
 export const catsOf = (b: Book, m?: Meta) => (m?.categories ? m.categories : folderCats(b));
 
 /**
- * Compare a fresh scan with what InkShelf saw last time (like a game list refresh).
+ * Compare a fresh scan with what PurrinkShelf saw last time (like a game list refresh).
  * The very first scan of a library marks nothing as new.
  * Books whose files are gone keep their details: they reconnect when a file with the
  * same name (or a very similar name in the same folder) turns up again.
@@ -324,8 +327,8 @@ export function missingBooks(meta: MetaStore): Book[] {
     .map(k => ({key: k, fileTitle: keyName(k), folder: keyDir(k).split('/')[0] || '', dir: keyDir(k), files: [], vols: [], ext: '', added: meta.missing![k], missing: true}));
 }
 
-// Word files (.doc, .docx) are left out: Supernote opens them, but its reader has no plugin button there, so InkShelf couldn't be reached from them
-const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'paper']; // .paper: a paper book listed by hand in InkShelf
+// Word files (.doc, .docx) are left out: Supernote opens them, but its reader has no plugin button there, so PurrinkShelf couldn't be reached from them
+const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'paper']; // .paper: a paper book listed by hand in PurrinkShelf
 const LEFT_OUT = /\.docx?$/i; // details kept from older versions stay hidden instead of showing as missing
 const DATA_DIR = '.inkshelf';
 
@@ -352,17 +355,19 @@ export async function isSetUp(): Promise<boolean> {
   return (await readText(`${await pluginDir()}/libraries.json`)) !== null;
 }
 
-// ---------- backup: everything InkShelf wrote, in one file the reader can keep ----------
-export type Backup = {app: 'InkShelf'; version: 1; savedAt: number; libraries: Lib[]; settings: Settings; state: AppState; metas: {[path: string]: MetaStore}};
+// ---------- backup: everything PurrinkShelf wrote, in one file the reader can keep ----------
+export type Backup = {app: 'PurrinkShelf' | 'InkShelf'; version: 1; savedAt: number; libraries: Lib[]; settings: Settings; state: AppState; metas: {[path: string]: MetaStore}};
 export async function writeBackup(dir: string, b: Omit<Backup, 'app' | 'version' | 'savedAt'>): Promise<boolean> {
-  return writeText(`${dir}/${BACKUP_NAME}`, JSON.stringify({app: 'InkShelf', version: 1, savedAt: Date.now(), ...b}, null, 1));
+  return writeText(`${dir}/${BACKUP_NAME}`, JSON.stringify({app: 'PurrinkShelf', version: 1, savedAt: Date.now(), ...b}, null, 1));
 }
 export async function readBackup(dir: string): Promise<Backup | null> {
-  const t = await readText(`${dir}/${BACKUP_NAME}`);
-  try {
-    const b = t ? JSON.parse(t) : null;
-    if (b && b.app === 'InkShelf' && Array.isArray(b.libraries)) return b;
-  } catch (e) {}
+  for (const [d, name] of [[dir, BACKUP_NAME], [dir, OLD_BACKUP_NAME], ...(dir === DEFAULT_BACKUP_DIR ? [[OLD_BACKUP_DIR, OLD_BACKUP_NAME]] : [])]) {
+    const t = await readText(`${d}/${name}`);
+    try {
+      const b = t ? JSON.parse(t) : null;
+      if (b && (b.app === 'PurrinkShelf' || b.app === 'InkShelf') && Array.isArray(b.libraries)) return b;
+    } catch (e) {}
+  }
   return null;
 }
 /** put a backed-up library's details back, keeping anything newer that is already there */
@@ -385,6 +390,7 @@ export async function loadSettings(): Promise<Settings> {
   try {
     const v = t ? JSON.parse(t) : {};
     if (v.look === 'cat') { v.look = 'drawn'; v.cats = true; } // the first Cat look had both
+    if (!v.backupDir || v.backupDir === OLD_BACKUP_DIR) v.backupDir = DEFAULT_BACKUP_DIR; // the folder took the new name
     return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}, profile: {...DEFAULT_SETTINGS.profile, ...(v.profile || {})}};
   } catch (e) {
     return DEFAULT_SETTINGS;
@@ -425,8 +431,8 @@ export const kindName = (w: string) => {
   return w[0].toUpperCase() + w.slice(1).toLowerCase();
 };
 
-/** never shown as books: InkShelf's own files (its log, its backup folder) */
-export const isOwnFile = (path: string) => /(^|\/)inkshelf[- ]?log[^/]*$/i.test(path) || /\/Document\/InkShelf(\/|$)/i.test(path);
+/** never shown as books: PurrinkShelf's own files (its log, its backup folder) */
+export const isOwnFile = (path: string) => /(^|\/)(purrink|ink)shelf[- ]?log[^/]*$/i.test(path) || /\/Document\/(Purrink|Ink)Shelf(\/|$)/i.test(path);
 
 export async function scanLibrary(root: string, exclude: string[] = []): Promise<Book[]> {
   const books: Book[] = [];
@@ -542,10 +548,10 @@ export function arrange(root: string, raw: Book[], meta: MetaStore): Book[] {
   return sortBooks(out);
 }
 
-// ---------- saved details, kept inside the library folder (and a copy with InkShelf) ----------
+// ---------- saved details, kept inside the library folder (and a copy with PurrinkShelf) ----------
 const copyPath = async (root: string) => `${await pluginDir()}/libraries/${hash(root)}.json`;
 
-/** libraries whose folder plugins can't write to (often an SD card): details live with InkShelf instead */
+/** libraries whose folder plugins can't write to (often an SD card): details live with PurrinkShelf instead */
 export const readOnlyLibs = new Set<string>();
 
 export async function loadMeta(root: string): Promise<MetaStore> {
@@ -555,13 +561,13 @@ export async function loadMeta(root: string): Promise<MetaStore> {
     const m = t ? JSON.parse(t) : null;
     if (m && m.books) own = m;
   } catch (e) {}
-  // InkShelf's own copy wins when it is newer (the folder can be read-only, or the card was swapped)
+  // PurrinkShelf's own copy wins when it is newer (the folder can be read-only, or the card was swapped)
   const c = await loadCache(root);
   if (c?.meta && (!own || (c.meta.savedAt || 0) > (own.savedAt || 0))) return c.meta;
   return own || {version: 1, books: {}};
 }
 
-/** Saves to the library folder when allowed, and always to InkShelf's own copy. False only if neither worked. */
+/** Saves to the library folder when allowed, and always to PurrinkShelf's own copy. False only if neither worked. */
 export async function saveMeta(root: string, meta: MetaStore, books?: Book[]): Promise<boolean> {
   const m = {...meta, savedAt: Date.now()};
   const inFolder = await writeText(`${root}/${DATA_DIR}/library.json`, JSON.stringify(m, null, 1));
@@ -577,7 +583,7 @@ export async function pluginFile(name: string): Promise<string> {
   return `${await pluginDir()}/${name}`;
 }
 
-/** what InkShelf saw last time, so a library opens at once and refreshes quietly */
+/** what PurrinkShelf saw last time, so a library opens at once and refreshes quietly */
 export async function loadCache(root: string): Promise<{meta: MetaStore; books: Book[]} | null> {
   const t = await readText(await copyPath(root));
   try {
@@ -600,7 +606,7 @@ export async function coverFor(root: string, b: Book, meta: Meta | undefined, ca
   if (b.key in cache) return cache[b.key];
   let p: string | null = null;
   if (b.ext === 'epub') {
-    // kept with InkShelf (the library folder may be read-only)
+    // kept with PurrinkShelf (the library folder may be read-only)
     p = await extractEpubCover(b.files[0], await pluginFile(`covers/${hash(root)}/${hash(b.key)}.img`));
   }
   cache[b.key] = p;

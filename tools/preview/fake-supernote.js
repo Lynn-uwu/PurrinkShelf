@@ -115,7 +115,7 @@ function novelsMeta() {
   walk(root);
   return {...meta, seenFiles: all.filter(f => !/Starlight Courier|Vol 12/.test(f))};
 }
-// ?backup=1: a fresh install, with a backup file left in Document/InkShelf
+// ?backup=1: a fresh install, with a backup left by 1.0 in the old folder (Document/InkShelf): PurrinkShelf still finds it
 if (new URLSearchParams(location.search).get('backup')) {
   const N = `${SD}/Novels`;
   files['/storage/emulated/0/Document/InkShelf/InkShelf backup.json'] = JSON.stringify({

@@ -1,7 +1,7 @@
-// A small trouble log the user can find and send: Document/InkShelf-log.txt on the Supernote.
+// A small trouble log the user can find and send: Document/PurrinkShelf/PurrinkShelf-log.txt on the Supernote.
 import {NativeModules} from 'react-native';
 
-export const LOG_PATH = '/storage/emulated/0/Document/InkShelf/InkShelf-log.txt';
+export const LOG_PATH = '/storage/emulated/0/Document/PurrinkShelf/PurrinkShelf-log.txt';
 const N: any = NativeModules.InkShelf;
 const recent: string[] = [];
 
@@ -31,7 +31,7 @@ function safe(x: any) {
   }
 }
 
-// ---- catching errors so InkShelf shows them instead of closing ----
+// ---- catching errors so PurrinkShelf shows them instead of closing ----
 type Fn = (e: {message: string; stack?: string}) => void;
 let onError: Fn | null = null;
 let pending: {message: string; stack?: string} | null = null;

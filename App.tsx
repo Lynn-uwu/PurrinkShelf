@@ -15,8 +15,8 @@ import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
 import {SHEET_NAME, list as cells, parseCsv} from './src/sheet';
 import {makeWorkbook, readWorkbook} from './src/xlsx';
-const SITE_EXPORT = 'InkShelf for Goodreads and StoryGraph.csv'; // file names keep the old name, so backups and sheets from 1.0 still match
-const XLSX_NAME = 'InkShelf books.xlsx';
+const SITE_EXPORT = 'PurrinkShelf for Goodreads and StoryGraph.csv';
+const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
@@ -415,12 +415,12 @@ class Guard extends React.Component<{children: React.ReactNode}, {err: {message:
 export default function App(): React.JSX.Element {
   return (
     <Guard>
-      <InkShelfApp />
+      <PurrinkShelfApp />
     </Guard>
   );
 }
 
-function InkShelfApp(): React.JSX.Element {
+function PurrinkShelfApp(): React.JSX.Element {
   const [screen, setScreen] = useState<Screen>({kind: 'home'});
   const [app, setApp] = useState<AppState>(EMPTY_STATE);
   useEffect(() => {
@@ -568,7 +568,7 @@ function InkShelfApp(): React.JSX.Element {
     return true;
   }
 
-  // ---------- backup file (Document/InkShelf by default): everything PurrinkShelf wrote ----------
+  // ---------- backup file (Document/PurrinkShelf by default): everything PurrinkShelf wrote ----------
   const ready = useRef(false); // never write a backup before the saved data has been read
   const indexReadyRef = useRef(false);
   const [lastBackup, setLastBackup] = useState<number | null>(null);
@@ -888,7 +888,7 @@ function InkShelfApp(): React.JSX.Element {
       }),
     [libs, lib, books, meta, libData],
   );
-  // ---------- the book details sheet (Document/InkShelf/InkShelf books.xlsx), filled in on a computer ----------
+  // ---------- the book details sheet (Document/PurrinkShelf/PurrinkShelf books.xlsx), filled in on a computer ----------
   const sheetPath = `${DEFAULT_BACKUP_DIR}/${XLSX_NAME}`;
   const csvPath = `${DEFAULT_BACKUP_DIR}/${SHEET_NAME}`;
   const sheetMtime = async () => (await listDir(DEFAULT_BACKUP_DIR)).find(e => e.name === XLSX_NAME)?.mtime || 0;
@@ -1029,7 +1029,7 @@ function InkShelfApp(): React.JSX.Element {
       colls = wb.Collections || null;
     }
     if (!books.length && !colls) {
-      if (!quiet) setMessage(`There's no sheet yet. Tap "Make the sheet" first; it is saved as Document › InkShelf › ${XLSX_NAME}.`);
+      if (!quiet) setMessage(`There's no sheet yet. Tap "Make the sheet" first; it is saved as Document › PurrinkShelf › ${XLSX_NAME}.`);
       return 0;
     }
     let changed = 0;
@@ -1277,7 +1277,7 @@ function InkShelfApp(): React.JSX.Element {
   async function importSites() {
     let picked = '';
     try {
-      const r: any = await FileSelector.selectFile({selectType: 1, suffixList: ['csv'], maxNum: 1, title: 'Pick your Goodreads or StoryGraph export (.csv)', needSelectFolder: DEFAULT_BACKUP_DIR.replace(/\/InkShelf$/, ''), rightButtonText: 'OK'});
+      const r: any = await FileSelector.selectFile({selectType: 1, suffixList: ['csv'], maxNum: 1, title: 'Pick your Goodreads or StoryGraph export (.csv)', needSelectFolder: DEFAULT_BACKUP_DIR.replace(/\/PurrinkShelf$/, ''), rightButtonText: 'OK'});
       const list: any[] = Array.isArray(r) ? r : r?.result || [];
       picked = list.length ? String(list[0]).replace(/^file:\/\//, '') : '';
     } catch (e) {
@@ -1335,14 +1335,14 @@ function InkShelfApp(): React.JSX.Element {
     const wl = (app.wishlist || []).map(w => ({title: w.title, author: w.author, added: w.added, shelf: 'to-read', shelves: [], rating: undefined, read: undefined, review: w.note}));
     const path = `${DEFAULT_BACKUP_DIR}/${SITE_EXPORT}`;
     const ok = await writeText(path, goodreadsCsv([...rows, ...wl]));
-    say(ok ? `Saved ${rows.length + wl.length} books: Document › InkShelf › ${SITE_EXPORT}` : "Couldn't save the file");
+    say(ok ? `Saved ${rows.length + wl.length} books: Document › PurrinkShelf › ${SITE_EXPORT}` : "Couldn't save the file");
   }
   /** list a paper book: a small .paper file in the library's "Paper books" folder holds its place */
   async function addPaperBook(l: Lib, title: string, author: string) {
     const safe = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
     if (!safe) return;
     const rel = `${PAPER_DIR}/${safe}.paper`;
-    const ok = await writeText(`${l.path}/${rel}`, JSON.stringify({app: 'InkShelf', paper: true, title, author: author || undefined, added: Date.now()}));
+    const ok = await writeText(`${l.path}/${rel}`, JSON.stringify({app: 'PurrinkShelf', paper: true, title, author: author || undefined, added: Date.now()}));
     if (!ok) {
       setMessage(`Couldn't save it in "${l.name}" (the card may be read-only). Try another library.`);
       return;
@@ -1919,7 +1919,7 @@ function InkShelfApp(): React.JSX.Element {
           onExclude={l => setScreen({kind: 'exclude', lib: l.path, path: ''})}
           sheet={{
             when: app.sheetAt || null,
-            onMake: async () => say((await exportSheet()) ? `Saved: Document › InkShelf › ${XLSX_NAME}` : "Couldn't make the sheet"),
+            onMake: async () => say((await exportSheet()) ? `Saved: Document › PurrinkShelf › ${XLSX_NAME}` : "Couldn't make the sheet"),
             onRead: () => importSheet(),
             onSiteImport: importSites,
             onSiteExport: exportSites,
@@ -3803,7 +3803,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Btn small icon="text" label="Read the full license" onPress={() => { setLicPg(0); setPage('license'); }} />
           </View>
           {sec('Privacy')}
-          {line('No internet: no accounts, ads or tracking, and nothing is uploaded. Your books are only read, never changed. Your details stay on this Supernote (in each library and in Document › InkShelf).')}
+          {line('No internet: no accounts, ads or tracking, and nothing is uploaded. Your books are only read, never changed. Your details stay on this Supernote (in each library and in Document › PurrinkShelf).')}
           {sec('Made by')}
           {line(`Lynn-uwu. Designed and tested on a Nomad, and vibe-coded with Claude (an AI by Anthropic). Ideas and bug reports: ${SOURCE} › Issues.`)}
           {line('Built with React Native and sn-plugin-lib (both MIT licensed). Opening books follows supernote-plugin-research and supernote-dashboard.')}
@@ -4644,7 +4644,7 @@ function DataPage(props: {
         <Text style={st.small}>{sheet.when ? `Updated ${ago(sheet.when)}` : ''}</Text>
       </View>
       <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
-        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › InkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. PurrinkShelf reads the changes by itself.`}</Text>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={4}>{`Fill in many books at once on a computer: open Document › PurrinkShelf › ${XLSX_NAME} in Excel or Google Sheets, then copy it back. PurrinkShelf reads the changes by itself.`}</Text>
         <View style={{flexDirection: 'row', marginTop: px(8)}}>
           <Btn small icon="save" label="Make the sheet" onPress={sheet.onMake} style={{flex: 1}} />
           <Btn small icon="restore" label="Read changes now" onPress={sheet.onRead} style={{flex: 1, marginLeft: px(8)}} />

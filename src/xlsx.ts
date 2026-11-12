@@ -1,4 +1,4 @@
-// The book sheet as a real Excel file (InkShelf books.xlsx): drop-down lists for categories,
+// The book sheet as a real Excel file (PurrinkShelf books.xlsx): drop-down lists for categories,
 // genres, tags, reading status and collections, so values are picked instead of typed again.
 // Works in Excel, Google Sheets, Numbers and LibreOffice.
 

@@ -1,4 +1,4 @@
-// Records a walkthrough of every InkShelf screen: before/after screenshots of each tap, with captions.
+// Records a walkthrough of every PurrinkShelf screen: before/after screenshots of each tap, with captions.
 const {chromium} = require('playwright'); const path = require('path'); const fs = require('fs');
 const out = process.argv[2]; fs.mkdirSync(out, {recursive: true});
 const steps = []; let n = 0; let chapter = '';
@@ -26,7 +26,7 @@ const steps = []; let n = 0; let chapter = '';
   const type = async (loc, text, caption, dur = 3.0) => {
     try { await loc.waitFor({timeout: 4000}); const bb = await loc.boundingBox(); steps.push({img: await snap(), caption, chapter, dur: 1.0, ring: bb}); await loc.fill(text); await p.waitForTimeout(500); steps.push({img: await snap(), caption, chapter, dur}); } catch (e) { console.log('SKIP', caption, String(e).split('\n')[0]); }
   };
-  // a drawn card (how to open InkShelf, a laptop with the sheet…) shown like a screen
+  // a drawn card (how to open PurrinkShelf, a laptop with the sheet…) shown like a screen
   const pg2 = await b.newPage({viewport: {width: 702, height: 936}, deviceScaleFactor: 2});
   const card = async (html, caption, dur = 4.2) => {
     await pg2.setContent(`<html><head><style>body{margin:0;width:702px;height:936px;font-family:Inter,Segoe UI,Arial,sans-serif;background:#f4f1ea;color:#111;overflow:hidden}
@@ -44,7 +44,7 @@ const steps = []; let n = 0; let chapter = '';
     const f = `f${String(++n).padStart(3, '0')}.jpg`; await pg2.screenshot({path: path.join(out, f), type: 'jpeg', quality: 92});
     steps.push({img: f, caption, chapter, dur});
   };
-  // the sheet InkShelf wrote (.xlsx entries): rows of cells, by reading its inline strings
+  // the sheet PurrinkShelf wrote (.xlsx entries): rows of cells, by reading its inline strings
   const sheetRows = xml => (xml.match(/<row\b[\s\S]*?<\/row>/g) || []).map(r => { const o = {}; for (const c of r.matchAll(/<c r="([A-Z]+)\d+"[^>]*>(?:<is><t[^>]*>([\s\S]*?)<\/t><\/is>)?<\/c>/g)) o[c[1]] = (c[2] || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"'); return o; });
   const laptop = (rows, cols, opts) => {
     const head = rows[0];
@@ -56,7 +56,7 @@ const steps = []; let n = 0; let chapter = '';
       const v = (opts.override && opts.override[i + ',' + cols[j]]) || r[k] || '';
       return `<td class="${i === 0 ? 'h' : ''} ${sel ? 's' : ''} ${isNew ? 'new' : ''}">${v.replace(/</g, '&lt;')}${sel && opts.drop ? `<div class=drop>${opts.drop.map(o => `<div class="opt ${o === opts.pick ? 'on' : ''}">${o}</div>`).join('')}</div>` : ''}</td>`;
     }).join('')}</tr>`).join('');
-    return `<div class=lap><div class=scr><div class=bar>InkShelf books.xlsx — Excel / Google Sheets</div><div class=fx>${opts.fx || ''}</div><table><colgroup><col style="width:20px">${cols.map(c => `<col style="width:${c === 'Description' ? 210 : c === 'Title' ? 150 : 80}px">`).join('')}</colgroup><tr><th></th>${L.map(k => `<th>${k}</th>`).join('')}</tr>${body}</table></div><div class=base></div></div>`;
+    return `<div class=lap><div class=scr><div class=bar>PurrinkShelf books.xlsx — Excel / Google Sheets</div><div class=fx>${opts.fx || ''}</div><table><colgroup><col style="width:20px">${cols.map(c => `<col style="width:${c === 'Description' ? 210 : c === 'Title' ? 150 : 80}px">`).join('')}</colgroup><tr><th></th>${L.map(k => `<th>${k}</th>`).join('')}</tr>${body}</table></div><div class=base></div></div>`;
   };
   const quiet = async () => { await p.waitForTimeout(5200); }; // let messages clear
   const outside = () => p.mouse.click(350, 12);
@@ -68,11 +68,11 @@ const steps = []; let n = 0; let chapter = '';
 
   await p.goto(U('?lib=2&state=1&reading=1&goal=1')); await p.waitForTimeout(1600);
   ch('Getting started');
-  await card(`<div class=wrap><p class=ht>Opening InkShelf</p><p class=p>Plugins live inside Supernote's toolbar, so open any book or note first, then tap the InkShelf button in the toolbar.</p>
+  await card(`<div class=wrap><p class=ht>Opening PurrinkShelf</p><p class=p>Plugins live inside Supernote's toolbar, so open any book or note first, then tap the PurrinkShelf button in the toolbar.</p>
     <div class=dev><div class=tb><div class=ic>✎</div><div class=ic>⌫</div><div class="ic on">▥</div><div class=ic>⋯</div></div><div class=pg></div></div>
-    <p class=p>If that file is one of your books, InkShelf notes it as the one you are reading (Continue, reading days).</p></div>`, 'Open any book or note, then tap the InkShelf button in its toolbar.', 5);
+    <p class=p>If that file is one of your books, PurrinkShelf notes it as the one you are reading (Continue, reading days).</p></div>`, 'Open any book or note, then tap the PurrinkShelf button in its toolbar.', 5);
   ch('Home');
-  await show('Opening InkShelf from a book also notes which book you are reading. Messages are see-through and stack up.', 3.6);
+  await show('Opening PurrinkShelf from a book also notes which book you are reading. Messages are see-through and stack up.', 3.6);
   await quiet(); await quiet();
   await show('Home: search, recent searches, recently read and genres.');
   await type(p.getByPlaceholder('Search titles'), 'moon', 'Search any title in every library.');
@@ -182,7 +182,15 @@ const steps = []; let n = 0; let chapter = '';
 
   ch('Settings');
   await tap(L('Settings'), 'The gear opens Settings. Every change applies straight away.');
-  await tap(T('Show on Profile').locator('..').getByText(/Reading goal/).first().or(p.getByText(/Reading goal/).last()), 'Tap to show or hide each part of the Profile (here the reading goal goes off).');
+  await tap(T('Show and hide'), 'Show and hide: each part of the Profile and book pages, with what it does.');
+  await tap(p.getByText('Off', {exact: true}).first(), 'Tap On or Off. Off only hides it; nothing is deleted (here the reading goal comes on).');
+  await outside(); await p.waitForTimeout(300);
+  await tap(T('Appearance'), 'Appearance: Original, or Cats.');
+  await tap(T('Cats'), 'Cats: hand-drawn lines, cat toggles, paw prints and little cats around the pages.', 3.6);
+  await outside(); await p.waitForTimeout(300);
+  await show('Even Settings now has hand-drawn lines and cat toggles.', 2.6);
+  await tap(L('About, license and privacy'), 'About: the version, the license (in short and in full), privacy and credits.', 3.4);
+  await outside(); await p.waitForTimeout(300);
   await tap(T('Activity'), 'Activity keeps every message, so nothing is missed.');
   await outside(); await p.waitForTimeout(300);
   await tap(T('Data and storage'), 'Data and storage: your libraries, refresh, leave folders out.');
@@ -192,8 +200,8 @@ const steps = []; let n = 0; let chapter = '';
   ch('On a computer');
   await tap(T('Data and storage'), 'Filling in many books is quicker on a computer.');
   await tap(T('Backup and sheet'), 'Backup and sheet:');
-  await tap(T('Make the sheet'), 'Make the sheet saves Document › InkShelf › InkShelf books.xlsx with every book.');
-  const zipPath = '/storage/emulated/0/Document/InkShelf/InkShelf books.xlsx';
+  await tap(T('Make the sheet'), 'Make the sheet saves Document › PurrinkShelf › PurrinkShelf books.xlsx with every book.');
+  const zipPath = '/storage/emulated/0/Document/PurrinkShelf/PurrinkShelf books.xlsx';
   const entries = await p.evaluate(pth => window.__files[pth], zipPath);
   if (entries) {
     const rows = sheetRows(entries['xl/worksheets/sheet1.xml']);
@@ -202,7 +210,7 @@ const steps = []; let n = 0; let chapter = '';
     const genres = listRows.slice(1).map(r => r[gk]).filter(Boolean).slice(0, 9);
     const cols = ['Title', 'Genre 1', 'Tag 1', 'Reading', 'Description'];
     const crane = rows.findIndex(r => Object.values(r).includes('Crane and the Clockmaker'));
-    await card(`<div class=wrap><p class=ht>Copy it to your computer</p><ol class=steps><li>Connect the Supernote by USB, or use Supernote Cloud / Browse &amp; Access.</li><li>Open <b>Document › InkShelf › InkShelf books.xlsx</b> in Excel, Google Sheets or Numbers.</li><li>Fill in what you like, save, and copy it back to the same place.</li></ol></div>`, 'Copy the file to your computer (USB, Supernote Cloud or Browse & Access).', 4.6);
+    await card(`<div class=wrap><p class=ht>Copy it to your computer</p><ol class=steps><li>Connect the Supernote by USB, or use Supernote Cloud / Browse &amp; Access.</li><li>Open <b>Document › PurrinkShelf › PurrinkShelf books.xlsx</b> in Excel, Google Sheets or Numbers.</li><li>Fill in what you like, save, and copy it back to the same place.</li></ol></div>`, 'Copy the file to your computer (USB, Supernote Cloud or Browse & Access).', 4.6);
     await card(`<div class=wrap><p class=ht>Pick, don't type</p></div>` + laptop(rows, cols, {sel: [crane, 'Genre 1'], drop: genres, pick: genres[2], fx: 'Genre 1'}), 'Every genre, tag, category, status and collection is a drop-down, so you pick instead of typing.', 4.6);
     const desc = 'An apprentice clockmaker repairs a crane made of brass, and it starts telling her the town\'s secrets.';
     await card(`<div class=wrap><p class=ht>Descriptions the easy way</p></div>` + laptop(rows, cols, {sel: [crane, 'Description'], edited: [[crane, 'Genre 1'], [crane, 'Description']], override: {[crane + ',Genre 1']: genres[2], [crane + ',Description']: desc}, fx: desc}), 'Paste descriptions from anywhere into the Description column. Leave a cell empty to keep it; "-" clears it.', 5);
@@ -211,7 +219,7 @@ const steps = []; let n = 0; let chapter = '';
     const rowNo = crane + 1;
     const xml = entries['xl/worksheets/sheet1.xml'].replace(new RegExp(`(<row r="${rowNo}"[^>]*>[\\s\\S]*?)(</row>)`), (m, a, z) => a + `<c r="${k('Genre 1')}${rowNo}" t="inlineStr"><is><t>${genres[2]}</t></is></c><c r="${k('Description')}${rowNo}" t="inlineStr"><is><t>${desc}</t></is></c>` + z);
     await p.evaluate(([pth, x]) => { window.__files[pth] = {...window.__files[pth], 'xl/worksheets/sheet1.xml': x}; (window.__mt = window.__mt || {})[pth] = Date.now() + 10000; }, [zipPath, xml]);
-    await tap(T('Read changes now'), 'Back on the Supernote: Read changes now (it also reads them by itself when InkShelf opens).', 3.4);
+    await tap(T('Read changes now'), 'Back on the Supernote: Read changes now (it also reads them by itself when PurrinkShelf opens).', 3.4);
     if (await p.getByLabel('OK', {exact: true}).count()) { await p.getByLabel('OK', {exact: true}).first().click(); await p.waitForTimeout(300); }
     await quiet();
   }
@@ -219,7 +227,7 @@ const steps = []; let n = 0; let chapter = '';
   await tap(T('Import their file'), '…or bring in their export: status, dates, ratings and reviews; books you lack go on the wishlist.', 4.2);
   for (let i = 0; i < 2; i++) if (await p.getByLabel('OK', {exact: true}).count()) { await p.getByLabel('OK', {exact: true}).first().click(); await p.waitForTimeout(300); }
   await outside(); await p.waitForTimeout(400);
-  if (await p.getByText('Show on Profile').count()) { await outside(); await p.waitForTimeout(400); }
+  if (await p.getByText('Changes apply straight away.').count()) { await outside(); await p.waitForTimeout(400); }
   await tab('Library').click(); await p.waitForTimeout(500);
   await tap(T('Crane and the Clockmaker'), 'The book now has the genre and description from the sheet.', 3.6);
   await outside(); await p.waitForTimeout(300);
@@ -230,7 +238,7 @@ const steps = []; let n = 0; let chapter = '';
   await tap(T('How to use'), 'How to use: short guides with search.');
   await type(p.getByPlaceholder(/Search/).first(), 'paper', 'Search the guides.');
   await tap(T('Paper books'), 'Each guide is a few steps.');
-  await show('That\'s InkShelf.', 2.5);
+  await show('That\'s PurrinkShelf.', 2.5);
   fs.writeFileSync(path.join(out, 'steps.json'), JSON.stringify(steps, null, 1));
   console.log('steps', steps.length, 'seconds', steps.reduce((a, s) => a + s.dur, 0).toFixed(0));
   await b.close();

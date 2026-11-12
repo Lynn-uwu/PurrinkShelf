@@ -84,5 +84,5 @@ jobs:
           [ -f "$NOTES" ] || NOTES=/dev/null
           cp build/outputs/*.snplg /tmp/PurrinkShelf.snplg
           FILES="/tmp/PurrinkShelf.snplg"
-          [ -f docs/InkShelf-walkthrough.mp4 ] && FILES="$FILES docs/InkShelf-walkthrough.mp4"
+          [ -f docs/PurrinkShelf-walkthrough.mp4 ] && FILES="$FILES docs/PurrinkShelf-walkthrough.mp4"
           gh release create "$TAG" --target "$GITHUB_SHA" --title "PurrinkShelf ${TAG#v}" --notes-file "$NOTES" $FILES

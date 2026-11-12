@@ -1,4 +1,4 @@
-// InkShelf icons (assets/icons, drawn as SVG in tools/icons, 24px grid, 1.5 stroke).
+// PurrinkShelf icons (assets/icons, drawn as SVG in tools/icons, 24px grid, 1.5 stroke).
 /* eslint-disable */
 export const ICONS = {
   'arrow-right': require('../assets/icons/arrow-right.png'),
