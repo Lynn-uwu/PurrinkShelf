@@ -30,7 +30,7 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 **Each book**
 - Its own page with the cover, description, volumes and a **Start / Continue** button that reopens the volume you were on.
 - Edit the title, author, categories, genres, tags, content warnings, series, language, status, cover, where you got it, and who you lent it to.
-- Fills empty details by itself from inside the EPUB, or from Calibre's `metadata.opf` and `cover.jpg` next to the book. It never overwrites what you typed.
+- Fills empty details by itself from inside the EPUB, from Calibre's `metadata.opf` and `cover.jpg` next to the book, or from your own book list (`_Library Data/library.csv` with title, genres, summary and files). It never overwrites what you typed.
 - Reading status (plan to read, reading, completed…), with the date of every change.
 - Up to five sticky notes per book, each with an optional 1–5 star rating. The book's rating is their average.
 - Flags the same file twice in one folder, and sends you to the file manager to decide which to keep.

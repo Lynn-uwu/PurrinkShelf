@@ -220,6 +220,7 @@ export type MetaStore = {
   series?: {[dir: string]: boolean}; // folder -> one book (true) or never combine (false)
   groups?: {[id: string]: {title: string; files: string[]}}; // books combined by hand
   missing?: {[key: string]: number}; // books whose file disappeared (since when)
+  lists?: {[csvPath: string]: number}; // book lists (_Library Data/library.csv) already read, by their file date
   savedAt?: number;
 };
 

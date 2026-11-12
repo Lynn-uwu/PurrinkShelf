@@ -4,6 +4,8 @@
 import {NativeModules} from 'react-native-web';
 
 const SD = '/storage/ABCD-1234';
+// ?booklist=1: a book list made on a computer in Novels/_Library Data/library.csv (like the one the build_index.py script keeps)
+const BOOKLIST = 'key,title,origin,genres,summary,files\ncrane,Crane and the Clockmaker,Chinese,Fantasy; Steampunk; Slice of Life,"An apprentice clockmaker repairs a crane made of brass.\nIt starts telling her the town\'s secrets.",Chinese Novels/Crane and the Clockmaker.epub\nriver,River of Small Lights,Chinese,Drama; Romance,"Two lantern sellers on opposite banks of a river.",Chinese Novels/River of Small Lights.epub\n';
 const tree = {
   '/storage': ['emulated/', 'self/', 'ABCD-1234/'],
   [`${SD}`]: ['Novels/', 'Books/', 'Music/'],
@@ -12,6 +14,7 @@ const tree = {
   '/storage/emulated/0/Document': ['Welcome.pdf'],
   [`${SD}/Books`]: ['Garden Notes.epub'],
   [`${SD}/Music`]: [],
+  [`${SD}/Novels/_Library Data`]: new URLSearchParams(location.search).get('booklist') ? ['library.csv'] : [],
   [`${SD}/Novels`]: ['Chinese Novels/', 'Korean Novels/', 'Calibre/', 'Paper books/', '_Library Data/'],
   [`${SD}/Novels/Calibre`]: ['Leviathan Wakes (12)/'],
   [`${SD}/Novels/Calibre/Leviathan Wakes (12)`]: ['Leviathan Wakes - James S. A. Corey.epub', 'metadata.opf', 'cover.jpg'],
@@ -73,7 +76,7 @@ function svgCover(title) {
 window.__opened = [];
 NativeModules.InkShelf = {
   listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})).concat(Object.keys(files).filter(f => f.slice(0, f.lastIndexOf('/')) === path && !(tree[path] || []).includes(f.slice(f.lastIndexOf('/') + 1))).map(f => ({name: f.slice(f.lastIndexOf('/') + 1), path: f, isDir: false, size: 1, mtime: (window.__mt || {})[f] || 1}))),
-  readText: async path => (path.endsWith('metadata.opf') ? CAL_OPF : path.endsWith('settings.json') && window.__settings && !files[path] ? window.__settings : path.endsWith('.csv') ? GR_CSV : path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
+  readText: async path => (path.endsWith('/_Library Data/library.csv') && new URLSearchParams(location.search).get('booklist') ? BOOKLIST : path.endsWith('metadata.opf') ? CAL_OPF : path.endsWith('settings.json') && window.__settings && !files[path] ? window.__settings : path.endsWith('.csv') ? GR_CSV : path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
   writeZip: async (path, entries) => { files[path] = entries; (window.__mt = window.__mt || {})[path] = Date.now(); window.__zip = entries; return true; },
   readZip: async path => files[path] || null,
   appendText: async (p, t) => { console.log('LOG', t.trim()); return true; },

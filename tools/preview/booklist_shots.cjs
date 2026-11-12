@@ -1,0 +1,14 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots24'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  p.on('console', m => { if (/book list/.test(m.text())) console.log(m.text()); });
+  const tab = n => p.getByTestId('taskbar').getByLabel(n, {exact: true});
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1&booklist=1'); await p.waitForTimeout(16000);
+  await p.screenshot({path: path.join(out, '1-home.png')});
+  await tab('Library').click(); await p.waitForTimeout(800);
+  await p.getByText('Crane and the Clockmaker').first().click(); await p.waitForTimeout(800);
+  await p.screenshot({path: path.join(out, '2-book.png')});
+  const log = await p.evaluate(() => (window.__files || {})['/storage/emulated/0/Document/PurrinkShelf/PurrinkShelf-log.txt'] || '');
+  console.log(String(log).split('\n').filter(l => /book list/.test(l)).join('\n'));
+  await b.close(); })();

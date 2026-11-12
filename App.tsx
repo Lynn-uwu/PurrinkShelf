@@ -6,7 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {bareTitle, goodreadsCsv, readSiteExport} from './src/sites';
+import {bareTitle, goodreadsCsv, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
@@ -660,7 +660,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       setMeta(r.meta);
       metaRef.current = r.meta;
     }
-    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => wishesArrived(l, bs)), 300);
+    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => { wishesArrived(l, bs); readBookLists(l, bs).catch(e => log('book list failed', String(e))); }), 300);
     return {...r, books: bs};
   }
   /** fill empty details from what is written inside each EPUB (author, description, language); never overwrites yours */
@@ -727,6 +727,70 @@ function PurrinkShelfApp(): React.JSX.Element {
     } finally {
       probing.current = false;
     }
+  }
+  /**
+   * A book list made on a computer: "_Library Data/library.csv" in the library (or in one of its top folders),
+   * with columns like title, author, origin or language, genres, tags, summary or description, and files
+   * (the book's path inside that folder). It fills empty details and adds missing genres and tags, once per change of the file.
+   */
+  async function readBookLists(l: Lib, bs: Book[], force = false) {
+    const top = await listDir(l.path).catch(() => [] as Entry[]);
+    const spots = [l.path, ...top.filter(e => e.isDir && !e.name.startsWith('_') && !e.name.startsWith('.')).map(e => e.path)];
+    const cur0 = l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta;
+    if (!cur0) return;
+    const patches: {[k: string]: Meta} = {};
+    const stamps: {[p: string]: number} = {};
+    let rowsSeen = 0;
+    for (const dir of spots) {
+      const csvDir = `${dir}/_Library Data`;
+      const e = (await listDir(csvDir).catch(() => [] as Entry[])).find(x => x.name.toLowerCase() === 'library.csv');
+      if (!e) continue;
+      if (!force && (cur0.lists || {})[e.path] === e.mtime) continue;
+      stamps[e.path] = e.mtime || Date.now();
+      const rows = parseTable((await readText(e.path)) || '');
+      const col = (r: {[h: string]: string}, ...names: string[]) => {
+        for (const n of names) { const k = Object.keys(r).find(h => h.toLowerCase() === n); if (k && r[k]) return r[k].trim(); }
+        return '';
+      };
+      const items = (v: string) => v.split(/[;,|]/).map(x => x.trim()).filter(Boolean);
+      for (const r of rows) {
+        rowsSeen++;
+        const rels = col(r, 'files', 'file', 'path').split(/[;|]/).map(x => x.trim()).filter(Boolean).map(f => f.replace(/\\/g, '/').replace(/^\/+/, ''));
+        const title = col(r, 'title', 'name');
+        let b = rels.length ? bs.find(x => x.files.some(f => rels.some(rel => f === `${dir}/${rel}` || f.endsWith('/' + rel)))) : undefined;
+        if (!b && title) b = bs.find(x => norm(shownTitle(x, cur0.books[x.key])) === norm(title) || norm(x.fileTitle) === norm(title));
+        if (!b || b.missing) continue;
+        const m = {...(cur0.books[b.key] || {}), ...(patches[b.key] || {})};
+        const p: Meta = {...(patches[b.key] || {})};
+        const genres = items(col(r, 'genres', 'genre'));
+        const tags = items(col(r, 'tags', 'tag'));
+        const addNew = (have: string[] | undefined, more: string[]) => {
+          const h = have || [];
+          const extra = more.filter(x => !h.some(y => y.toLowerCase() === x.toLowerCase()));
+          return extra.length ? [...h, ...extra] : null;
+        };
+        const g = addNew(m.genres, genres); if (g) p.genres = g;
+        const t = addNew(m.tags, tags); if (t) p.tags = t;
+        const desc = col(r, 'summary', 'description');
+        if (!m.description && desc) p.description = desc.slice(0, 4000);
+        const au = col(r, 'author', 'authors');
+        if (!m.author && au && !authorOf(b, m)) p.author = au;
+        const lang = col(r, 'language', 'origin');
+        if (!m.language && lang) p.language = lang;
+        if (!m.title && title && norm(title) !== norm(b.fileTitle) && title !== shownTitle(b, m)) p.title = title;
+        if (Object.keys(p).length) patches[b.key] = p;
+      }
+    }
+    if (!Object.keys(stamps).length) return;
+    const cur = l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta || cur0;
+    const next: MetaStore = {...cur, books: {...cur.books}, lists: {...(cur.lists || {}), ...stamps}};
+    Object.entries(patches).forEach(([k, p]) => (next.books[k] = {...next.books[k], ...p}));
+    await saveMeta(l.path, next, bs);
+    setLibData(d => ({...d, [l.path]: {books: bs, meta: next}}));
+    if (l.path === libRef.current?.path) { metaRef.current = next; setMeta(next); }
+    const n = Object.keys(patches).length;
+    log('book list', l.name, rowsSeen, 'rows', n, 'books filled');
+    if (n || force) say(n ? `${l.name}: filled in ${n} book${n === 1 ? '' : 's'} from your book list (_Library Data › library.csv)` : `${l.name}: the book list has nothing new`);
   }
   /** books from the wishlist that have now turned up in a library */
   const wishRef = useRef<(l: Lib, bs: Book[]) => void>(() => {});

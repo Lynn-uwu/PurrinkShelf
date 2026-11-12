@@ -147,6 +147,13 @@ export const HELP: HelpTopic[] = [
       'Keep both hides the warning. A small 2× stays next to the title: tap it to jump to the other copy.',
       'The filter panel\'s More tab has Possible duplicate.',
     ]},
+  {id: 'booklist', title: 'A book list from your computer (library.csv)', icon: 'list', words: 'csv book list library.csv _library data genres tags summary author origin import computer catalog',
+    steps: [
+      'Keep a file named library.csv in a folder called _Library Data, inside a library (or inside one of its top folders, like Novels › _Library Data).',
+      'Columns PurrinkShelf understands: title, author, origin or language, genres, tags, summary or description, and files (the book\'s path from that folder, e.g. Chinese Novels/Book.epub; several volumes separated by |).',
+      'Genres and tags go in one cell, separated by ; or commas.',
+      'Each time the file changes, PurrinkShelf reads it when the library opens: it adds missing genres and tags and fills empty details. It never replaces what you typed.',
+    ]},
   {id: 'cloud', title: 'Edit the sheet with Supernote Cloud (no copying)', icon: 'save', words: 'supernote cloud sync auto sync partner app computer laptop sheet spreadsheet excel google sheets xlsx no copying usb drive',
     steps: [
       'With Supernote Cloud, the sheet goes back and forth by itself: no USB, no copying.',
