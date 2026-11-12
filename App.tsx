@@ -236,6 +236,16 @@ function InkShelfApp(): React.JSX.Element {
   }, [screen]);
   const [showSettings, setShowSettings] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  // a card opened from Settings closes back to Settings (one layer at a time), not to the page underneath
+  const backToSettings = useRef(false);
+  const fromSettings = (open: () => void) => { setShowSettings(false); backToSettings.current = true; open(); };
+  // went somewhere else from that card (opened a library, a book…): nothing to go back to
+  useEffect(() => {
+    if (!['libraries', 'missing', 'exclude', 'browse', 'pickroot', 'help'].includes(screen.kind)) backToSettings.current = false;
+  }, [screen.kind]);
+  const closedLayer = () => {
+    if (backToSettings.current) { backToSettings.current = false; setShowSettings(true); }
+  };
   const [paperOpen, setPaperOpen] = useState(false);
   const [libs, setLibs] = useState<Lib[]>([]);
   const [lib, setLib] = useState<Lib | null>(null);
@@ -408,7 +418,8 @@ function InkShelfApp(): React.JSX.Element {
   setDashAuthor(settings.dashAuthor !== false);
   const titleOf = (b: Book) => shownTitle(b, metaOf(b));
 
-  const lastBase = useRef<Screen>({kind: 'home'}); // the page under a card (Data and storage)
+  const lastBase = useRef<Screen>({kind: 'home'});
+  const beforeHelp = useRef<Screen>({kind: 'home'}); // the page How to use was opened from // the page under a card (Data and storage)
   const libRef = useRef<Lib | null>(null);
   libRef.current = lib;
   async function openLibrary(l: Lib, then?: Screen, filter?: TagState) {
@@ -1427,12 +1438,12 @@ function InkShelfApp(): React.JSX.Element {
           settings={settings}
           change={changeSettings}
           onClose={() => setShowSettings(false)}
-          onLibraries={() => { setShowSettings(false); setScreen({kind: 'libraries'}); }}
+          onLibraries={() => fromSettings(() => setScreen({kind: 'libraries'}))}
           missing={settings.missing}
-          onHelp={() => { setShowSettings(false); setScreen({kind: 'help'}); }}
-          onActivity={() => { setShowSettings(false); setShowActivity(true); }}
+          onHelp={() => fromSettings(() => setScreen({kind: 'help'}))}
+          onActivity={() => fromSettings(() => setShowActivity(true))}
           activityCount={(app.activity || []).length}
-          onPerms={async () => { setShowSettings(false); setPerm(await permStatus()); setPermOpen(true); }}
+          onPerms={() => fromSettings(async () => { setPerm(await permStatus()); setPermOpen(true); })}
           permNote={`${Object.values(perm).filter(v => v >= 1).length} of ${PERMS.length} allowed`}
           libs={libs}
           lib={lib}
@@ -1454,7 +1465,7 @@ function InkShelfApp(): React.JSX.Element {
         </View>
       ) : null}
       {paperOpen ? <PaperCard libs={libs} lib={lib} onClose={() => setPaperOpen(false)} onAdd={addPaperBook} /> : null}
-      {showActivity ? <ActivityCard items={app.activity || []} onClose={() => setShowActivity(false)} onClear={() => changeApp(a => ({...a, activity: []}))} /> : null}
+      {showActivity ? <ActivityCard items={app.activity || []} onClose={() => { setShowActivity(false); closedLayer(); }} onClear={() => changeApp(a => ({...a, activity: []}))} /> : null}
       {permOpen ? (
         <View style={st.overlay}>
           <View style={st.dialog}>
@@ -1476,11 +1487,11 @@ function InkShelfApp(): React.JSX.Element {
               );
             })}
             {Object.values(perm).every(v => v >= 2) && Object.keys(perm).length ? (
-              <Btn dark icon="check" label="All allowed" onPress={() => setPermOpen(false)} style={{marginTop: px(14)}} />
+              <Btn dark icon="check" label="All allowed" onPress={() => { setPermOpen(false); closedLayer(); }} style={{marginTop: px(14)}} />
             ) : (
               <>
                 <Btn dark icon="check" label="Allow all" onPress={allowAll} style={{marginTop: px(14)}} />
-                <Btn small label="Not now" onPress={() => setPermOpen(false)} style={{marginTop: px(10)}} />
+                <Btn small label="Not now" onPress={() => { setPermOpen(false); closedLayer(); }} style={{marginTop: px(10)}} />
               </>
             )}
             {readOnlyLibs.size ? (
@@ -1535,7 +1546,10 @@ function InkShelfApp(): React.JSX.Element {
   // ----- book page and edit page: a card over the page you came from (tap outside to close) -----
   let card: React.ReactNode = null;
   let view: Screen = screen;
-  if (!['libraries', 'book', 'edit', 'missing', 'exclude', 'browse', 'pickroot', 'coledit'].includes(screen.kind)) lastBase.current = screen;
+  if (!['libraries', 'book', 'edit', 'missing', 'exclude', 'browse', 'pickroot', 'coledit'].includes(screen.kind)) {
+    if (screen.kind !== 'help') beforeHelp.current = screen;
+    lastBase.current = screen;
+  }
   if (screen.kind === 'book' || screen.kind === 'edit') {
     view = {kind: screen.from || 'library'} as Screen;
     const close = () => setScreen(view);
@@ -1674,7 +1688,7 @@ function InkShelfApp(): React.JSX.Element {
   if (screen.kind === 'libraries') {
     // Data and storage opens as a card over the page you were on; closing it goes back there
     view = lastBase.current;
-    const closeData = () => setScreen(lastBase.current);
+    const closeData = () => { setScreen(lastBase.current); closedLayer(); };
     const dataOf = (l: Lib) => (l.path === lib?.path ? {books, meta} : libData[l.path]);
     const allMissing = libs.flatMap(l => { const d = dataOf(l); return d ? missingBooks(d.meta).map(b => ({l, b, m: d.meta.books[b.key]})) : []; });
     card = (
@@ -1740,7 +1754,7 @@ function InkShelfApp(): React.JSX.Element {
     const topic = HELP.find(t => t.id === tid);
     return shell(
       <>
-        <Header title="How to use InkShelf" left="Back" onLeft={() => setScreen(lib ? {kind: 'library'} : {kind: 'home'})} />
+        <Header title="How to use InkShelf" left="Back" onLeft={() => { setScreen(beforeHelp.current); closedLayer(); }} />
         <HelpPage q={helpQ} setQ={setHelpQ} onOpen={t => setScreen({kind: 'help', topic: t.id})} />
         {topic ? (
           <ModalCard onOutside={() => setScreen({kind: 'help'})}>
