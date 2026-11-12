@@ -41,8 +41,7 @@ const CAT_IMG = {
 // height / width of each picture
 const CAT_RATIO: {[k in keyof typeof CAT_IMG]: number} = {peek: 0.5349, ears: 0.4848, paw: 0.8213, loaf: 0.7054, sitting: 1.0231, sleepy: 0.8558, stretch: 0.9286};
 let CAT = false; // set from Settings on every render
-const CAT_EAR_L = require('./assets/cat/ear-left.png');
-const CAT_EAR_R = require('./assets/cat/ear-right.png');
+const TOGGLE_EARS = require('./assets/cat/toggle-ears.png'); // cut from tools/cats/toggle-source.png
 
 // ---------- the hand-drawn look (Settings › Look): every ink border becomes a slightly wobbly pen line ----------
 // The line pictures (tools/sketch/make.py) are cropped, never stretched, so the wobble looks the same on short and long edges.
@@ -185,20 +184,6 @@ const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTe
 const CatImg = ({name, w, style}: {name: keyof typeof CAT_IMG; w: number; h?: number; style?: any}) => (
   <Image source={CAT_IMG[name]} style={[{width: w, height: Math.round(w * CAT_RATIO[name]), pointerEvents: 'none'}, style]} resizeMode="contain" />
 );
-/** the bottom bar's round button (70 wide, its top 36 above the bar) wears an ear on each shoulder, tilted with the circle */
-const EAR = {w: px(36), h: px(20)}; // ear-left/right.png are about 84 x 44
-const Ears = () => {
-  const a = 52 * Math.PI / 180, d = px(41); // the ear's base tucks under the button's rim // angle from the top, distance from the circle's middle
-  const cy = -px(36) + px(35);
-  return (
-    <>
-      {[-1, 1].map(sd => (
-        <Image key={sd} source={sd < 0 ? CAT_EAR_L : CAT_EAR_R} resizeMode="contain"
-          style={{position: 'absolute', width: EAR.w, height: EAR.h, top: cy - d * Math.cos(a) - EAR.h / 2, left: '50%', marginLeft: sd * d * Math.sin(a) - EAR.w / 2, transform: [{rotate: `${sd * 30}deg`}], pointerEvents: 'none'} as any} />
-      ))}
-    </>
-  );
-};
 /** two little paw prints walking into a sticky note's bottom-left corner */
 const PawTrail = () => (
   <RNView pointerEvents="none" style={{position: 'absolute', left: px(8), bottom: px(6), width: px(44), height: px(34)}}>
@@ -299,8 +284,18 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
 
 function Pill({label, onPress, active, small}: {label: string; onPress?: () => void; active?: boolean; small?: boolean}) {
   return (
-    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive]}>
-      <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label}</Text>
+    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, CAT && {marginTop: px(5), marginBottom: px(3)}, CAT && active && {paddingLeft: px(6), overflow: 'visible'}]}>
+      {CAT && active ? (
+        // the Cats look: a switched-on toggle is a little black cat, ears on top and eyes where the tick was
+        <RNView style={{flexDirection: 'row', alignItems: 'center'}}>
+          <Image source={TOGGLE_EARS} style={{position: 'absolute', left: -px(1), top: -px(11), width: px(30), height: px(8)}} resizeMode="stretch" />
+          <RNView style={st.catEye} />
+          <RNView style={[st.catEye, {marginLeft: px(4), marginRight: px(7)}]} />
+          <Text style={[st.pillText, small && {fontSize: px(14)}, {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
+        </RNView>
+      ) : (
+        <Text style={[st.pillText, small && {fontSize: px(14)}, active && {color: '#ffffff'}]}>{label}</Text>
+      )}
     </Pressable>
   );
 }
@@ -3692,7 +3687,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
                 {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
                 <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
-                {CAT ? <Ears /> : null}
+                {CAT ? <CatImg name="ears" w={px(40)} style={{position: 'absolute', top: -px(36) - px(2), alignSelf: 'center'}} /> : null}
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -5673,6 +5668,7 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  catEye: {width: px(7), height: px(7), borderRadius: px(4), backgroundColor: '#ffffff'},
   descFrame: {flex: 1, borderWidth: 2.5, borderColor: BLACK, borderRadius: px(22), alignItems: 'center', justifyContent: 'center'},
   byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
   waitBar: {flexDirection: 'row', alignItems: 'center', height: px(62), marginHorizontal: px(12), marginTop: px(8), paddingHorizontal: px(12), borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(14)},
