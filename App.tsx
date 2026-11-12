@@ -10,8 +10,10 @@ import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_F
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
+import {Row, SHEET_NAME, list as cells, parseCsv, toCsv} from './src/sheet';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
+import {readText, writeText} from './src/native';
 import {Entry, copyImage, copyText, hasNative, listDir, openBook, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
@@ -281,7 +283,7 @@ function InkShelfApp(): React.JSX.Element {
   const saveWarned = useRef(false);
   async function allowAll() {
     for (const p of PERMS) {
-      if ((perm[p.id] || 0) >= 2) continue;
+      if ((perm[p.id] || 0) >= 1) continue; // already allowed: don't make Supernote ask again
       try {
         await PluginManager.requestPermission(p.id, `InkShelf needs this to ${p.why.toLowerCase()}.`);
       } catch (e) {}
@@ -349,6 +351,7 @@ function InkShelfApp(): React.JSX.Element {
 
   // ---------- backup file (Document/InkShelf by default): everything InkShelf wrote ----------
   const ready = useRef(false); // never write a backup before the saved data has been read
+  const indexReadyRef = useRef(false);
   const [lastBackup, setLastBackup] = useState<number | null>(null);
   async function restoreFrom(bk: Backup, dir: string) {
     log('restore from backup', dir, new Date(bk.savedAt).toISOString());
@@ -379,6 +382,7 @@ function InkShelfApp(): React.JSX.Element {
     }
     const ok = await writeBackup(settings.backupDir || DEFAULT_BACKUP_DIR, {libraries: libs, settings, state: app, metas});
     if (ok) setLastBackup(Date.now());
+    if (indexReadyRef.current) await syncSheet().catch(e => log('sheet failed', String(e)));
     else log('backup failed', settings.backupDir);
     return ok;
   };
@@ -579,7 +583,104 @@ function InkShelfApp(): React.JSX.Element {
       }),
     [libs, lib, books, meta, libData],
   );
+  // ---------- the book details sheet (Document/InkShelf/InkShelf books.csv), filled in on a computer ----------
+  const sheetPath = `${DEFAULT_BACKUP_DIR}/${SHEET_NAME}`;
+  const sheetMtime = async () => (await listDir(DEFAULT_BACKUP_DIR)).find(e => e.name === SHEET_NAME)?.mtime || 0;
+  async function exportSheet(): Promise<boolean> {
+    const rows: Row[] = index.map(f => ({
+      Title: f.meta.title || f.book.fileTitle,
+      Library: f.lib.name,
+      Folder: f.book.dir,
+      File: (f.book.files[0] || '').split('/').pop() + (f.book.files.length > 1 ? ` (+${f.book.files.length - 1})` : ''),
+      Categories: catsOf(f.book, f.meta).join(', '),
+      Genres: (f.meta.genres || []).join(', '),
+      Tags: (f.meta.tags || []).join(', '),
+      Language: f.meta.language || '',
+      Status: f.meta.status || '',
+      'Completely translated': f.meta.translated || '',
+      Reading: f.meta.reading ? readLabel(f.meta.reading.state) : '',
+      Favourite: f.meta.fav ? 'Yes' : '',
+      Description: f.meta.description || '',
+      ID: `${f.lib.path}|${f.book.key}`,
+    }));
+    if (!rows.length) return false;
+    const ok = await writeText(sheetPath, toCsv(rows));
+    if (ok) {
+      const t = await sheetMtime();
+      changeApp(a => ({...a, sheetAt: t || Date.now()}));
+    }
+    return ok;
+  }
+  /** what one row of the sheet changes: an empty cell changes nothing, "-" clears it */
+  const rowPatch = (r: Row, b: Book, old: Meta): Meta => {
+    const p: Meta = {};
+    const v = (k: keyof Row) => (r[k] ?? '').trim();
+    const clear = (k: keyof Row) => v(k) === '-';
+    if (v('Title')) p.title = clear('Title') || v('Title') === b.fileTitle ? undefined : v('Title');
+    if (v('Categories')) {
+      const c = clear('Categories') ? [] : cells(v('Categories'));
+      p.categories = JSON.stringify(c) === JSON.stringify(folderCats(b)) ? undefined : c;
+    }
+    if (v('Genres')) p.genres = clear('Genres') ? [] : cells(v('Genres'));
+    if (v('Tags')) p.tags = clear('Tags') ? [] : cells(v('Tags'));
+    if (v('Language')) p.language = clear('Language') ? undefined : v('Language');
+    if (v('Status')) p.status = clear('Status') ? undefined : v('Status');
+    if (v('Description')) p.description = clear('Description') ? undefined : v('Description');
+    if (v('Completely translated')) p.translated = clear('Completely translated') ? undefined : /^(y|yes|true|1|✓)$/i.test(v('Completely translated')) ? 'Yes' : 'No';
+    if (v('Favourite')) p.fav = /^(y|yes|true|1|✓|♥|x)$/i.test(v('Favourite')) ? true : undefined;
+    if (v('Reading')) {
+      const want = clear('Reading') ? null : READ_STATES.find(x => x.label.toLowerCase() === v('Reading').toLowerCase() || x.id === v('Reading').toLowerCase())?.id;
+      if (want === null) p.reading = undefined;
+      else if (want && want !== old.reading?.state) p.reading = setReading(old.reading, want);
+    }
+    return p;
+  };
+  async function importSheet(quiet = false): Promise<number> {
+    const text = await readText(sheetPath);
+    if (!text) {
+      if (!quiet) setMessage(`There's no sheet yet. Tap "Make the sheet" first; it is saved as Document › InkShelf › ${SHEET_NAME}.`);
+      return 0;
+    }
+    const rows = parseCsv(text).filter(r => r.ID && r.ID.includes('|'));
+    let changed = 0;
+    for (const l of libs) {
+      const mine = rows.filter(r => r.ID!.slice(0, r.ID!.indexOf('|')) === l.path);
+      if (!mine.length) continue;
+      const cur = l.path === lib?.path ? {books, meta: metaRef.current} : libData[l.path];
+      if (!cur) continue;
+      const m: MetaStore = {...cur.meta, books: {...cur.meta.books}};
+      for (const r of mine) {
+        const key = r.ID!.slice(r.ID!.indexOf('|') + 1);
+        const b = cur.books.find(x => x.key === key);
+        if (!b) continue;
+        const old = m.books[key] || {};
+        const next = {...old, ...rowPatch(r, b, old)};
+        if (JSON.stringify(next) !== JSON.stringify(old)) {
+          m.books[key] = next;
+          changed++;
+        }
+      }
+      if (!changed) continue;
+      await saveMeta(l.path, m, cur.books);
+      setLibData(d => ({...d, [l.path]: {books: cur.books, meta: m}}));
+      if (l.path === lib?.path) { metaRef.current = m; setMeta(m); }
+    }
+    log('sheet read', rows.length, 'rows', changed, 'changed');
+    if (!quiet || changed) say(changed ? `Updated ${changed} book${changed === 1 ? '' : 's'} from the sheet` : 'The sheet has no changes');
+    return changed;
+  }
+  /** after changes: read the sheet first if it was edited on a computer, then write it fresh */
+  async function syncSheet() {
+    const t = await sheetMtime();
+    if (t && t > (app.sheetAt || 0) + 2000) {
+      await importSheet(true);
+      return; // written again on the next round, with the new details in it
+    }
+    await exportSheet();
+  }
+
   const indexReady = libs.every(l => libData[l.path] || (l.path === lib?.path && books.length));
+  indexReadyRef.current = indexReady && index.length > 0;
   const xCache = useRef<{[lib: string]: {[k: string]: string | null}}>({});
   const [, setXTick] = useState(0);
   const xCover = (f: Found) => f.meta.cover || (f.lib.path === lib?.path ? covers[f.book.key] : undefined) || xCache.current[f.lib.path]?.[f.book.key] || null;
@@ -859,13 +960,16 @@ function InkShelfApp(): React.JSX.Element {
           missing={settings.missing}
           onHelp={() => { setShowSettings(false); setScreen({kind: 'help'}); }}
           onPerms={async () => { setShowSettings(false); setPerm(await permStatus()); setPermOpen(true); }}
-          permNote={`${Object.values(perm).filter(v => v >= 2).length} of ${PERMS.length} always`}
+          permNote={`${Object.values(perm).filter(v => v >= 1).length} of ${PERMS.length} allowed`}
+          libs={libs}
+          lib={lib}
+          onLib={l => { setShowSettings(false); if (l.path !== lib?.path) openLibrary(l); }}
           onClearSearches={() => changeApp(a => ({...a, searches: []}))}
           onClearHistory={() => changeApp(a => ({...a, recent: []}))}
           counts={{searches: app.searches.length, recent: app.recent.length}}
         />
       )}
-      {toast && !message && !sheet && !showSettings && !card ? (
+      {toast && !message && !sheet && !showSettings ? (
         <Pressable style={st.toast} onPress={() => setToast(null)} accessibilityLabel="Dismiss">
           <Text style={st.toastText} numberOfLines={3}>{toast}</Text>
         </Pressable>
@@ -1044,6 +1148,19 @@ function InkShelfApp(): React.JSX.Element {
         collections={collections.map(c => ({c, on: inCollection(c, {lib, book: b, meta: mb})}))}
         onCollection={(c, on) => toggleIn(c, lib, b.key, on)}
         onNewCollection={() => setScreen({kind: 'coledit', id: null})}
+        reloading={!!scanning[lib.path]}
+        onReload={async () => {
+          // look at the folder again: new, removed or renamed volumes
+          const before = b.files.length;
+          const r = await scanLib(lib);
+          if (!r) return say("Couldn't read the folder. Is the card in?");
+          const moved = r.relinked.find(([o]) => o === b.key);
+          const now = r.books.find(x => x.key === (moved ? moved[1] : b.key));
+          if (moved) setScreen({kind: 'book', key: moved[1], from: screen.from});
+          if (!now) return say('This book is no longer in the folder. Its details are kept as a missing link.');
+          const d = now.files.length - before;
+          say(moved ? 'The file was renamed: reconnected with its details.' : d > 0 ? `${d} new file${d === 1 ? '' : 's'} found` : d < 0 ? `${-d} file${d === -1 ? '' : 's'} gone` : 'Up to date: nothing changed.');
+        }}
       />
       </ModalCard>
     );
@@ -1312,6 +1429,12 @@ function InkShelfApp(): React.JSX.Element {
           onPicker={addFromBook}
           onMissing={() => setScreen({kind: 'missing'})}
           onExclude={l => setScreen({kind: 'exclude', lib: l.path, path: ''})}
+          sheet={{
+            when: app.sheetAt || null,
+            onMake: async () => say((await exportSheet()) ? `Saved: Document › InkShelf › ${SHEET_NAME}` : "Couldn't make the sheet"),
+            onRead: () => importSheet(),
+            onHelp: () => setScreen({kind: 'help', topic: 'sheet'}),
+          }}
           backup={{
             dir: settings.backupDir || DEFAULT_BACKUP_DIR,
             when: lastBackup,
@@ -1685,6 +1808,12 @@ function InkShelfApp(): React.JSX.Element {
   );
 }
 
+/** "volumes", "chapters", "parts"… from how the files are named */
+const partsWord = (vols: Vol[]) => {
+  const k = Array.from(new Set(vols.map(v => v.kind || 'Vol')));
+  if (k.length !== 1) return 'parts';
+  return ({Vol: 'volumes', Part: 'parts', Ch: 'chapters', Ep: 'episodes', Book: 'books', Lesson: 'lessons', Module: 'modules', Unit: 'units', Arc: 'arcs', Season: 'seasons'} as {[k: string]: string})[k[0]] || 'parts';
+};
 const day = (t: number) => new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'});
 const dayTime = (t: number) => new Date(t).toLocaleString(undefined, {day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit'});
 /** a small mark for each reading status (shapes, since the screen has no colours) */
@@ -1809,8 +1938,10 @@ function BookPage(props: {
   collections: {c: Coll; on: boolean}[];
   onCollection: (c: Coll, on: boolean) => void;
   onNewCollection: () => void;
+  onReload: () => void;
+  reloading: boolean;
 }) {
-  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection} = props;
+  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading} = props;
   const [statusOpen, setStatusOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -1905,7 +2036,7 @@ function BookPage(props: {
       h: px(56),
       node: (
         <View style={st.volHead}>
-          <Text style={st.colHead}>{`${b.vols.length} volumes`}</Text>
+          <Text style={st.colHead}>{`${b.vols.length} ${partsWord(b.vols)}`}</Text>
           <View style={{flexDirection: 'row'}}>
             <ViewIcon kind="list" on={!volGrid} onPress={() => setVolGrid(false)} />
             <ViewIcon kind="grid" on={volGrid} onPress={() => setVolGrid(true)} />
@@ -1920,10 +2051,10 @@ function BookPage(props: {
           h: px(50),
           vol: true,
           node: (
-            <Pressable style={st.volRow} onPress={() => onRead(v.path)}>
+            <Pressable style={st.volRow} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
               <Icon name="play" size={px(22)} />
-              <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`Vol ${v.n}`}</Text>
-              <Text style={[st.small, {flex: 1, textAlign: 'right'}]} numberOfLines={1}>{vlabel(v)}</Text>
+              <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
+              <Text style={st.volName} numberOfLines={1}>{vlabel(v)}</Text>
             </Pressable>
           ),
         }),
@@ -1933,14 +2064,14 @@ function BookPage(props: {
       const cw = Math.floor((rIn - (per - 1) * px(8)) / per);
       for (let i = 0; i < b.vols.length; i += per) {
         right.push({
-          h: px(72),
+          h: px(84),
           vol: true,
           node: (
             <View style={{flexDirection: 'row'}}>
               {b.vols.slice(i, i + per).map((v, j) => (
                 <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}]} onPress={() => onRead(v.path)}>
-                  <Text style={st.volCellText}>{`Vol ${v.n}`}</Text>
-                  {vlabel(v) ? <Text style={st.volCellSub} numberOfLines={1}>{vlabel(v)}</Text> : null}
+                  <Text style={st.volCellText}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
+                  {vlabel(v) ? <Text style={st.volCellSub} numberOfLines={2}>{vlabel(v)}</Text> : null}
                 </Pressable>
               ))}
             </View>
@@ -1978,7 +2109,7 @@ function BookPage(props: {
   ) : (
     <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
       <Icon name="play-on" size={px(26)} color="#ffffff" />
-      {b.vols.length ? <Text style={[st.startText, {marginLeft: px(8)}]}>{`Vol ${b.vols[0].n}`}</Text> : null}
+      {b.vols.length ? <Text style={[st.startText, {marginLeft: px(8)}]}>{`${b.vols[0].kind || 'Vol'} ${b.vols[0].n}`}</Text> : null}
     </Pressable>
   );
   return (
@@ -1986,6 +2117,7 @@ function BookPage(props: {
       <View style={st.header}>
         <IconBtn bare name="back" label="Back" onPress={onBack} iconSize={px(30)} />
         <View style={{flex: 1}} />
+        <IconBtn name="refresh" label="Check this book's files again" dark={reloading} disabled={reloading} onPress={onReload} style={{marginRight: px(10)}} />
         <IconBtn name={m.fav ? 'heart-on' : 'heart'} label={m.fav ? 'Remove from favourites' : 'Favourite'} dark={!!m.fav} onPress={onFav} style={{marginRight: px(10)}} />
         <IconBtn name="collections" label="Collections" onPress={() => setColOpen(true)} style={{marginRight: px(10)}} />
         <IconBtn name="paste" label="Paste into note" onPress={() => setPasteOpen(true)} style={{marginRight: px(10)}} />
@@ -2088,7 +2220,7 @@ function BookPage(props: {
           </View>
         </View>
       ) : null}
-      {notesOpen ? <NotesSheet title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
+      {notesOpen ? <NotesBoard title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
       {pasteOpen ? <PasteSheet cover={cover} title={title} onPick={w => { setPasteOpen(false); onPaste(w); }} onClose={() => setPasteOpen(false)} /> : null}
     </>
   );
@@ -2281,6 +2413,134 @@ function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: No
   );
 }
 
+
+// ---------- notes board: every note pinned up, a little crooked, like real sticky notes ----------
+const tilt = (id: string, i: number) => {
+  let h = 7 + i;
+  for (let k = 0; k < id.length; k++) h = (h * 31 + id.charCodeAt(k)) % 997;
+  return ((h % 9) - 4) * 0.9; // -3.6° … 3.6°, the same every time for a note
+};
+function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: Note[]; onChange: (n: Note[]) => void; onClose: () => void}) {
+  const [editing, setEditing] = useState<Note | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const startNew = () => setEditing({id: Date.now().toString(36), text: '', color: NOTE_COLORS[notes.length % NOTE_COLORS.length].id, at: Date.now()});
+  const save = () => {
+    if (!editing) return;
+    const n = {...editing, title: editing.title?.trim() || undefined, text: editing.text.trim(), at: Date.now()};
+    if (!n.text && !n.title) return setEditing(null);
+    onChange(notes.some(x => x.id === n.id) ? notes.map(x => (x.id === n.id ? n : x)) : [...notes, n]);
+    setEditing(null);
+  };
+  const boardW = CARD_W - px(36);
+  const boardH = CARD_H - px(64) - px(96);
+  const cols = 2;
+  const slots = Math.min(MAX_NOTES, notes.length + (notes.length < MAX_NOTES && !picking ? 1 : 0));
+  const rows = Math.max(2, Math.ceil(slots / cols));
+  const nw = Math.floor(boardW / cols) - px(28);
+  const nh = Math.floor(boardH / rows) - px(26);
+  const lines = Math.max(2, Math.floor((nh - px(60)) / px(25)));
+  return (
+    <View style={[StyleSheet.absoluteFill, {backgroundColor: '#ffffff'}]}>
+      <View style={st.header}>
+        <IconBtn bare name="back" label="Back to the book" onPress={onClose} iconSize={px(30)} />
+        <View style={{flex: 1, marginLeft: px(6)}}>
+          <Text style={st.headerName} numberOfLines={1}>Notes</Text>
+          <Text style={st.small} numberOfLines={1}>{`${title}  ·  ${notes.length} / ${MAX_NOTES}`}</Text>
+        </View>
+        {!picking && notes.length ? <IconBtn name="trash" label="Choose notes to delete" onPress={() => { setPicking(true); setPicked([]); }} style={{marginRight: px(8)}} /> : null}
+        <IconBtn bare name="close" label="Close notes" onPress={onClose} iconSize={px(30)} />
+      </View>
+      <View style={[st.board, {width: boardW, height: boardH}]}>
+        {Array.from({length: rows}).map((_, r) => (
+          <View key={r} style={{flexDirection: 'row', flex: 1}}>
+            {Array.from({length: cols}).map((__, c) => {
+              const i = r * cols + c;
+              const n = notes[i];
+              if (!n) {
+                if (i === notes.length && notes.length < MAX_NOTES && !picking) {
+                  return (
+                    <View key={c} style={st.boardSlot}>
+                      <Pressable onPress={startNew} style={[st.stickyNew, {width: nw, height: nh}]} accessibilityLabel="New note">
+                        <Icon name="plus" size={px(34)} />
+                        <Text style={[st.small, {marginTop: px(6)}]}>New note</Text>
+                      </Pressable>
+                    </View>
+                  );
+                }
+                return <View key={c} style={st.boardSlot} />;
+              }
+              const sel = picked.includes(n.id);
+              return (
+                <View key={c} style={st.boardSlot}>
+                  <Pressable
+                    onPress={() => (picking ? setPicked(sel ? picked.filter(x => x !== n.id) : [...picked, n.id]) : setEditing(n))}
+                    style={[st.sticky, {width: nw, height: nh, backgroundColor: noteBg(n.color), transform: [{rotate: `${tilt(n.id, i)}deg`}]}, sel && {borderWidth: 3.5, borderColor: BLACK}]}
+                    accessibilityLabel={picking ? `${sel ? 'Unselect' : 'Select'} note ${i + 1}` : `Note ${i + 1}: ${n.title || n.text.slice(0, 30)}`}>
+                    <View style={st.pin} />
+                    {n.title ? <Text style={st.stickyTitle} numberOfLines={1}>{n.title}</Text> : null}
+                    <Text style={st.stickyText} numberOfLines={n.title ? lines - 1 : lines}>{n.text}</Text>
+                    <Text style={st.stickyDate}>{dateText(n.at)}</Text>
+                    {picking ? (
+                      <View style={[st.pickMark, sel && st.btnDark]}>{sel ? <Icon name="check" size={px(22)} color="#ffffff" /> : null}</View>
+                    ) : null}
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        ))}
+      </View>
+      <View style={st.boardBar}>
+        {picking ? (
+          <>
+            <Text style={[st.small, {position: 'absolute', left: px(20)}]}>{picked.length ? `${picked.length} to delete` : 'Tap the notes to delete'}</Text>
+            <IconBtn name="close" label="Cancel deleting" onPress={() => { setPicking(false); setPicked([]); }} size={px(56)} style={{marginRight: px(16)}} />
+            <IconBtn
+              dark
+              name="check"
+              label="Delete the chosen notes"
+              disabled={!picked.length}
+              onPress={() => { onChange(notes.filter(x => !picked.includes(x.id))); setPicking(false); setPicked([]); }}
+              size={px(56)}
+            />
+          </>
+        ) : (
+          <Text style={st.small}>{notes.length ? 'Tap a note to read or change it.' : 'Pin up to five notes: thoughts, quotes, where you stopped.'}</Text>
+        )}
+      </View>
+      {editing ? (
+        <View style={st.modalWrap}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={save} accessibilityLabel="Save and close" />
+          <View style={[st.sticky, {width: CARD_W - px(80), height: Math.round(CARD_H * 0.62), backgroundColor: noteBg(editing.color), padding: px(22)}]}>
+            <TextInput style={st.noteTitleInput} value={editing.title || ''} onChangeText={t => setEditing({...editing, title: t})} placeholder="Title (optional)" placeholderTextColor="#666666" maxLength={40} />
+            <TextInput
+              style={st.noteTextInput}
+              value={editing.text}
+              onChangeText={t => setEditing({...editing, text: t})}
+              placeholder="Your thoughts, a favourite line, where you stopped…"
+              placeholderTextColor="#666666"
+              multiline
+              maxLength={500}
+            />
+            <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(10)}}>
+              {NOTE_COLORS.map(c => (
+                <Pressable key={c.id} onPress={() => setEditing({...editing, color: c.id})} style={{marginRight: px(10)}} accessibilityLabel={c.label}>
+                  <View style={[st.swatch, {backgroundColor: c.bg}, editing.color === c.id && {borderWidth: 3.5}]}>{editing.color === c.id ? <Icon name="check" size={px(20)} /> : null}</View>
+                </Pressable>
+              ))}
+              <View style={{flex: 1}} />
+              <Text style={[st.small, {marginRight: px(10)}]}>{`${editing.text.length} / 500`}</Text>
+              <IconBtn name="close" label="Cancel" onPress={() => setEditing(null)} style={{marginRight: px(8)}} />
+              <IconBtn dark name="check" label="Save note" onPress={save} />
+            </View>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 // ---------- taskbar ----------
 
 
@@ -2347,7 +2607,10 @@ function RoundBtn({label, note, onPress, children, dim}: {label: string; note?: 
 function MiniIcon({kind, on}: {kind: 'list' | 'grid'; on: boolean}) {
   return <View style={{opacity: on ? 1 : 0.5}}><Icon name={kind} size={px(28)} /></View>;
 }
-function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote}: {
+function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote, libs, lib, onLib}: {
+  libs: Lib[];
+  lib: Lib | null;
+  onLib: (l: Lib) => void;
   missing?: Settings['missing'];
   onHelp: () => void;
   onPerms: () => void;
@@ -2369,14 +2632,17 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
     />
   );
   return (
-    <View style={st.sheetWrap}>
-      <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel="Close settings" />
-      <View style={st.sheet}>
-        <Pressable onPress={onClose} hitSlop={px(12)} style={{alignItems: 'center'}}>
-          <View style={st.handle} />
-          <Text style={st.sheetTitle}>Settings</Text>
-        </Pressable>
-
+    <ModalCard onOutside={onClose}>
+      <CardHeader title="Settings" onBack={onClose} onClose={onClose} />
+      <View style={[st.pad, {flex: 1}]}>
+        {libs.length > 1 ? (
+          <>
+            <Text style={st.section}>Library</Text>
+            <View style={st.pillWrap}>
+              {libs.map(l => <Pill key={l.path} label={l.name} active={l.path === lib?.path} onPress={() => onLib(l)} />)}
+            </View>
+          </>
+        ) : null}
         <View style={{flexDirection: 'row', marginTop: px(16)}}>
           <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
             <Seg
@@ -2415,9 +2681,10 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           <View style={{flex: 1}} />
         </View>
 
+        <View style={{flex: 1}} />
         <Btn dark icon="check" a11y="Done" onPress={onClose} style={{marginTop: px(20)}} />
       </View>
-    </View>
+    </ModalCard>
   );
 }
 
@@ -2625,22 +2892,38 @@ function LibrarySheet(props: {
 
 
 // ---------- the category picker at the top of the library ----------
-function CategorySheet({tree, total, current, onPick, libs, lib, onLib, onClose}: {
+function CategorySheet({tree, total, current, onPick, onClose}: {
   tree: {name: string; depth: number; count: number}[];
   total: number;
   current: string | null;
   onPick: (c: string | null) => void;
-  libs: Lib[];
-  lib: Lib | null;
-  onLib: (l: Lib) => void;
+  libs?: Lib[];
+  lib?: Lib | null;
+  onLib?: (l: Lib) => void;
   onClose: () => void;
 }) {
   const rows: {name: string | null; depth: number; count: number}[] = [{name: null, depth: 0, count: total}, ...tree];
-  const per = libs.length > 1 ? 9 : 12;
+  const perCol = Math.min(9, Math.max(1, Math.ceil(rows.length / 2)));
+  const per = perCol * 2; // two columns, filled evenly
   const start = Math.max(0, Math.floor(rows.findIndex(r => r.name === current) / per));
   const [pg, setPg] = useState(start);
   const pages = Math.max(1, Math.ceil(rows.length / per));
   const p = Math.min(pg, pages - 1);
+  const shown = rows.slice(p * per, (p + 1) * per);
+  const col = (list: typeof rows) => (
+    <View style={{flex: 1}}>
+      {list.map(r => {
+        const on = r.name === current;
+        return (
+          <Pressable key={r.name || '*'} onPress={() => onPick(r.name)} style={[st.catRow, {paddingLeft: px(10) + r.depth * px(18)}, on && st.btnDark]} accessibilityLabel={r.name || 'All'}>
+            {r.depth ? <Text style={[st.small, {marginRight: px(4)}, on && {color: '#ffffff'}]}>└</Text> : null}
+            <Text style={[st.catName, {fontSize: px(18)}, r.depth > 0 && {fontWeight: 'normal'}, on && {color: '#ffffff'}]} numberOfLines={1}>{r.name || 'All'}</Text>
+            <Text style={[st.fCount, on && {color: '#ffffff'}]}>{r.count}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
   return (
     <View style={st.sheetWrap}>
       <Pressable style={{flex: 1}} onPress={onClose} accessibilityLabel="Close" />
@@ -2649,32 +2932,16 @@ function CategorySheet({tree, total, current, onPick, libs, lib, onLib, onClose}
           <View style={st.handle} />
           <Text style={st.sheetTitle}>Category</Text>
         </Pressable>
-        <View style={{height: per * px(52), marginTop: px(8)}}>
-          {rows.slice(p * per, (p + 1) * per).map(r => {
-            const on = r.name === current;
-            return (
-              <Pressable key={r.name || '*'} onPress={() => onPick(r.name)} style={[st.catRow, {paddingLeft: px(10) + r.depth * px(26)}, on && st.btnDark]} accessibilityLabel={r.name || 'All'}>
-                {r.depth ? <Text style={[st.small, {marginRight: px(6)}, on && {color: '#ffffff'}]}>└</Text> : null}
-                <Text style={[st.catName, r.depth > 0 && {fontWeight: 'normal'}, on && {color: '#ffffff'}]} numberOfLines={1}>{r.name || 'All'}</Text>
-                <Text style={[st.fCount, on && {color: '#ffffff'}]}>{r.count}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={{flexDirection: 'row', height: perCol * px(52), marginTop: px(8)}}>
+          {col(shown.slice(0, perCol))}
+          <View style={{width: px(10)}} />
+          {col(shown.slice(perCol))}
         </View>
         {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
-        {libs.length > 1 ? (
-          <>
-            <Text style={[st.section, {marginTop: px(12)}]}>Library</Text>
-            <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
-              {libs.map(l => <Pill key={l.path} label={l.name} active={l.path === lib?.path} onPress={() => onLib(l)} />)}
-            </View>
-          </>
-        ) : null}
       </View>
     </View>
   );
 }
-
 
 // ---------- collection editor ----------
 function CollectionEditor({start, values, count, onSave, onCancel, onDelete}: {
@@ -2870,6 +3137,7 @@ function HelpPage({q, setQ, onOpen}: {q: string; setQ: (q: string) => void; onOp
   );
 }
 
+
 // ---------- data and storage ----------
 function DataPage(props: {
   libs: Lib[];
@@ -2884,9 +3152,10 @@ function DataPage(props: {
   onPicker: () => void;
   onMissing: () => void;
   onExclude: (l: Lib) => void;
+  sheet: {when: number | null; onMake: () => void; onRead: () => void; onHelp: () => void};
   backup: {dir: string; when: number | null; onNow: () => void; onMove: () => void; onRestore: () => void};
 }) {
-  const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing, backup, onExclude} = props;
+  const {libs, info, missing, setMissing, missingCount, onOpen, onRefresh, onRemove, onAdd, onPicker, onMissing, backup, onExclude, sheet} = props;
   const [confirm, setConfirm] = useState<string | null>(null);
   const [pg, setPg] = useState(0);
   const per = 2;
@@ -2958,21 +3227,35 @@ function DataPage(props: {
         </View>
       </View>
 
+      <View style={[st.dataHead, {marginTop: px(8)}]}>
+        <Text style={st.dataTitle}>Book details sheet</Text>
+        <Text style={st.small}>{sheet.when ? `Updated ${ago(sheet.when)}` : ''}</Text>
+      </View>
+      <View style={[st.libCard, {flexDirection: 'column', alignItems: 'stretch', height: undefined}]}>
+        <Text style={[st.small, {color: BLACK}]} numberOfLines={2}>{`Fill in many books at once on a computer: open Document › InkShelf › ${SHEET_NAME} in Excel or Google Sheets, then copy it back. InkShelf reads the changes by itself.`}</Text>
+        <View style={{flexDirection: 'row', marginTop: px(8)}}>
+          <Btn small icon="save" label="Make the sheet" onPress={sheet.onMake} style={{flex: 1}} />
+          <Btn small icon="restore" label="Read changes now" onPress={sheet.onRead} style={{flex: 1, marginLeft: px(8)}} />
+          <IconBtn name="help" label="How to fill in the sheet" onPress={sheet.onHelp} style={{marginLeft: px(8)}} />
+        </View>
+      </View>
       <Text style={[st.dataTitle, {marginTop: px(8), marginBottom: px(6)}]}>When a book's file disappears</Text>
-      <Pressable style={[st.dChoice, missing === 'flag' && st.dChoiceOn]} onPress={() => setMissing('flag')} accessibilityLabel="Keep details and flag it">
-        <View style={[st.dRadio, missing === 'flag' && st.dRadioOn]} />
-        <View style={{flex: 1}}>
-          <Text style={st.choiceTitle}>Keep its details and flag it</Text>
-          <Text style={st.small} numberOfLines={1}>{'Shown as "Missing link"; reconnects when the file is back.'}</Text>
-        </View>
-      </Pressable>
-      <Pressable style={[st.dChoice, missing === 'delete' && st.dChoiceOn]} onPress={() => setMissing('delete')} accessibilityLabel="Delete details right away">
-        <View style={[st.dRadio, missing === 'delete' && st.dRadioOn]} />
-        <View style={{flex: 1}}>
-          <Text style={st.choiceTitle}>Delete its details right away</Text>
-          <Text style={st.small} numberOfLines={1}>{'Never when most of a library is gone at once (card out).'}</Text>
-        </View>
-      </Pressable>
+      <View style={{flexDirection: 'row'}}>
+        <Pressable style={[st.dChoice, {flex: 1, marginRight: px(8)}, missing === 'flag' && st.dChoiceOn]} onPress={() => setMissing('flag')} accessibilityLabel="Keep details and flag it">
+          <View style={[st.dRadio, missing === 'flag' && st.dRadioOn]} />
+          <View style={{flex: 1}}>
+            <Text style={[st.choiceTitle, {fontSize: px(17)}]}>Keep and flag it</Text>
+            <Text style={st.small} numberOfLines={2}>{'Reconnects when the file is back.'}</Text>
+          </View>
+        </Pressable>
+        <Pressable style={[st.dChoice, {flex: 1}, missing === 'delete' && st.dChoiceOn]} onPress={() => setMissing('delete')} accessibilityLabel="Delete details right away">
+          <View style={[st.dRadio, missing === 'delete' && st.dRadioOn]} />
+          <View style={{flex: 1}}>
+            <Text style={[st.choiceTitle, {fontSize: px(17)}]}>Delete its details</Text>
+            <Text style={st.small} numberOfLines={2}>{'Never when the card is out.'}</Text>
+          </View>
+        </Pressable>
+      </View>
       <Pressable style={[st.libCard, {height: px(58), marginBottom: 0}]} onPress={onMissing} accessibilityLabel="Missing links">
         <Icon name="unlink" size={px(28)} />
         <Text style={[st.choiceTitle, {flex: 1, marginLeft: px(12)}]}>{`Missing links  (${missingCount})`}</Text>
@@ -4063,6 +4346,16 @@ const st = StyleSheet.create({
   postitFold: {position: 'absolute', right: 0, bottom: 0, width: 0, height: 0, borderLeftWidth: px(12), borderTopWidth: px(12), borderLeftColor: 'transparent', borderTopColor: '#999999'},
   postitNum: {fontSize: px(20), lineHeight: px(22), fontWeight: 'bold', color: BLACK},
   postitLabel: {fontSize: px(11), color: BLACK},
+  board: {alignSelf: 'center', marginTop: px(10), backgroundColor: '#e9e4d8', borderRadius: px(14), borderWidth: 1.5, borderColor: '#9a917f', padding: px(6)},
+  boardSlot: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  sticky: {padding: px(14), paddingTop: px(20), borderWidth: 1, borderColor: '#6d6658', borderRadius: px(3), shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 3, shadowOffset: {width: 2, height: 3}, elevation: 3},
+  stickyNew: {borderWidth: 2, borderStyle: 'dashed', borderColor: '#6d6658', borderRadius: px(6), alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.5)'},
+  stickyTitle: {fontSize: px(19), fontWeight: 'bold', color: BLACK, marginBottom: px(4)},
+  stickyText: {fontSize: px(17), lineHeight: px(25), color: BLACK},
+  stickyDate: {position: 'absolute', right: px(10), bottom: px(6), fontSize: px(12), color: '#333333'},
+  pin: {position: 'absolute', top: px(5), alignSelf: 'center', left: '50%', marginLeft: -px(7), width: px(14), height: px(14), borderRadius: px(7), backgroundColor: '#3a3a3a'},
+  pickMark: {position: 'absolute', right: px(8), top: px(8), width: px(34), height: px(34), borderRadius: px(17), borderWidth: 2.5, borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
+  boardBar: {height: px(96), flexDirection: 'row', alignItems: 'center', justifyContent: 'center'},
   modalWrap: {position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)', justifyContent: 'center', alignItems: 'center'},
   modal: {width: W - px(60), backgroundColor: '#ffffff', borderRadius: px(22), borderWidth: 2, borderColor: BLACK, padding: px(18)},
   modalHead: {flexDirection: 'row', alignItems: 'center', marginBottom: px(14)},
@@ -4093,9 +4386,10 @@ const st = StyleSheet.create({
   volHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(56)},
   volRow: {height: px(42), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},
   volRowText: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginRight: px(10)},
-  volCell: {height: px(62), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  volName: {flex: 1, fontSize: px(17), color: BLACK},
+  volCell: {height: px(74), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
   volCellText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
-  volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2)},
+  volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2), textAlign: 'center'},
   kindTabs: {flexDirection: 'row', marginTop: px(10), marginBottom: px(6)},
   kindTab: {flex: 1, borderWidth: 1.5, borderColor: BLACK, paddingVertical: px(5), alignItems: 'center', marginRight: px(4), borderRadius: px(6)},
   kindTabText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},

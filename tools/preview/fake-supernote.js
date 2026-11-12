@@ -18,11 +18,12 @@ const tree = {
     'Moon Over the Jade Pavilion.epub', 'The Tea House on Willow Street.epub', 'A Sword Without a Name.epub',
     'Paper Lanterns in Winter.epub', 'The Fox Who Kept the Library.epub', 'Ten Thousand Steps to the Summit.epub',
     'Starlight Courier.epub', 'The Quiet Alchemist.epub', 'River of Small Lights.epub', 'Crane and the Clockmaker.epub',
-    'Echoes of the Ninth Gate/', 'Historical/',
+    'Echoes of the Ninth Gate/', 'Historical/', 'JavaScript Fundamentals/',
   ],
+  [`${SD}/Novels/Chinese Novels/JavaScript Fundamentals`]: ['Chapter 01 - Introduction.pdf', 'Chapter 02 - Variables and Types.pdf', 'Chapter 03 - Functions.pdf', 'Chapter 04 - Arrays and Loops.pdf', 'Chapter 05 - Objects.pdf'],
   [`${SD}/Novels/Chinese Novels/Historical`]: ['Lotus Court/', 'The Last Imperial Tailor.epub'],
   [`${SD}/Novels/Chinese Novels/Historical/Lotus Court`]: ['Lotus Court 1-50.epub', 'Lotus Court 51-100.epub', 'Lotus Court 101-152 (End).epub'],
-  [`${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate`]: ['Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 'Echoes of the Ninth Gate Vol 2 (Ch 41-80).epub', 'Echoes of the Ninth Gate Vol 3 (Ch 81-120).epub', 'Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub', 'Echoes of the Ninth Gate Vol 5 (Ch 161-200).epub', 'Echoes of the Ninth Gate Vol 6 (Ch 201-240).epub', 'Echoes of the Ninth Gate Vol 7 (Ch 241-280).epub', 'Echoes of the Ninth Gate Vol 8 (Ch 281-320).epub', 'Echoes of the Ninth Gate Vol 9 (Ch 321-360).epub', 'Echoes of the Ninth Gate Vol 10 (Ch 361-400).epub', 'Echoes of the Ninth Gate Vol 11 (Ch 401-440).epub', 'Echoes of the Ninth Gate Vol 12 (Ch 441-480).epub'],
+  [`${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate`]: ['Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 'Echoes of the Ninth Gate Vol 2 - Ninefold Debts.epub', 'Echoes of the Ninth Gate Vol 3 - Lanterns at Dusk.epub', 'Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub', 'Echoes of the Ninth Gate Vol 5 (Ch 161-200).epub', 'Echoes of the Ninth Gate Vol 6 (Ch 201-240).epub', 'Echoes of the Ninth Gate Vol 7 (Ch 241-280).epub', 'Echoes of the Ninth Gate Vol 8 (Ch 281-320).epub', 'Echoes of the Ninth Gate Vol 9 (Ch 321-360).epub', 'Echoes of the Ninth Gate Vol 10 (Ch 361-400).epub', 'Echoes of the Ninth Gate Vol 11 (Ch 401-440).epub', 'Echoes of the Ninth Gate Vol 12 (Ch 441-480).epub'],
 };
 const files = {};
 const meta = {

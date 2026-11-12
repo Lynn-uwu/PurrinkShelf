@@ -3,7 +3,7 @@ import {PluginManager} from 'sn-plugin-lib';
 import {extractEpubCover, listDir, readText, writeText} from './native';
 
 export type Lib = {name: string; path: string; exclude?: string[]}; // exclude: folders/files inside it to leave out
-export type Vol = {n: number; label: string; path: string};
+export type Vol = {n: number; label: string; path: string; kind?: string}; // kind: Vol, Part, Ch… as written in the file name
 export type Book = {
   key: string; // stable id inside the library (relative path or series id)
   fileTitle: string; // from the file / series name
@@ -146,7 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
 /** a book remembered outside its library (recently read, bookmarks) */
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
-export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {
   version: 1;
@@ -351,7 +351,16 @@ const stripExt = (n: string) => n.replace(/\.[^.]+$/, '');
 const extOf = (n: string) => (n.match(/\.([^.]+)$/)?.[1] || '').toLowerCase();
 
 // "Title Vol 2 (Ch 35-66)", "Title - Volume 02", "Title Part 3", "Title Book 1"
-const VOL_RE = /^(.*?)[\s._-]*\b(?:vol(?:ume)?|part|book|tome)\.?[\s._-]*0*(\d+)\b(.*)$/i;
+const VOL_RE = /^(.*?)(?:^|[\s._-]+)(vol(?:ume)?|part|pt|book|tome|chapter|chap|ch|episode|ep|lesson|module|unit|arc|season)\.?[\s._-]*0*(\d+)(?!\d)(.*)$/i;
+/** how a part is shown: "Vol 2", "Part 2", "Ch 2"… */
+export const kindName = (w: string) => {
+  const k = w.toLowerCase();
+  if (k.startsWith('vol') || k === 'tome') return 'Vol';
+  if (k === 'part' || k === 'pt') return 'Part';
+  if (k.startsWith('ch')) return 'Ch';
+  if (k.startsWith('ep')) return 'Ep';
+  return w[0].toUpperCase() + w.slice(1).toLowerCase();
+};
 
 /** never shown as books: InkShelf's own files (its log, its backup folder) */
 export const isOwnFile = (path: string) => /(^|\/)inkshelf[- ]?log[^/]*$/i.test(path) || /\/Document\/InkShelf(\/|$)/i.test(path);
@@ -364,13 +373,15 @@ export async function scanLibrary(root: string, exclude: string[] = []): Promise
     const files = entries.filter(e => !e.isDir && BOOK_EXT.includes(extOf(e.name)));
     const mt = (path: string) => entries.find(e => e.path === path)?.mtime || 0;
     // group volumes of the same title in this folder
-    const groups: {[t: string]: {n: number; label: string; path: string}[]} = {};
+    const groups: {[t: string]: Vol[]} = {};
     const singles: typeof files = [];
+    const here = rel.split('/').pop() || '';
     for (const f of files) {
       const m = stripExt(f.name).match(VOL_RE);
-      if (m && m[1].trim()) {
-        const t = m[1].trim();
-        (groups[t] = groups[t] || []).push({n: parseInt(m[2], 10), label: m[3].trim().replace(/^[-–—\s]+/, ''), path: f.path});
+      // "Chapter 3 - Loops.epub" with no title in front belongs to the folder it is in
+      const t = m ? m[1].trim().replace(/[\s._\-–—:]+$/, '') || here : '';
+      if (m && t) {
+        (groups[t] = groups[t] || []).push({n: parseInt(m[3], 10), kind: kindName(m[2]), label: m[4].trim().replace(/^[-–—:.\s_]+/, '').replace(/[_]+/g, ' '), path: f.path});
       } else {
         singles.push(f);
       }
@@ -387,7 +398,7 @@ export async function scanLibrary(root: string, exclude: string[] = []): Promise
         fileTitle: t,
         folder,
         files: vols.map(v => v.path),
-        vols: vols.map(v => ({n: v.n, label: v.label, path: v.path})),
+        vols: vols.map(v => ({n: v.n, label: v.label, path: v.path, kind: v.kind})),
         ext: extOf(vols[0].path),
         added: Math.max(...vols.map(v => mt(v.path))),
         dir: rel,

@@ -41,6 +41,7 @@ export const HELP: HelpTopic[] = [
       'Tap a book to open its page. It opens as a card over the list: tap outside the card (or ✕) to close it.',
       'The black play button opens the book in Supernote\'s reader. Books in several files list every volume on the right.',
       'Left and right arrows turn the pages of the book page (Overview, Tags, Details). Settings can switch this to scrolling.',
+      'The refresh button at the top checks this book\'s files again (added, deleted or renamed volumes).',
     ]},
   {id: 'edit', title: 'Edit details and the cover', icon: 'edit', words: 'edit title description summary genre tag language status cover image screenshot save discard',
     steps: [
@@ -70,11 +71,26 @@ export const HELP: HelpTopic[] = [
       'Or tap the select button, tick the books, then Combine and give it a name.',
       'Split (in folder view, or on the Edit page) turns it back into separate books.',
     ]},
-  {id: 'notes', title: 'Notes on a book', icon: 'note', words: 'note notes post-it sticky write thoughts',
+  {id: 'notes', title: 'Notes on a book', icon: 'note', words: 'note notes post-it sticky board write thoughts delete',
     steps: [
-      'Tap the little yellow note on a book\'s cover.',
-      'Write up to 5 notes per book, each with its own colour.',
-      'Use the pencil to change a note and the bin to delete it.',
+      'Tap the little yellow note on a book\'s cover. All its notes are pinned up on a board.',
+      'Tap + to pin a new one (up to 5, each with its own colour). Tap a note to read or change it.',
+      'To delete: tap the bin, tap the notes to remove, then the ✓ at the bottom. ✕ cancels.',
+    ]},
+  {id: 'sheet', title: 'Fill in many books on a computer', icon: 'save', words: 'sheet spreadsheet excel csv computer laptop bulk import export many books fill',
+    steps: [
+      'InkShelf keeps a sheet of all your books in Document › InkShelf › InkShelf books.csv (Data and storage › Make the sheet makes it now).',
+      'Copy it to your computer and open it in Excel, Numbers or Google Sheets. One row per book.',
+      'Fill in Categories, Genres, Tags (separate several with commas), Language, Status, Completely translated (Yes/No), Reading (e.g. Completed), Favourite (Yes) and Description.',
+      'An empty cell changes nothing. Type - (a dash) to clear something. Don\'t change the ID column.',
+      'Save it as CSV (in Excel: CSV UTF-8) with the same name and copy it back to Document › InkShelf. InkShelf reads the changes by itself, or tap Read changes now.',
+    ]},
+  {id: 'naming', title: 'Name files so volumes join up', icon: 'layers', words: 'name naming volume vol part chapter ch episode lesson rename join series files',
+    steps: [
+      'Files whose names say Vol, Part, Book, Chapter (Ch), Episode, Lesson or Module with a number join into one book by themselves.',
+      'For example "Moon Vol 1 - The Exile.epub", "Moon Vol 2 - The Burning Sea.epub". The words after the number show as each volume\'s name.',
+      'Files named only "Chapter 1 - Intro.epub", "Chapter 2 - Loops.epub" join into one book named after their folder.',
+      'After renaming, tap the refresh button on the book page (or in Data and storage) to see it.',
     ]},
   {id: 'paste', title: 'Paste a book into a note', icon: 'paste', words: 'paste copy note insert cover details clipboard',
     steps: [
