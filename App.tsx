@@ -3772,7 +3772,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
                 {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
                 <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
-                {CAT ? <CatImg name="ears" w={px(32)} style={{position: 'absolute', top: -px(14) - px(2), alignSelf: 'center'}} /> : null}
+                {CAT ? <CatImg name="ears" w={px(32)} style={{position: 'absolute', top: -px(8) - px(2), alignSelf: 'center'}} /> : null}
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(26)} />
                   {badge}
@@ -5957,10 +5957,10 @@ const st = StyleSheet.create({
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
   taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: px(2), borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
   // a half circle cut down into the bar (only its lower half shows), with the button sitting in it
-  dip: {position: 'absolute', top: -px(3), alignSelf: 'center', width: px(142), height: px(51)}, // tools/logo/taskbar-dip.svg
-  taskCta: {position: 'absolute', top: -px(14), alignSelf: 'center', width: px(52), height: px(52), borderRadius: px(26), borderWidth: px(4), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
+  dip: {position: 'absolute', top: -px(3), alignSelf: 'center', width: px(137), height: px(54)}, // tools/logo/taskbar-dip.svg
+  taskCta: {position: 'absolute', top: -px(8), alignSelf: 'center', width: px(52), height: px(52), borderRadius: px(26), borderWidth: px(4), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
   taskLabel: {position: 'absolute', bottom: px(6), fontSize: px(14), color: '#555555'},
-  taskLabelOn: {fontWeight: 'bold', fontSize: px(15), color: BLACK},
+  taskLabelOn: {fontWeight: 'bold', fontSize: px(15), color: BLACK, bottom: px(4)},
   task: {flex: 1, alignItems: 'center', justifyContent: 'flex-start'},
   taskIcon: {width: px(64), height: px(48), borderRadius: px(24), alignItems: 'center', justifyContent: 'center'},
   taskText: {fontSize: px(13), color: BLACK, marginTop: px(1)},
