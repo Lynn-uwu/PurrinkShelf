@@ -1,0 +1,13 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  const tab = name => p.getByRole('button', {name, exact: true}).last();
+  const chk = async s => { await tab('Library').click(); await p.waitForTimeout(600); console.log(s, await p.evaluate(() => document.body.innerText.includes('Min Seo'))); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1&reading=1'); await p.waitForTimeout(2500);
+  await chk('early');
+  await p.waitForTimeout(4000); await chk('later');
+  await tab('Profile').click(); await p.waitForTimeout(400); await chk('after profile');
+  const L = s => p.getByLabel(s, {exact: true}).first();
+  await tab('Profile').click(); await L('Notes and quotes').click(); await p.waitForTimeout(300); await chk('after quotes');
+  await tab('Profile').click(); await L('Wishlist').click(); await p.waitForTimeout(300); await chk('after wish');
+  await tab('Collections').click(); await p.waitForTimeout(300); await chk('after coll');
+  await b.close(); })();
