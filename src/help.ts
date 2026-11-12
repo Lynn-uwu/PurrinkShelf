@@ -4,7 +4,7 @@ export type HelpTopic = {id: string; title: string; icon: string; words: string;
 export const HELP: HelpTopic[] = [
   {id: 'add', title: 'Add a library', icon: 'folder-plus', words: 'start folder sd card storage picker first library setup',
     steps: [
-      'Open Data and storage (the gear at the top right) and tap the folder with a +.',
+      'Open Settings (the gear at the top right), tap Data and storage, then the folder with a +.',
       'Pick Supernote or SD card, open folders until you reach the one that holds your books, then tap ✓ Use this folder.',
       'Every book inside is found, subfolders too. Your subfolders become categories.',
       "Can't see your SD card? Tap Find my SD card and pick any one book on it with Supernote's file picker. InkShelf remembers the card after that.",
@@ -12,7 +12,7 @@ export const HELP: HelpTopic[] = [
   {id: 'refresh', title: 'Find new books', icon: 'refresh', words: 'refresh new added scan update reload',
     steps: [
       'InkShelf looks for new and removed books by itself each time a library opens.',
-      'To check now, open Data and storage and tap the refresh arrows on a library (or the ones at the top for every library).',
+      'To check now, open Settings › Data and storage and tap the refresh arrows on a library (or the ones at the top for every library).',
       'New books get a NEW label and show in the Newly added tab until you open them.',
     ]},
   {id: 'filter', title: 'Filter your library', icon: 'sidebar', words: 'filter panel genre tags more include exclude match all any unread bookmarked favourite',
@@ -42,6 +42,8 @@ export const HELP: HelpTopic[] = [
       'The black play button opens the book in Supernote\'s reader. Books in several files list every volume on the right.',
       'Left and right arrows turn the pages of the book page (Overview, Tags, Details). Settings can switch this to scrolling.',
       'The refresh button at the top checks this book\'s files again (added, deleted or renamed volumes).',
+      'The button says Start until you open the book, then Continue: it opens the last volume you had open. Opened volumes get a tick.',
+      'Opening a book straight from Supernote counts too: the next time you tap the InkShelf button inside that book, InkShelf notes it.',
     ]},
   {id: 'edit', title: 'Edit details and the cover', icon: 'edit', words: 'edit title description summary genre tag language status cover image screenshot save discard',
     steps: [
@@ -76,6 +78,33 @@ export const HELP: HelpTopic[] = [
       'Tap the little yellow note on a book\'s cover. All its notes are pinned up on a board.',
       'Tap + to pin a new one (up to 5, each with its own colour). Tap a note to read or change it.',
       'To delete: tap the bin, tap the notes to remove, then the ✓ at the bottom. ✕ cancels.',
+      'Each note can carry your rating (1 to 5 stars). The book\'s rating is the average of its notes. Tap a star again to clear it.',
+      'Profile › Notes and quotes shows every note from every book on one board, with search.',
+    ]},
+  {id: 'author', title: 'Authors', icon: 'text', words: 'author writer by dash name file epub details filter sort',
+    steps: [
+      'A file named "Title - Author.epub" shows the author in small letters above the book and keeps the title clean. Turn this off in Settings if your titles have dashes.',
+      'InkShelf also reads the author, description and language written inside each EPUB, once. It only fills empty fields and never replaces what you typed.',
+      'Change it on the Edit page. Tap an author on a book page to see all their books; the filter panel has an Author tab and the sort has Author.',
+    ]},
+  {id: 'profile', title: 'Profile and your numbers', icon: 'profile', words: 'profile stats statistics numbers finished year streak days genres chart settings gear',
+    steps: [
+      'The Profile tab shows how many books you have, finished this year, are reading and love, with a chart of the last 12 months.',
+      'Reading days counts the days you opened a book (in InkShelf, or in Supernote when you tap the InkShelf button inside it).',
+      'Tap a number or a genre to see those books. Settings is the gear at the top right.',
+    ]},
+  {id: 'wishlist', title: 'Wishlist', icon: 'wish', words: 'wishlist wish want buy later find get list',
+    steps: [
+      'Open it from Profile or the Collections tab. Tap + and type the title; the author, where to get it and a note are optional.',
+      'When a book with the same name turns up in a library, it comes off the list by itself, and your note is pinned on the book.',
+      'Tap the pencil, then ✕ to take a book off the list.',
+    ]},
+  {id: 'duplicates', title: 'Duplicate files', icon: 'copy', words: 'duplicate duplicates copy twice same name (1) delete keep both',
+    steps: [
+      'Two files with the same name in the same folder (like "Book.epub" and "Book (1).epub") are flagged on the book page.',
+      'Open files takes you to Supernote\'s file manager so you can delete the one you don\'t want. InkShelf never deletes books.',
+      'Keep both hides the warning. A small 2× stays next to the title: tap it to jump to the other copy.',
+      'The filter panel\'s More tab has Possible duplicate.',
     ]},
   {id: 'sheet', title: 'Fill in many books on a computer', icon: 'save', words: 'sheet spreadsheet excel google sheets xlsx csv computer laptop bulk import export many books fill drop-down collections tags',
     steps: [

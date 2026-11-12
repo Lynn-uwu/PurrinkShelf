@@ -38,6 +38,8 @@ export const ICONS = {
   'play': require('../assets/icons/play.png'),
   'play-on': require('../assets/icons/play-on.png'),
   'plus': require('../assets/icons/plus.png'),
+  'profile': require('../assets/icons/profile.png'),
+  'quote': require('../assets/icons/quote.png'),
   'refresh': require('../assets/icons/refresh.png'),
   'restore': require('../assets/icons/restore.png'),
   'save': require('../assets/icons/save.png'),
@@ -49,11 +51,14 @@ export const ICONS = {
   'sort': require('../assets/icons/sort.png'),
   'split': require('../assets/icons/split.png'),
   'square': require('../assets/icons/square.png'),
+  'star': require('../assets/icons/star.png'),
+  'star-on': require('../assets/icons/star-on.png'),
   'tag-plus': require('../assets/icons/tag-plus.png'),
   'text': require('../assets/icons/text.png'),
   'trash': require('../assets/icons/trash.png'),
   'trash-all': require('../assets/icons/trash-all.png'),
   'unlink': require('../assets/icons/unlink.png'),
   'up': require('../assets/icons/up.png'),
+  'wish': require('../assets/icons/wish.png'),
 };
 export type IconName = keyof typeof ICONS;

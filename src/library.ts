@@ -17,7 +17,7 @@ export type Book = {
   missing?: boolean; // details kept, but the file isn't there any more
 };
 export type NoteColor = 'lemon' | 'rose' | 'sky' | 'mint' | 'paper';
-export type Note = {id: string; title?: string; text: string; color: NoteColor; at: number};
+export type Note = {id: string; title?: string; text: string; color: NoteColor; at: number; rating?: number}; // rating: 1–5 stars, yours only
 export const MAX_NOTES = 5;
 export type Meta = {
   title?: string;
@@ -32,6 +32,9 @@ export type Meta = {
   categories?: string[]; // when set, replaces the categories taken from folder names
   fav?: boolean;
   reading?: Reading; // your reading status, with dates
+  author?: string;
+  probed?: boolean; // the EPUB's own details were looked at once
+  progress?: {last: string; opened: string[]; at: number}; // which volumes were opened (from InkShelf or Supernote)
   seen?: string[]; // files (inside the library) this book was last found as, to reconnect it
 };
 // ---------- reading status (like review states: each change is dated) ----------
@@ -55,7 +58,7 @@ export function setReading(r: Reading | undefined, state: ReadState | null): Rea
 export const timesRead = (r?: Reading) => (r?.history || []).filter(h => h.state === 'completed').length;
 
 // ---------- collections: hand-picked books, plus books that match rules ----------
-export type RuleField = 'genre' | 'tag' | 'category' | 'status' | 'language' | 'fav' | 'library' | 'title';
+export type RuleField = 'genre' | 'tag' | 'category' | 'status' | 'language' | 'fav' | 'library' | 'title' | 'author';
 export type Rule = {field: RuleField; op: 'has' | 'not'; value: string};
 export type Collection = {
   id: string;
@@ -74,6 +77,7 @@ export const RULE_FIELDS: {id: RuleField; label: string}[] = [
   {id: 'category', label: 'Category'},
   {id: 'language', label: 'Language'},
   {id: 'library', label: 'Library'},
+  {id: 'author', label: 'Author'},
   {id: 'title', label: 'Title has'},
 ];
 /** the collections everyone starts with (they can be changed or removed) */
@@ -98,6 +102,7 @@ function valuesOf(f: RuleField, x: BookFacts): string[] {
   if (f === 'language') return m.language ? [m.language] : [];
   if (f === 'fav') return [m.fav ? 'Yes' : 'No'];
   if (f === 'library') return [x.lib.name];
+  if (f === 'author') return [authorOf(x.book, m)].filter(Boolean) as string[];
   return [m.title || x.book.fileTitle];
 }
 export function inCollection(c: Collection, x: BookFacts): boolean {
@@ -121,7 +126,7 @@ export function inCollection(c: Collection, x: BookFacts): boolean {
 
 /** anything worth keeping when the file disappears */
 export const hasDetails = (m?: Meta) =>
-  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading);
+  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading || m.author || m.progress);
 /** still waiting for a genre/tag or a summary */
 export const needsDetails = (m: Meta) => !(m.genres?.length || m.tags?.length) || !m.description;
 export type Settings = {
@@ -135,19 +140,43 @@ export type Settings = {
   libFolders: boolean; // library shown as folders instead of books
   badges: {newBadge: boolean; notes: boolean; vols: boolean};
   backupDir: string; // where the backup file is kept (survives reinstalling InkShelf)
+  dashAuthor: boolean; // "Title - Author.epub": show the part after the dash as the author
 };
 export const DEFAULT_BACKUP_DIR = '/storage/emulated/0/Document/InkShelf';
 export const BACKUP_NAME = 'InkShelf backup.json';
-export type SortBy = 'title' | 'read' | 'added' | 'vols' | 'category';
+export type SortBy = 'title' | 'read' | 'added' | 'vols' | 'category' | 'author' | 'rating';
 export const DEFAULT_SETTINGS: Settings = {
   paging: 'arrows', libraryGrid: false, volumeGrid: false, showFilters: true, views: {gallery: 'grid'},
   missing: 'flag', sort: {by: 'title', asc: true}, libFolders: false, badges: {newBadge: true, notes: true, vols: true},
   backupDir: DEFAULT_BACKUP_DIR,
+  dashAuthor: true,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
+export type Wish = {id: string; title: string; author?: string; where?: string; note?: string; added: number};
+
+// ---------- authors: from the details, the EPUB, or "Title - Author" file names ----------
+/** "Moon Over Jade - Lin Wei" -> {title: "Moon Over Jade", author: "Lin Wei"}; only when the end looks like a name */
+export function splitDash(t: string): {title: string; author: string} | null {
+  const m = t.match(/^(.+?)\s+[-–—]\s+([^-–—]+)$/);
+  if (!m) return null;
+  const a = m[2].trim();
+  if (a.length > 40 || /\d/.test(a) || a.split(/\s+/).length > 5) return null;
+  if (/^(side ?stories?|extras?|special|epilogue|prologue|complete|completed|end|final|bonus|part|vol|volume|book|chapter)\b/i.test(a)) return null;
+  return {title: m[1].trim(), author: a};
+}
+let dashOn = true;
+export const setDashAuthor = (on: boolean) => (dashOn = on);
+export const authorOf = (b: Book, m?: Meta) => m?.author || (dashOn ? splitDash(b.fileTitle)?.author : undefined) || undefined;
+export const shownTitle = (b: Book, m?: Meta) => m?.title || (dashOn ? splitDash(b.fileTitle)?.title : undefined) || b.fileTitle;
+/** your rating: the average of the stars on the book's notes */
+export function ratingOf(m?: Meta): number | undefined {
+  const r = (m?.notes || []).map(n => n.rating || 0).filter(Boolean);
+  return r.length ? Math.round((r.reduce((a, b) => a + b, 0) / r.length) * 2) / 2 : undefined;
+}
+
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
-export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number; wishlist?: Wish[]; dupIgnore?: string[]; days?: string[]};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {
   version: 1;

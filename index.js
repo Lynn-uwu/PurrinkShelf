@@ -22,16 +22,19 @@ PluginManager.registerButton(1, ['DOC', 'NOTE'], {
 // One tap on the toolbar button always opens InkShelf, even if Supernote lost track of
 // whether it was showing (that made it take two taps after opening a book).
 import {log} from './src/log';
+import {emit} from './src/events';
 PluginManager.registerButtonListener({
   onButtonPress(event) {
     log('toolbar button', event?.id, event?.pressEvent);
-    if (event?.id === 100) setTimeout(() => PluginManager.showPluginView().catch(() => {}), 120);
+    if (event?.id === 100) {
+      emit('opened'); // check which book is open right now (for Continue / progress)
+      setTimeout(() => PluginManager.showPluginView().catch(() => {}), 120);
+    }
   },
 });
 
 // A settings entry for InkShelf in Supernote's own plugin settings.
 // Tapping it opens InkShelf with the settings sheet showing.
-import {emit} from './src/events';
 PluginManager.registerConfigButton().catch(() => {});
 PluginManager.registerConfigButtonListener({
   onClick() {

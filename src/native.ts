@@ -79,6 +79,16 @@ export async function copyText(text: string): Promise<boolean> {
 const ok = (r: any) => r && r.success !== false;
 
 /** Is InkShelf open on top of a note (so we can paste into it)? */
+/** the document open behind InkShelf right now (a book or a note) */
+export async function currentFile(): Promise<string | null> {
+  try {
+    const r: any = await PluginCommAPI.getCurrentFilePath();
+    const p = r?.result ?? r;
+    return typeof p === 'string' && p ? p : null;
+  } catch (e) {
+    return null;
+  }
+}
 export async function currentNote(): Promise<string | null> {
   try {
     const r: any = await PluginCommAPI.getCurrentFilePath();
@@ -171,6 +181,32 @@ export async function readZip(path: string): Promise<{[name: string]: string} | 
   if (!N?.readZip) return null;
   try {
     return (await N.readZip(path)) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** title/author/description/language/subjects written inside an EPUB */
+export async function epubMeta(path: string): Promise<{title?: string; author?: string; description?: string; language?: string; subjects: string[]} | null> {
+  if (!N?.readEpubMeta) return null;
+  let opf: string | null = null;
+  try {
+    opf = await N.readEpubMeta(path);
+  } catch (e) {}
+  if (!opf) return null;
+  const un = (t: string) =>
+    t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+  const all = (tag: string) => Array.from(opf!.matchAll(new RegExp(`<dc:${tag}\\b[^>]*>([\\s\\S]*?)</dc:${tag}>`, 'gi'))).map(m => un(m[1])).filter(Boolean);
+  const langs: {[k: string]: string} = {zh: 'Chinese', ko: 'Korean', ja: 'Japanese', en: 'English', es: 'Spanish', fr: 'French', de: 'German', id: 'Indonesian', vi: 'Vietnamese', th: 'Thai', ru: 'Russian', pt: 'Portuguese'};
+  const l = (all('language')[0] || '').toLowerCase().slice(0, 2);
+  const author = all('creator').filter(a => !/^(unknown|anonymous|calibre)/i.test(a))[0];
+  return {title: all('title')[0], author, description: all('description')[0], language: langs[l], subjects: all('subject')};
+}
+/** opens the device's file manager app; returns its name, or null when there isn't one to open */
+export async function openFileManager(): Promise<string | null> {
+  if (!N?.openFileManager) return null;
+  try {
+    return (await N.openFileManager()) || null;
   } catch (e) {
     return null;
   }

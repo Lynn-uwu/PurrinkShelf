@@ -6,6 +6,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
+import {Wish, authorOf, ratingOf, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
 import {AppState, Book, DEFAULT_SETTINGS, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
@@ -16,7 +17,7 @@ const XLSX_NAME = 'InkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, writeZip} from './src/native';
-import {Entry, copyImage, copyText, hasNative, listDir, openBook, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Entry, copyImage, copyText, currentFile, currentNote, epubMeta, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -35,6 +36,9 @@ const WRITE = 'plugin.permission.FILE:WRITE';
 type Screen =
   | {kind: 'home'}
   | {kind: 'bookmarks'}
+  | {kind: 'profile'}
+  | {kind: 'quotes'}
+  | {kind: 'wishlist'}
   | {kind: 'new'}
   | {kind: 'gallery'; what: 'recent' | 'genres'}
   | {kind: 'libraries'}
@@ -47,11 +51,11 @@ type Screen =
   | {kind: 'coledit'; id: string | null}
   | {kind: 'help'; topic?: string}
   | {kind: 'exclude'; lib: string; path: string};
-type From = 'home' | 'bookmarks' | 'library' | 'new';
+type From = 'home' | 'bookmarks' | 'library' | 'new' | 'profile' | 'quotes' | 'wishlist';
 /** one book anywhere in any library */
 type Found = {lib: Lib; book: Book; meta: Meta; isNew?: boolean};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre", "t:Tag", "c:Category" or "f:flag"
-type FilterKind = 'g' | 't' | 'c';
+type FilterKind = 'g' | 't' | 'c' | 'a';
 
 const PERMS: {id: string; icon: IconName; label: string; why: string}[] = [
   {id: READ, icon: 'library', label: 'Read files', why: 'Find the books in your library folders'},
@@ -239,10 +243,18 @@ function InkShelfApp(): React.JSX.Element {
   // a short note at the bottom that goes away by itself (never blocks the page)
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<any>(null);
-  const say = (t: string) => {
-    setToast(t);
+  // a message that arrives while another is showing waits its turn instead of replacing it
+  const toastQ = useRef<{t: string; at: number}[]>([]);
+  const showNext = () => {
+    const n = toastQ.current.shift();
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 5000);
+    setToast(n ? n.t : null);
+    toastTimer.current = n ? setTimeout(showNext, 4000) : null;
+  };
+  const say = (t: string) => {
+    if (toastQ.current.some(x => x.t === t)) return;
+    toastQ.current.push({t, at: Date.now()});
+    if (!toastTimer.current) showNext();
   };
   const [scanning, setScanning] = useState<{[path: string]: boolean}>({});
 
@@ -253,7 +265,7 @@ function InkShelfApp(): React.JSX.Element {
   const [sheet, setSheet] = useState<SheetTab | null>(null); // sort and display
   const [cat, setCat] = useState<string | null>(null); // category picked at the top (null = All)
   const [catOpen, setCatOpen] = useState(false);
-  const [fKind, setFKind] = useState<'g' | 't' | 'f'>('g'); // filter panel: Genre, Tags, More
+  const [fKind, setFKind] = useState<'g' | 't' | 'a' | 'f'>('g'); // filter panel: Genre, Tags, Author, More
   const [tPage, setTPage] = useState(1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const settingsRef = useRef(settings);
@@ -394,7 +406,8 @@ function InkShelfApp(): React.JSX.Element {
   };
 
   const metaOf = (b: Book): Meta => meta.books[b.key] || {};
-  const titleOf = (b: Book) => metaOf(b).title || b.fileTitle;
+  setDashAuthor(settings.dashAuthor !== false);
+  const titleOf = (b: Book) => shownTitle(b, metaOf(b));
 
   const lastBase = useRef<Screen>({kind: 'home'}); // the page under a card (Data and storage)
   const libRef = useRef<Lib | null>(null);
@@ -435,9 +448,49 @@ function InkShelfApp(): React.JSX.Element {
     if (libRef.current?.path === l.path) {
       setBooks(bs);
       setMeta(r.meta);
+      metaRef.current = r.meta;
     }
+    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => wishesArrived(l, bs)), 300);
     return {...r, books: bs};
   }
+  /** fill empty details from what is written inside each EPUB (author, description, language); never overwrites yours */
+  const probing = useRef(false);
+  async function probeEpubs(l: Lib, bs: Book[], m0: MetaStore) {
+    if (probing.current) return;
+    probing.current = true;
+    try {
+      const todo = bs.filter(b => b.ext === 'epub' && !m0.books[b.key]?.probed).slice(0, 40);
+      if (!todo.length) return;
+      const patches: {[k: string]: Meta} = {};
+      for (const b of todo) {
+        const em = await epubMeta(b.files[0]);
+        const m = m0.books[b.key] || {};
+        const p: Meta = {probed: true};
+        if (em) {
+          if (!m.author && em.author && !splitDash(b.fileTitle)) p.author = em.author;
+          if (!m.description && em.description && em.description.length > 20) p.description = em.description.slice(0, 2000);
+          if (!m.language && em.language) p.language = em.language;
+        }
+        patches[b.key] = p;
+      }
+      const cur = l.path === libRef.current?.path ? metaRef.current : libData[l.path]?.meta || m0;
+      const next: MetaStore = {...cur, books: {...cur.books}};
+      Object.entries(patches).forEach(([k, p]) => (next.books[k] = {...next.books[k], ...p}));
+      await saveMeta(l.path, next, bs);
+      setLibData(d => ({...d, [l.path]: {books: bs, meta: next}}));
+      if (l.path === libRef.current?.path) { metaRef.current = next; setMeta(next); }
+      const got = Object.values(patches).filter(p => p.author || p.description).length;
+      log('epub details', todo.length, 'looked at', got, 'filled');
+      if (got) say(`Filled in ${got} book${got === 1 ? '' : 's'} from their EPUB details`);
+    } finally {
+      probing.current = false;
+    }
+  }
+  /** books from the wishlist that have now turned up in a library */
+  const wishRef = useRef<(l: Lib, bs: Book[]) => void>(() => {});
+  const wishesArrived = (l: Lib, bs: Book[]) => wishRef.current(l, bs);
+  const wishBack = useRef<Screen>({kind: 'profile'});
+
   async function scanLib(l: Lib) {
     setScanning(x => ({...x, [l.path]: true}));
     lastScanAt.current[l.path] = Date.now();
@@ -597,7 +650,7 @@ function InkShelfApp(): React.JSX.Element {
   const csvMtime = async () => (await listDir(DEFAULT_BACKUP_DIR)).find(e => e.name === SHEET_NAME)?.mtime || 0;
   const N_CAT = 3, N_GENRE = 4, N_TAG = 8, N_COL = 3, N_RULE = 4;
   const nums = (base: string, n: number) => Array.from({length: n}, (_, i) => `${base} ${i + 1}`);
-  const BOOK_HEAD = ['Title', 'Library', 'Folder', 'File', ...nums('Category', N_CAT), ...nums('Genre', N_GENRE), ...nums('Tag', N_TAG), 'Language', 'Status', 'Completely translated', 'Reading', 'Favourite', ...nums('Add to collection', N_COL), 'Description', 'ID'];
+  const BOOK_HEAD = ['Title', 'Author', 'Library', 'Folder', 'File', ...nums('Category', N_CAT), ...nums('Genre', N_GENRE), ...nums('Tag', N_TAG), 'Language', 'Status', 'Completely translated', 'Reading', 'Favourite', ...nums('Add to collection', N_COL), 'Description', 'ID'];
   const COLL_HEAD = ['Name', 'Match', ...Array.from({length: N_RULE}, (_, i) => [`Rule ${i + 1} check`, `Rule ${i + 1} is`, `Rule ${i + 1} value`]).flat(), 'ID'];
   /** n cells; anything beyond goes into the last one, separated by commas */
   const spread = (v: string[], n: number) => Array.from({length: n}, (_, i) => (i < n - 1 ? v[i] || '' : v.slice(n - 1).join(', ')));
@@ -611,7 +664,8 @@ function InkShelfApp(): React.JSX.Element {
     const books = index.map(f => {
       const id = `${f.lib.path}|${f.book.key}`;
       return [
-        f.meta.title || f.book.fileTitle,
+        shownTitle(f.book, f.meta),
+        authorOf(f.book, f.meta) || '',
         f.lib.name,
         f.book.dir,
         (f.book.files[0] || '').split('/').pop() + (f.book.files.length > 1 ? ` (+${f.book.files.length - 1})` : ''),
@@ -637,7 +691,7 @@ function InkShelfApp(): React.JSX.Element {
       }).flat(),
       c.id,
     ]);
-    const lists: {[h: string]: string} = {Language: 'Languages', 'Completely translated': 'Yes / No', Reading: 'Reading', Favourite: 'Yes / No'};
+    const lists: {[h: string]: string} = {Author: 'Authors', Language: 'Languages', 'Completely translated': 'Yes / No', Reading: 'Reading', Favourite: 'Yes / No'};
     nums('Category', N_CAT).forEach(h => (lists[h] = 'Categories'));
     nums('Genre', N_GENRE).forEach(h => (lists[h] = 'Genres'));
     nums('Tag', N_TAG).forEach(h => (lists[h] = 'Tags'));
@@ -646,11 +700,12 @@ function InkShelfApp(): React.JSX.Element {
     for (let i = 1; i <= N_RULE; i++) Object.assign(cLists, {[`Rule ${i} check`]: 'Rule: check', [`Rule ${i} is`]: 'Rule: is', [`Rule ${i} value`]: 'Rule values'});
     const files = makeWorkbook(
       [
-        {name: 'Books', headers: BOOK_HEAD, rows: books, lists, widths: BOOK_HEAD.map(h => (h === 'Title' ? 34 : h === 'Description' ? 60 : h === 'ID' ? 12 : h === 'File' ? 26 : h === 'Folder' ? 22 : 15))},
+        {name: 'Books', headers: BOOK_HEAD, rows: books, lists, widths: BOOK_HEAD.map(h => (h === 'Title' ? 34 : h === 'Author' ? 20 : h === 'Description' ? 60 : h === 'ID' ? 12 : h === 'File' ? 26 : h === 'Folder' ? 22 : 15))},
         {name: 'Collections', headers: COLL_HEAD, rows: colls, lists: cLists, widths: COLL_HEAD.map(h => (h === 'Name' ? 24 : h === 'ID' ? 10 : 16))},
       ],
       [
         {name: 'Categories', values: cats},
+        {name: 'Authors', values: uniq(index.map(f => authorOf(f.book, f.meta) || ''))},
         {name: 'Genres', values: genres},
         {name: 'Tags', values: tags},
         {name: 'Languages', values: langs},
@@ -660,7 +715,7 @@ function InkShelfApp(): React.JSX.Element {
         {name: 'Rule: check', values: RULE_FIELDS.map(x => x.label)},
         {name: 'Rule: is', values: ['is', 'is not']},
         {name: 'Match', values: ['all rules fit', 'any rule fits']},
-        {name: 'Rule values', values: uniq([...READ_STATES.map(x => x.label), 'No status', 'Yes', 'No', ...cats, ...genres, ...tags, ...langs, ...libs.map(l => l.name)])},
+        {name: 'Rule values', values: uniq([...READ_STATES.map(x => x.label), 'No status', 'Yes', 'No', ...cats, ...genres, ...tags, ...langs, ...libs.map(l => l.name), ...index.map(f => authorOf(f.book, f.meta) || '')])},
       ],
     );
     const ok = await writeZip(sheetPath, files);
@@ -682,13 +737,14 @@ function InkShelfApp(): React.JSX.Element {
     const p: Meta = {};
     const v = (k: string) => (r[k] ?? '').trim();
     const clear = (k: string) => v(k) === '-';
-    if (v('Title') && v('Title') !== (old.title || b.fileTitle)) p.title = clear('Title') || v('Title') === b.fileTitle ? undefined : v('Title');
+    if (v('Title') && v('Title') !== shownTitle(b, old)) p.title = clear('Title') || v('Title') === shownTitle(b, {}) ? undefined : v('Title');
     const cs = groupOf(r, 'Category', 'Categories');
     if (cs) p.categories = JSON.stringify(cs) === JSON.stringify(folderCats(b)) ? undefined : cs;
     const gs = groupOf(r, 'Genre', 'Genres');
     if (gs) p.genres = gs;
     const ts = groupOf(r, 'Tag', 'Tags');
     if (ts) p.tags = ts;
+    if (v('Author') && v('Author') !== (authorOf(b, old) || '')) p.author = clear('Author') ? undefined : v('Author');
     if (v('Language')) p.language = clear('Language') ? undefined : v('Language');
     if (v('Status')) p.status = clear('Status') ? undefined : v('Status');
     if (v('Description')) p.description = clear('Description') ? undefined : v('Description');
@@ -801,7 +857,27 @@ function InkShelfApp(): React.JSX.Element {
     await exportSheet();
   }
 
+  // ---------- duplicates: the same book twice in one folder ("Book.epub", "Book (1).epub", "Book - Copy.pdf") ----------
+  const dupGroups = useMemo(() => {
+    const g: {[k: string]: Found[]} = {};
+    for (const f of index) {
+      const name = norm(shownTitle(f.book, f.meta).replace(/\s*(\(\d+\)|\[\d+\]|[-_ ]copy( \d+)?|copy of )\s*$/i, ''));
+      if (!name) continue;
+      (g[`${f.lib.path}|${f.book.dir}|${name}`] = g[`${f.lib.path}|${f.book.dir}|${name}`] || []).push(f);
+    }
+    const out: {[id: string]: {group: string; others: Found[]}} = {};
+    Object.entries(g).forEach(([k, list]) => list.length > 1 && list.forEach(f => (out[`${f.lib.path}|${f.book.key}`] = {group: k, others: list.filter(x => x !== f)})));
+    return out;
+  }, [index]);
+  const dupOf = (libPath: string, key: string) => dupGroups[`${libPath}|${key}`]?.others || [];
   const indexReady = libs.every(l => libData[l.path] || (l.path === lib?.path && books.length));
+  useEffect(() => {
+    // InkShelf was opened from inside a book: count it as reading that book
+    if (indexReady && index.length && !detectedOnce.current) {
+      detectedOnce.current = true;
+      detectRef.current();
+    }
+  }, [indexReady, index.length]); // eslint-disable-line react-hooks/exhaustive-deps
   indexReadyRef.current = indexReady && index.length > 0;
   const xCache = useRef<{[lib: string]: {[k: string]: string | null}}>({});
   const [, setXTick] = useState(0);
@@ -823,7 +899,7 @@ function InkShelfApp(): React.JSX.Element {
     }, 0);
   };
   const snapOf = (f: Found, extra?: Partial<Snap>): Snap => ({
-    lib: f.lib.path, libName: f.lib.name, key: f.book.key, title: f.meta.title || f.book.fileTitle, cover: xCover(f), folder: f.book.folder, genres: f.meta.genres, at: f.book.added, ...extra,
+    lib: f.lib.path, libName: f.lib.name, key: f.book.key, title: shownTitle(f.book, f.meta), cover: xCover(f), folder: f.book.folder, genres: f.meta.genres, at: f.book.added, ...extra,
   });
   // New tab: books found since the last refresh, plus books still missing details
   const fresh = useMemo(
@@ -833,6 +909,17 @@ function InkShelfApp(): React.JSX.Element {
   function goEdit(f: Found) {
     if (lib?.path === f.lib.path) setScreen({kind: 'edit', key: f.book.key, from: 'new'});
     else openLibrary(f.lib, {kind: 'edit', key: f.book.key, from: 'new'});
+  }
+  /** the library page with one "More" filter on (finished, favourites…) */
+  function goFlag(flag: string) {
+    const l = lib || libs.find(y => y.path === app.lastLib) || libs[0];
+    if (!l) return;
+    if (lib?.path === l.path) {
+      setTags({[flag]: 1});
+      setCat(null);
+      setPage(1);
+      setScreen({kind: 'library'});
+    } else openLibrary(l, undefined, {[flag]: 1});
   }
   function goGenre(g: string) {
     const count: {[p: string]: number} = {};
@@ -864,11 +951,17 @@ function InkShelfApp(): React.JSX.Element {
       bookmarks: isMarked(b) ? a.bookmarks.filter(x => !same(x, lib.path, b.key)) : [snap(b), ...a.bookmarks],
     }));
   };
+  /** what opening a volume changes: where you are, and Reading if you hadn't started */
+  const openedPatch = (m: Meta, path: string): Meta => ({
+    progress: {last: path, opened: Array.from(new Set([...(m.progress?.opened || []), path])), at: Date.now()},
+    ...(!m.reading || m.reading.state === 'plan' ? {reading: setReading(m.reading, 'reading')} : {}),
+  });
+  const today = () => dayKey(new Date());
+  const markDay = () => changeApp(a => (a.days?.includes(today()) ? a : {...a, days: [...(a.days || []), today()].slice(-400)}));
   async function readBook(b: Book, path: string) {
     markSeen(b);
-    // opening a book you haven't started marks it Reading (with today's date)
-    const r = metaOf(b).reading;
-    if (!r || r.state === 'plan') await updateMeta(b.key, {reading: setReading(r, 'reading')});
+    await updateMeta(b.key, openedPatch(metaOf(b), path));
+    markDay();
     if (lib) {
       const v = b.vols.find(x => x.path === path);
       const s1 = snap(b, {vol: v?.n});
@@ -876,6 +969,59 @@ function InkShelfApp(): React.JSX.Element {
     }
     await read(path);
   }
+  /** change a book's details in any library (not only the open one) */
+  async function patchBook(l: Lib, key: string, patch: Meta) {
+    if (l.path === lib?.path) return updateMeta(key, patch);
+    const d = libData[l.path];
+    if (!d) return;
+    const m: MetaStore = {...d.meta, books: {...d.meta.books, [key]: {...d.meta.books[key], ...patch}}};
+    setLibData(x => ({...x, [l.path]: {books: d.books, meta: m}}));
+    await saveMeta(l.path, m, d.books);
+  }
+  wishRef.current = (l: Lib, bs: Book[]) => {
+    const ws = app.wishlist || [];
+    if (!ws.length) return;
+    const m = l.path === lib?.path ? metaRef.current : libData[l.path]?.meta;
+    const got: {w: Wish; b: Book}[] = [];
+    ws.forEach(w => {
+      const b = bs.find(x => { const t = shownTitle(x, m?.books[x.key]); return norm(t) === norm(w.title) || similar(t, w.title) >= 0.88; });
+      if (b) got.push({w, b});
+    });
+    if (!got.length) return;
+    (async () => {
+      for (const {w, b} of got) {
+        const bm = m?.books[b.key] || {};
+        const patch: Meta = {};
+        if (w.author && !authorOf(b, bm)) patch.author = w.author;
+        const said = [w.note, w.where ? `Wished for from: ${w.where}` : ''].filter(Boolean).join('\n');
+        if (said && (bm.notes || []).length < MAX_NOTES) patch.notes = [...(bm.notes || []), {id: 'w' + w.id, title: 'From your wishlist', text: said, color: 'lemon', at: Date.now()}];
+        if (Object.keys(patch).length) await patchBook(l, b.key, patch);
+      }
+      const done = new Set(got.map(x => x.w.id));
+      changeApp(a => ({...a, wishlist: (a.wishlist || []).filter(x => !done.has(x.id))}));
+      say(got.length === 1 ? `From your wishlist: "${got[0].w.title}" has arrived` : `${got.length} books from your wishlist have arrived`);
+      log('wishlist arrived', got.map(x => x.w.title).join(', '));
+    })().catch(e => log('wishlist failed', String(e)));
+  };
+  /** InkShelf is opened from Supernote's toolbar inside a document: if that document is one of your books, note it */
+  const detectRef = useRef<() => void>(() => {});
+  detectRef.current = async () => {
+    const path = await currentFile();
+    if (!path) return;
+    const f = index.find(x => x.book.files.includes(path));
+    if (!f) return;
+    const again = f.meta.progress?.last === path && Date.now() - (f.meta.progress?.at || 0) < 30 * 60000;
+    await patchBook(f.lib, f.book.key, openedPatch(f.meta, path));
+    markDay();
+    const v = f.book.vols.find(x => x.path === path);
+    const s1 = snapOf(f, {vol: v?.n, at: Date.now()});
+    changeApp(a => ({...a, recent: [s1, ...a.recent.filter(x => !same(x, s1.lib, s1.key))].slice(0, 12)}));
+    log('reading in Supernote', path);
+    if (!again) say(`Reading now: ${shownTitle(f.book, f.meta)}${v ? `, ${v.kind || 'Vol'} ${v.n}` : ''}`);
+  };
+  useEffect(() => on('opened', () => detectRef.current()), []);
+  const detectedOnce = useRef(false);
+
   function goBook(x: Snap, from: From) {
     const l = libs.find(y => y.path === x.lib);
     if (!l) {
@@ -976,6 +1122,8 @@ function InkShelfApp(): React.JSX.Element {
     if (m.fav) f.push('f:fav');
     if (m.reading?.state === 'reading' || m.reading?.state === 'rereading') f.push('f:inprogress');
     if (timesRead(m.reading) > 0) f.push('f:finished');
+    if (ratingOf(m)) f.push('f:rated');
+    if (lib && dupOf(lib.path, b.key).length) f.push('f:dup');
     if (meta.newKeys?.includes(b.key)) f.push('f:new');
     if (/(^|[^n])complete/i.test(m.status || '')) f.push('f:completed');
     if (m.translated === 'Yes') f.push('f:translated');
@@ -986,7 +1134,8 @@ function InkShelfApp(): React.JSX.Element {
   };
   const keysOf = (b: Book) => {
     const m = meta.books[b.key] || {};
-    return [...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t), ...catsOf(b, m).map(c => 'c:' + c), ...flagsOf(b)];
+    const au = authorOf(b, m);
+    return [...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t), ...catsOf(b, m).map(c => 'c:' + c), ...(au ? ['a:' + au] : []), ...flagsOf(b)];
   };
   const matches = (b: Book, ts: TagState, skip?: string) => {
     const bt = keysOf(b);
@@ -1005,6 +1154,8 @@ function InkShelfApp(): React.JSX.Element {
     if (by === 'added') return b.added;
     if (by === 'vols') return Math.max(1, b.vols.length);
     if (by === 'category') return catsOf(b, m).join(' / ').toLowerCase() || '~';
+    if (by === 'author') return (authorOf(b, m) || '~').toLowerCase();
+    if (by === 'rating') return ratingOf(m) || 0;
     return (m.title || b.fileTitle).replace(/^(the|a|an)\s+/i, '').toLowerCase();
   };
   const results = useMemo(() => {
@@ -1131,7 +1282,7 @@ function InkShelfApp(): React.JSX.Element {
         />
       )}
       {toast && !message && !sheet && !showSettings ? (
-        <Pressable style={st.toast} onPress={() => setToast(null)} accessibilityLabel="Dismiss">
+        <Pressable style={st.toast} onPress={showNext} accessibilityLabel="Dismiss">
           <Text style={st.toastText} numberOfLines={3}>{toast}</Text>
         </Pressable>
       ) : null}
@@ -1189,7 +1340,7 @@ function InkShelfApp(): React.JSX.Element {
         else if (t === 'library') goLibrary();
         else if (t === 'bookmarks') setScreen({kind: 'bookmarks'});
         else if (t === 'new') setScreen({kind: 'new'});
-        else setShowSettings(true);
+        else setScreen({kind: 'profile'});
       }}
     />
   );
@@ -1312,6 +1463,20 @@ function InkShelfApp(): React.JSX.Element {
         onCollection={(c, on) => toggleIn(c, lib, b.key, on)}
         onNewCollection={() => setScreen({kind: 'coledit', id: null})}
         reloading={!!scanning[lib.path]}
+        author={authorOf(b, mb)}
+        dup={(() => {
+          const d = dupGroups[`${lib.path}|${b.key}`];
+          if (!d) return null;
+          return {
+            others: d.others.map(o => ({title: shownTitle(o.book, o.meta), where: (o.book.files[0] || '').split('/').pop() || '', onOpen: () => setScreen({kind: 'book', key: o.book.key, from: screen.from})})),
+            ignored: !!app.dupIgnore?.includes(d.group),
+            onIgnore: () => changeApp(a => ({...a, dupIgnore: [...(a.dupIgnore || []), d.group]})),
+            onFiles: async () => {
+              const app2 = await openFileManager();
+              if (!app2) setMessage(`InkShelf couldn't open the file manager. The copies are in: ${b.dir || lib.name}`);
+            },
+          };
+        })()}
         onReload={async () => {
           // look at the folder again: new, removed or renamed volumes
           const before = b.files.length;
@@ -1433,7 +1598,7 @@ function InkShelfApp(): React.JSX.Element {
   if (view.kind === 'home') {
     return shell(
       <>
-        <Header title="" onHelp={() => setScreen({kind: 'help'})} right={<IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />} />
+        <Header title="" onHelp={() => setScreen({kind: 'help'})} right={<IconBtn bare name="gear" label="Settings" onPress={() => setShowSettings(true)} iconSize={px(30)} style={{marginRight: px(4)}} />} />
         <View style={st.brand} pointerEvents="none">
           <Icon name="logo" size={px(34)} />
           <Text style={st.brandText}>InkShelf</Text>
@@ -1479,6 +1644,43 @@ function InkShelfApp(): React.JSX.Element {
     );
   }
 
+  // ----- profile: numbers about your reading, notes and quotes, wishlist -----
+  if (view.kind === 'profile') {
+    return shell(
+      <>
+        <Header title="Profile" onHelp={() => setScreen({kind: 'help', topic: 'profile'})} right={<IconBtn bare name="gear" label="Settings" onPress={() => setShowSettings(true)} iconSize={px(30)} style={{marginRight: px(4)}} />} />
+        <ProfilePage
+          index={index}
+          days={app.days || []}
+          wishes={(app.wishlist || []).length}
+          onQuotes={() => setScreen({kind: 'quotes'})}
+          onWish={() => { wishBack.current = {kind: 'profile'}; setScreen({kind: 'wishlist'}); }}
+          onGenre={goGenre}
+          onFilter={goFlag}
+        />
+        {taskbar('profile')}
+      </>,
+    );
+  }
+  if (view.kind === 'quotes') {
+    return shell(
+      <>
+        <Header title="Notes and quotes" left="Profile" onLeft={() => setScreen({kind: 'profile'})} />
+        <QuotesPage index={index} cover={xCover} onOpen={f => goBook(snapOf(f), 'quotes')} />
+        {taskbar('profile')}
+      </>,
+    );
+  }
+  if (view.kind === 'wishlist') {
+    return shell(
+      <>
+        <Header title="Wishlist" left="Back" onLeft={() => setScreen(wishBack.current)} />
+        <WishlistPage wishes={app.wishlist || []} onChange={w => changeApp(a => ({...a, wishlist: w}))} />
+        {taskbar(wishBack.current.kind === 'bookmarks' ? 'bookmarks' : 'profile')}
+      </>,
+    );
+  }
+
   // ----- newly added: books still waiting for a genre/tag or a summary -----
   if (view.kind === 'new') {
     return shell(
@@ -1496,7 +1698,7 @@ function InkShelfApp(): React.JSX.Element {
       {id: 'bookmarks', name: 'Bookmarks', items: app.bookmarks.map(x => ({key: x.lib + x.key, cover: x.cover || null, title: x.title}))},
       ...collections.map(c => {
         const fs = index.filter(f => inCollection(c, factsOf(f)));
-        return {id: c.id, name: c.name, found: fs, items: fs.map(f => ({key: f.lib.path + f.book.key, cover: xCover(f), title: f.meta.title || f.book.fileTitle}))};
+        return {id: c.id, name: c.name, found: fs, items: fs.map(f => ({key: f.lib.path + f.book.key, cover: xCover(f), title: shownTitle(f.book, f.meta)}))};
       }),
     ];
     const cur = colSel ? all.find(c => c.id === colSel) : undefined;
@@ -1508,8 +1710,15 @@ function InkShelfApp(): React.JSX.Element {
         <>
           <Header title="Collections" right={<IconBtn bare name="plus" label="New collection" onPress={() => setScreen({kind: 'coledit', id: null})} iconSize={px(28)} style={{marginRight: px(4)}} />} />
           <CollectionGrid
-            items={all.map(c => ({id: c.id, name: c.name, count: c.items.length, covers: c.items.slice(0, 4).map(i => ({cover: i.cover, title: i.title})), auto: !!collections.find(x => x.id === c.id)?.rules.length, pic: collections.find(x => x.id === c.id)?.cover}))}
-            onOpen={id => { setColSel(id); setColEdit(false); }}
+            items={[
+              ...all.map(c => ({id: c.id, name: c.name, count: c.items.length, covers: c.items.slice(0, 4).map(i => ({cover: i.cover, title: i.title})), auto: !!collections.find(x => x.id === c.id)?.rules.length, pic: collections.find(x => x.id === c.id)?.cover})),
+              {id: ':wishlist', name: 'Wishlist', count: 0, covers: [], auto: false, icon: 'wish' as IconName, sub: `${(app.wishlist || []).length} to find`},
+            ]}
+            onOpen={id => {
+              if (id === ':wishlist') { wishBack.current = {kind: 'bookmarks'}; return setScreen({kind: 'wishlist'}); }
+              setColSel(id);
+              setColEdit(false);
+            }}
             onNew={() => setScreen({kind: 'coledit', id: null})}
           />
           {taskbar('bookmarks')}
@@ -1550,7 +1759,7 @@ function InkShelfApp(): React.JSX.Element {
               empty={coll.rules.length ? 'No books fit this collection yet. Tap the pencil, then Rules and name, to change what it collects.' : 'Empty. Add books from a book page (the collections button), or tap the pencil to add rules.'}
               items={(members || []).map(f => ({
                 key: f.lib.path + f.book.key,
-                title: f.meta.title || f.book.fileTitle,
+                title: shownTitle(f.book, f.meta),
                 sub: [f.meta.reading ? `${readLabel(f.meta.reading.state)} · ${day(f.meta.reading.at)}` : '', f.book.folder || f.lib.name].filter(Boolean).join('  ·  '),
                 cover: xCover(f),
                 pills: f.meta.genres,
@@ -1603,6 +1812,7 @@ function InkShelfApp(): React.JSX.Element {
       if (f === 'language') return uniq(index.map(x => x.meta.language || ''));
       if (f === 'fav') return ['Yes', 'No'];
       if (f === 'library') return libs.map(l => l.name);
+      if (f === 'author') return uniq(index.map(x => authorOf(x.book, x.meta) || ''));
       return [];
     };
     const cid = view.id;
@@ -1745,11 +1955,12 @@ function InkShelfApp(): React.JSX.Element {
   const active = Object.keys(tags).length;
   const badgeOf = (b: Book) => (b.missing ? 'MISSING LINK' : undefined);
   const isNewB = (b: Book) => settings.badges.newBadge && !!meta.newKeys?.includes(b.key);
-  const sortName: {[k in SortBy]: string} = {title: 'Title', read: 'Last read', added: 'Date added', vols: 'Volumes', category: 'Category'};
+  const sortName: {[k in SortBy]: string} = {title: 'Title', read: 'Last read', added: 'Date added', vols: 'Volumes', category: 'Category', author: 'Author', rating: 'Rating'};
   const clearAll = () => { setTags({}); setPage(1); };
   const inView = shelf.filter(inCat);
   const tagCount = (k: string) => inView.filter(b => keysOf(b).includes(k) && matches(b, tags, k)).length;
-  const fNames = fKind === 'g' ? allGenres : fKind === 't' ? allTags : FLAGS.filter(f => f.k !== 'f:missing' || missingHere.length || tags[f.k]).map(f => f.k);
+  const allAuthors = Array.from(new Set(shelf.map(b => authorOf(b, meta.books[b.key]) || '').filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const fNames = fKind === 'g' ? allGenres : fKind === 't' ? allTags : fKind === 'a' ? allAuthors : FLAGS.filter(f => f.k !== 'f:missing' || missingHere.length || tags[f.k]).map(f => f.k);
   const fixedTop = px(10) + px(36) + px(46) + (fKind === 'f' ? px(24) : px(40) + px(24));
   const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64) - TASK_H - px(10)) / px(40)));
   const tPages = Math.max(1, Math.ceil(fNames.length / perT));
@@ -1787,15 +1998,27 @@ function InkShelfApp(): React.JSX.Element {
       const sub = [
         settings.badges.vols && b.vols.length > 1 ? `${b.vols.length} vols` : '',
         settings.badges.notes && m.notes?.length ? `${m.notes.length} note${m.notes.length === 1 ? '' : 's'}` : '',
+        ratingOf(m) ? `★ ${ratingOf(m)}` : '',
       ].filter(Boolean).join('  ·  ');
+      const au = authorOf(b, m);
+      const dups = lib ? dupOf(lib.path, b.key) : [];
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
           <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} isNew={isNewB(b)} badge={badgeOf(b)} />
           <View style={st.rowText}>
-            <Text style={st.rowTitle} numberOfLines={2}>
-              {titleOf(b)}
-              {sub ? <Text style={st.small}>{`  · ${sub}`}</Text> : null}
-            </Text>
+            <View style={{flexDirection: 'row', alignItems: 'flex-start'}}>
+              <Text style={[st.rowTitle, {flex: 1}]} numberOfLines={2}>
+                {titleOf(b)}
+                {sub ? <Text style={st.small}>{`  · ${sub}`}</Text> : null}
+              </Text>
+              {dups.length ? (
+                // the same book is in this folder twice: tap to go to the other one
+                <Pressable onPress={() => setScreen({kind: 'book', key: dups[0].book.key})} style={st.dupMark} hitSlop={px(6)} accessibilityLabel="Go to the other copy">
+                  <Text style={st.dupMarkText}>{`${dups.length + 1}×`}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {au ? <Text style={st.byLineSmall} numberOfLines={1}>{au}</Text> : null}
             <View style={st.pillLine}>
               {(() => {
                 // only whole pills: show what fits on one line, then "+N"
@@ -1873,7 +2096,7 @@ function InkShelfApp(): React.JSX.Element {
         </Pressable>
         <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
           <IconBtn bare name="help" label="How to use InkShelf" onPress={() => setScreen({kind: 'help'})} iconSize={px(30)} />
-          <IconBtn bare name="gear" label="Data and storage" onPress={() => setScreen({kind: 'libraries'})} iconSize={px(30)} style={{marginRight: px(4)}} />
+          <IconBtn bare name="gear" label="Settings" onPress={() => setShowSettings(true)} iconSize={px(30)} style={{marginRight: px(4)}} />
           <CloseBtn />
         </View>
       </View>
@@ -1890,17 +2113,17 @@ function InkShelfApp(): React.JSX.Element {
                 )}
               </View>
               <View style={st.kindTabs}>
-                {(['g', 't', 'f'] as const).map(k => (
-                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); }} style={[st.kindTab, fKind === k && st.btnDark]} accessibilityLabel={k === 'g' ? 'Genre' : k === 't' ? 'Tags' : 'More filters'}>
-                    <Text style={[st.kindTabText, fKind === k && {color: '#ffffff'}]} numberOfLines={1}>{(k === 'g' ? 'Genre' : k === 't' ? 'Tags' : 'More') + (kindOn(k) && fKind !== k ? ' •' : '')}</Text>
+                {(['g', 't', 'a', 'f'] as const).map(k => (
+                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); }} style={[st.kindTab, {paddingHorizontal: 0}, fKind === k && st.btnDark]} accessibilityLabel={k === 'g' ? 'Genre' : k === 't' ? 'Tags' : k === 'a' ? 'Author' : 'More filters'}>
+                    <Text style={[st.kindTabText, {fontSize: px(14)}, fKind === k && {color: '#ffffff'}]} numberOfLines={1}>{(k === 'g' ? 'Genre' : k === 't' ? 'Tags' : k === 'a' ? 'Author' : 'More') + (kindOn(k) && fKind !== k ? '•' : '')}</Text>
                   </Pressable>
                 ))}
               </View>
               {fNames.length === 0 ? (
-                <Text style={st.hint}>{`No ${fKind === 'g' ? 'genres' : 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
+                <Text style={st.hint}>{`No ${fKind === 'g' ? 'genres' : fKind === 'a' ? 'authors' : 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
               ) : (
                 <>
-                  {fKind !== 'f' ? (
+                  {fKind !== 'f' && fKind !== 'a' ? (
                     <View style={st.modeRow}>
                       <Text style={st.small}>Match </Text>
                       <Pill label="All" active={mode === 'all'} onPress={() => { setMode('all'); setPage(1); }} />
@@ -2015,6 +2238,7 @@ const partsWord = (vols: Vol[]) => {
   if (k.length !== 1) return 'parts';
   return ({Vol: 'volumes', Part: 'parts', Ch: 'chapters', Ep: 'episodes', Book: 'books', Lesson: 'lessons', Module: 'modules', Unit: 'units', Arc: 'arcs', Season: 'seasons'} as {[k: string]: string})[k[0]] || 'parts';
 };
+const starText = (r: number) => '★'.repeat(Math.floor(r)) + (r % 1 ? '½' : '') + '☆'.repeat(5 - Math.ceil(r));
 const day = (t: number) => new Date(t).toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'});
 const dayTime = (t: number) => new Date(t).toLocaleString(undefined, {day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit'});
 /** a small mark for each reading status (shapes, since the screen has no colours) */
@@ -2141,8 +2365,10 @@ function BookPage(props: {
   onNewCollection: () => void;
   onReload: () => void;
   reloading: boolean;
+  author?: string;
+  dup: {others: {title: string; where: string; onOpen: () => void}[]; ignored: boolean; onIgnore: () => void; onFiles: () => void} | null;
 }) {
-  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading} = props;
+  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup} = props;
   const [statusOpen, setStatusOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -2206,6 +2432,8 @@ function BookPage(props: {
   else left.push({h: px(28), sec, node: <Text style={st.small}>None</Text>});
   left.push({h: px(6), sec});
   field('Completely translated', m.translated);
+  const stars = ratingOf(m);
+  if (stars) field('Your rating', `${starText(stars)}  ${stars} / 5 (from your notes)`);
   if (m.reading) {
     const n = timesRead(m.reading);
     const done = [...m.reading.history].reverse().find(h => h.state === 'completed');
@@ -2216,6 +2444,20 @@ function BookPage(props: {
   // ----- right: description, then volumes -----
   const right: Item[] = [];
   const perLine = Math.floor(rIn / (px(18) * 0.53));
+  if (dup && !dup.ignored && dup.others.length) {
+    right.push({h: px(150), node: (
+      <View style={st.missingNote}>
+        <Text style={[st.small, {color: BLACK, fontWeight: 'bold'}]}>{'Possible duplicate: the same book is in this folder twice.'}</Text>
+        <Pressable onPress={dup.others[0].onOpen} accessibilityLabel="Show the other copy">
+          <Text style={[st.small, {textDecorationLine: 'underline', color: BLACK}]} numberOfLines={1}>{`Other copy: ${dup.others[0].where}`}</Text>
+        </Pressable>
+        <View style={{flexDirection: 'row', marginTop: px(6)}}>
+          <Btn small icon="folder" label="Open files" onPress={dup.onFiles} style={{flex: 1}} />
+          <Btn small icon="check" label="Keep both" onPress={dup.onIgnore} style={{flex: 1, marginLeft: px(6)}} />
+        </View>
+      </View>
+    )});
+  }
   if (b.missing) {
     right.push({h: px(96), node: (
       <View style={st.missingNote}>
@@ -2253,7 +2495,7 @@ function BookPage(props: {
           vol: true,
           node: (
             <Pressable style={st.volRow} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
-              <Icon name="play" size={px(22)} />
+              <Icon name={opened.has(v.path) ? 'check' : 'play'} size={px(22)} />
               <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
               <Text style={st.volName} numberOfLines={1}>{vlabel(v)}</Text>
             </Pressable>
@@ -2270,7 +2512,8 @@ function BookPage(props: {
           node: (
             <View style={{flexDirection: 'row'}}>
               {b.vols.slice(i, i + per).map((v, j) => (
-                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}]} onPress={() => onRead(v.path)}>
+                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}, opened.has(v.path) && {borderWidth: 3}]} onPress={() => onRead(v.path)}>
+                  {opened.has(v.path) ? <View style={{position: 'absolute', top: px(3), right: px(3)}}><Icon name="check" size={px(16)} /></View> : null}
                   <Text style={st.volCellText}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
                   {vlabel(v) ? <Text style={st.volCellSub} numberOfLines={2}>{vlabel(v)}</Text> : null}
                 </Pressable>
@@ -2302,15 +2545,21 @@ function BookPage(props: {
       <PostIt notes={m.notes || []} onPress={() => setNotesOpen(true)} style={{position: 'absolute', right: 0, bottom: 0}} />
     </View>
   );
+  // Start the first time; after that, Continue where you were (also when you opened it from Supernote)
+  const lastPath = m.progress?.last && b.files.includes(m.progress.last) ? m.progress.last : undefined;
+  const lastVol = lastPath ? b.vols.find(v => v.path === lastPath) : undefined;
+  const opened = new Set(m.progress?.opened || []);
   const start = b.missing ? (
     <View style={[st.startBtn, {width: lIn, backgroundColor: '#ffffff', borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK}]}>
       <Icon name="unlink" size={px(24)} />
       <Text style={[st.startText, {marginLeft: px(8), color: BLACK, fontSize: px(16)}]}>Missing link</Text>
     </View>
   ) : (
-    <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(b.files[0])}>
+    <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(lastPath || b.files[0])} accessibilityLabel={lastPath ? 'Continue' : 'Start'}>
       <Icon name="play-on" size={px(26)} color="#ffffff" />
-      {b.vols.length ? <Text style={[st.startText, {marginLeft: px(8)}]}>{`${b.vols[0].kind || 'Vol'} ${b.vols[0].n}`}</Text> : null}
+      <Text style={[st.startText, {marginLeft: px(8)}]} numberOfLines={1}>
+        {(lastPath ? 'Continue' : 'Start') + (lastVol ? ` · ${lastVol.kind || 'Vol'} ${lastVol.n}` : b.vols.length && !lastPath ? ` · ${b.vols[0].kind || 'Vol'} ${b.vols[0].n}` : '')}
+      </Text>
     </Pressable>
   );
   return (
@@ -2327,7 +2576,14 @@ function BookPage(props: {
         <IconBtn bare name="close" label="Close page" onPress={onBack} iconSize={px(30)} />
       </View>
       <View style={{height: titleH, paddingHorizontal: px(16), flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
-        <Text style={[st.bookTitle, {flex: 1}]} numberOfLines={2}>{title}</Text>
+        <View style={{flex: 1}}>
+          {author ? (
+            <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`}>
+              <Text style={st.byLine} numberOfLines={1}>{author}</Text>
+            </Pressable>
+          ) : null}
+          <Text style={st.bookTitle} numberOfLines={author ? 1 : 2}>{title}</Text>
+        </View>
         <Pressable onPress={() => setStatusOpen(true)} style={[st.statusChip, {maxWidth: statusW}, m.reading && st.btnDark]} accessibilityLabel="Reading status">
           <StatusDot state={m.reading?.state} light={!!m.reading} />
           <Text style={[st.statusText, m.reading && {color: '#ffffff'}]} numberOfLines={1}>{readLabel(m.reading?.state)}</Text>
@@ -2492,129 +2748,6 @@ function PostIt({notes, onPress, style}: {notes: Note[]; onPress: () => void; st
   );
 }
 
-function NotesSheet({title, notes, onChange, onClose}: {title: string; notes: Note[]; onChange: (n: Note[]) => void; onClose: () => void}) {
-  const [sel, setSel] = useState(0);
-  const [editing, setEditing] = useState<Note | null>(null);
-  const [confirm, setConfirm] = useState<'one' | 'all' | null>(null); // deleting asks for a second tap
-  const cur = notes[Math.min(sel, notes.length - 1)];
-  const startNew = () => {
-    setConfirm(null);
-    setEditing({id: Date.now().toString(36), text: '', color: NOTE_COLORS[notes.length % NOTE_COLORS.length].id, at: Date.now()});
-  };
-  const save = () => {
-    if (!editing) return;
-    const n = {...editing, title: editing.title?.trim() || undefined, text: editing.text.trim(), at: Date.now()};
-    if (!n.text && !n.title) return setEditing(null);
-    const i = notes.findIndex(x => x.id === n.id);
-    const next = i >= 0 ? notes.map(x => (x.id === n.id ? n : x)) : [...notes, n];
-    onChange(next);
-    setSel(i >= 0 ? i : next.length - 1);
-    setEditing(null);
-  };
-  const removeOne = (id: string) => {
-    if (confirm !== 'one') return setConfirm('one');
-    const i = notes.findIndex(x => x.id === id);
-    onChange(notes.filter(x => x.id !== id));
-    setSel(Math.max(0, i - 1));
-    setEditing(null);
-    setConfirm(null);
-  };
-  const removeAll = () => {
-    if (confirm !== 'all') return setConfirm('all');
-    onChange([]);
-    setSel(0);
-    setEditing(null);
-    setConfirm(null);
-  };
-  const isSaved = (n: Note | null) => !!n && notes.some(x => x.id === n.id);
-  const boxW = W - px(60) - px(36);
-  const boxH = Math.round(H * 0.46);
-  const warn = confirm ? <Text style={[st.small, {textAlign: 'center', marginTop: px(8)}]}>{confirm === 'all' ? 'Tap the bin again to delete all notes on this book.' : 'Tap the bin again to delete this note.'}</Text> : null;
-  return (
-    <View style={st.modalWrap}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={editing ? undefined : onClose} />
-      <View style={st.modal}>
-        <View style={st.modalHead}>
-          <Icon name="note" size={px(30)} />
-          <View style={{flex: 1, marginLeft: px(10)}}>
-            <Text style={st.small} numberOfLines={1}>{title}</Text>
-            <Text style={st.cardSub}>{`${notes.length} / ${MAX_NOTES}`}</Text>
-          </View>
-          {notes.length > 1 && !editing ? (
-            <IconBtn name="trash-all" label="Delete all notes" dark={confirm === 'all'} onPress={removeAll} style={{marginRight: px(8)}} />
-          ) : null}
-          <IconBtn bare name="close" label="Close notes" onPress={onClose} iconSize={px(28)} />
-        </View>
-
-        {/* one tab per note, plus "+" while there is room */}
-        <View style={{flexDirection: 'row', marginBottom: px(14)}}>
-          {notes.map((x, i) => (
-            <Pressable key={x.id} onPress={() => { setSel(i); setEditing(null); setConfirm(null); }} style={[st.noteTab, {backgroundColor: noteBg(x.color)}, i === sel && !editing && st.noteTabOn, editing?.id === x.id && st.noteTabOn]}>
-              <Text style={st.noteTabText} numberOfLines={1}>{x.title || `${i + 1}`}</Text>
-            </Pressable>
-          ))}
-          {notes.length < MAX_NOTES ? (
-            <Pressable onPress={startNew} style={[st.noteTab, st.noteTabPlus, editing && !isSaved(editing) && st.noteTabOn]} accessibilityLabel="New note">
-              <Icon name="plus" size={px(24)} />
-            </Pressable>
-          ) : null}
-        </View>
-
-        {editing ? (
-          <>
-            <View style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: noteBg(editing.color)}]}>
-              <TextInput style={st.noteTitleInput} value={editing.title || ''} onChangeText={t => setEditing({...editing, title: t})} placeholder="Title (optional)" placeholderTextColor="#666666" maxLength={40} />
-              <TextInput
-                style={st.noteTextInput}
-                value={editing.text}
-                onChangeText={t => setEditing({...editing, text: t})}
-                placeholder="Your thoughts, a favourite line, where you stopped…"
-                placeholderTextColor="#666666"
-                multiline
-                maxLength={500}
-              />
-              <Text style={[st.small, {textAlign: 'right'}]}>{`${editing.text.length} / 500`}</Text>
-            </View>
-            <View style={{flexDirection: 'row', marginTop: px(14), alignItems: 'center'}}>
-              {NOTE_COLORS.map(c => (
-                <Pressable key={c.id} onPress={() => setEditing({...editing, color: c.id})} style={{marginRight: px(12)}} accessibilityLabel={c.label}>
-                  <View style={[st.swatch, {backgroundColor: c.bg}, editing.color === c.id && {borderWidth: 3.5}]}>
-                    {editing.color === c.id ? <Icon name="check" size={px(22)} /> : null}
-                  </View>
-                </Pressable>
-              ))}
-              <View style={{flex: 1}} />
-              {isSaved(editing) ? <IconBtn name="trash" label="Delete note" dark={confirm === 'one'} onPress={() => removeOne(editing.id)} style={{marginRight: px(10)}} /> : null}
-              <IconBtn name="close" label="Cancel" onPress={() => { setEditing(null); setConfirm(null); }} style={{marginRight: px(10)}} />
-              <IconBtn name="check" label="Save note" dark onPress={save} />
-            </View>
-            {warn}
-          </>
-        ) : cur ? (
-          <>
-            <View style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: noteBg(cur.color)}]}>
-              {cur.title ? <Text style={st.noteTitle} numberOfLines={1}>{cur.title}</Text> : null}
-              <Text style={st.noteText} numberOfLines={cur.title ? 12 : 13}>{cur.text}</Text>
-              <Text style={[st.small, {position: 'absolute', right: px(16), bottom: px(12)}]}>{dateText(cur.at)}</Text>
-            </View>
-            <View style={{flexDirection: 'row', marginTop: px(14), justifyContent: 'flex-end'}}>
-              <IconBtn name="trash" label="Delete note" dark={confirm === 'one'} onPress={() => removeOne(cur.id)} style={{marginRight: px(10)}} />
-              <IconBtn name="edit" label="Edit note" dark onPress={() => { setEditing(cur); setConfirm(null); }} />
-            </View>
-            {warn}
-          </>
-        ) : (
-          <Pressable onPress={startNew} style={[st.noteBig, {width: boxW, height: boxH, backgroundColor: '#fbf0a0', justifyContent: 'center', alignItems: 'center'}]} accessibilityLabel="Write a note">
-            <View style={[st.round, {backgroundColor: BLACK}]}><Icon name="plus" size={px(32)} color="#ffffff" /></View>
-            <Text style={[st.small, {textAlign: 'center', marginTop: px(12)}]}>{'Up to five notes:\nthoughts, quotes, where you stopped.'}</Text>
-          </Pressable>
-        )}
-      </View>
-    </View>
-  );
-}
-
-
 // ---------- notes board: every note pinned up, a little crooked, like real sticky notes ----------
 const tilt = (id: string, i: number) => {
   let h = 7 + i;
@@ -2680,7 +2813,8 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
                     accessibilityLabel={picking ? `${sel ? 'Unselect' : 'Select'} note ${i + 1}` : `Note ${i + 1}: ${n.title || n.text.slice(0, 30)}`}>
                     <View style={st.pin} />
                     {n.title ? <Text style={st.stickyTitle} numberOfLines={1}>{n.title}</Text> : null}
-                    <Text style={st.stickyText} numberOfLines={n.title ? lines - 1 : lines}>{n.text}</Text>
+                    {n.rating ? <View style={{marginBottom: px(4)}}><Stars value={n.rating} size={px(20)} /></View> : null}
+                    <Text style={st.stickyText} numberOfLines={(n.title ? lines - 1 : lines) - (n.rating ? 1 : 0)}>{n.text}</Text>
                     <Text style={st.stickyDate}>{dateText(n.at)}</Text>
                     {picking ? (
                       <View style={[st.pickMark, sel && st.btnDark]}>{sel ? <Icon name="check" size={px(22)} color="#ffffff" /> : null}</View>
@@ -2711,10 +2845,16 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
         )}
       </View>
       {editing ? (
-        <View style={st.modalWrap}>
+        <View style={[st.modalWrap, {justifyContent: 'flex-start', paddingTop: px(84)}]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={save} accessibilityLabel="Save and close" />
-          <View style={[st.sticky, {width: CARD_W - px(80), height: Math.round(CARD_H * 0.62), backgroundColor: noteBg(editing.color), padding: px(22)}]}>
+          {/* sits at the top of the board so the keyboard (bottom half) never covers what you type */}
+          <View style={[st.sticky, {width: CARD_W - px(80), height: Math.round(CARD_H * 0.46), backgroundColor: noteBg(editing.color), padding: px(22)}]}>
             <TextInput style={st.noteTitleInput} value={editing.title || ''} onChangeText={t => setEditing({...editing, title: t})} placeholder="Title (optional)" placeholderTextColor="#666666" maxLength={40} />
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+              <Text style={[st.small, {marginRight: px(10)}]}>Your rating</Text>
+              <Stars value={editing.rating} onChange={r => setEditing({...editing, rating: r})} />
+              {editing.rating ? <Text style={[st.small, {marginLeft: px(6)}]}>tap again to clear</Text> : null}
+            </View>
             <TextInput
               style={st.noteTextInput}
               value={editing.text}
@@ -2742,20 +2882,320 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
   );
 }
 
+function Stars({value, onChange, size = px(30)}: {value?: number; onChange?: (n: number | undefined) => void; size?: number}) {
+  const v = value || 0;
+  return (
+    <View style={{flexDirection: 'row', alignItems: 'center'}}>
+      {[1, 2, 3, 4, 5].map(n =>
+        onChange ? (
+          <Pressable key={n} onPress={() => onChange(n === v ? undefined : n)} hitSlop={6} style={{marginRight: px(4)}} accessibilityLabel={`${n} star${n > 1 ? 's' : ''}`}>
+            <Icon name={n <= v ? 'star-on' : 'star'} size={size} />
+          </Pressable>
+        ) : (
+          <View key={n} style={{marginRight: px(1)}}><Icon name={n <= Math.round(v) ? 'star-on' : 'star'} size={size} /></View>
+        ),
+      )}
+    </View>
+  );
+}
+
+// ---------- profile: your reading, in numbers ----------
+const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function streaks(days: string[]): {now: number; best: number; month: number} {
+  const set = new Set(days);
+  const d = new Date();
+  if (!set.has(dayKey(d))) d.setDate(d.getDate() - 1); // today not read yet: the streak still counts until tonight
+  let now = 0;
+  while (set.has(dayKey(d))) { now++; d.setDate(d.getDate() - 1); }
+  const sorted = [...set].sort();
+  let best = 0, run = 0, prev = '';
+  for (const k of sorted) {
+    const p = new Date(k + 'T12:00:00');
+    p.setDate(p.getDate() - 1);
+    run = prev === dayKey(p) ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = k;
+  }
+  const ym = dayKey(new Date()).slice(0, 7);
+  return {now, best, month: sorted.filter(k => k.startsWith(ym)).length};
+}
+const MON1 = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+function ProfilePage({index, days, wishes, onQuotes, onWish, onGenre, onFilter}: {
+  index: Found[];
+  days: string[];
+  wishes: number;
+  onQuotes: () => void;
+  onWish: () => void;
+  onGenre: (g: string) => void;
+  onFilter: (flag: string) => void;
+}) {
+  const year = new Date().getFullYear();
+  const done = index.flatMap(f => (f.meta.reading?.history || []).filter(h => h.state === 'completed').map(h => ({f, at: h.at})));
+  const thisYear = done.filter(x => new Date(x.at).getFullYear() === year).length;
+  const now = index.filter(f => f.meta.reading?.state === 'reading' || f.meta.reading?.state === 'rereading').length;
+  const favs = index.filter(f => f.meta.fav).length;
+  const notes = index.reduce((n, f) => n + (f.meta.notes?.length || 0), 0);
+  const rated = index.filter(f => ratingOf(f.meta)).length;
+  // the last 12 months, oldest first
+  const months = Array.from({length: 12}, (_, i) => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 11 + i);
+    const n = done.filter(x => { const t = new Date(x.at); return t.getFullYear() === d.getFullYear() && t.getMonth() === d.getMonth(); }).length;
+    return {label: MON1[d.getMonth()], n, first: d.getMonth() === 0 || i === 0, year: d.getFullYear()};
+  });
+  const top = Math.max(1, ...months.map(m => m.n));
+  const s = streaks(days);
+  // genres of the books you've read (or are reading); all books when there's nothing yet
+  const readish = index.filter(f => f.meta.reading && f.meta.reading.state !== 'plan');
+  const pool = readish.length ? readish : index;
+  const gc: {[g: string]: number} = {};
+  pool.forEach(f => (f.meta.genres || []).forEach(g => (gc[g] = (gc[g] || 0) + 1)));
+  const genres = Object.entries(gc).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5);
+  const gTop = Math.max(1, ...genres.map(g => g[1]));
+  const chartH = px(190);
+  const stat = (n: number | string, label: string, flag?: string) => (
+    <Pressable key={label} onPress={flag ? () => onFilter(flag) : undefined} disabled={!flag} style={st.statTile} accessibilityLabel={`${n} ${label}`}>
+      <Text style={st.statNum}>{n}</Text>
+      <Text style={st.statLabel} numberOfLines={2}>{label}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={{flex: 1, paddingHorizontal: px(16), paddingTop: px(12)}}>
+      <View style={{flexDirection: 'row'}}>
+        {stat(index.length, 'books in your libraries')}
+        {stat(thisYear, `finished in ${year}`, 'f:finished')}
+        {stat(now, 'reading now', 'f:inprogress')}
+        {stat(favs, 'favourites', 'f:fav')}
+      </View>
+      <View style={[st.profCard, {marginTop: px(14)}]}>
+        <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
+          <Text style={[st.rowTitle, {flex: 1}]}>Finished, last 12 months</Text>
+          <Text style={st.small}>{`${months.reduce((n, m) => n + m.n, 0)} books`}</Text>
+        </View>
+        <View style={{flexDirection: 'row', alignItems: 'flex-end', height: chartH + px(22), marginTop: px(10)}}>
+          {months.map((m, i) => (
+            <View key={i} style={{flex: 1, alignItems: 'center'}}>
+              {m.n ? <Text style={[st.small, {fontSize: px(13)}]}>{m.n}</Text> : null}
+              <View style={{width: '58%', height: Math.max(px(3), Math.round((m.n / top) * chartH)), backgroundColor: m.n ? BLACK : '#cccccc', borderTopLeftRadius: px(6), borderTopRightRadius: px(6)}} />
+            </View>
+          ))}
+        </View>
+        <View style={{flexDirection: 'row', borderTopWidth: 1.5, borderColor: BLACK, paddingTop: px(4)}}>
+          {months.map((m, i) => (
+            <View key={i} style={{flex: 1, alignItems: 'center'}}>
+              <Text style={[st.small, {fontSize: px(13)}, m.first && {fontWeight: 'bold'}]}>{m.label}</Text>
+              <Text style={[st.small, {fontSize: px(11), color: '#666666'}]}>{m.first ? `'${String(m.year).slice(2)}` : ' '}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+      <View style={{flexDirection: 'row', marginTop: px(14)}}>
+        <View style={[st.profCard, {flex: 1, marginRight: px(14)}]}>
+          <Text style={st.rowTitle}>Reading days</Text>
+          <View style={{flexDirection: 'row', alignItems: 'baseline', marginTop: px(8)}}>
+            <Text style={st.statNum}>{s.now}</Text>
+            <Text style={[st.small, {marginLeft: px(6)}]}>{`day${s.now === 1 ? '' : 's'} in a row`}</Text>
+          </View>
+          <Text style={[st.small, {marginTop: px(6)}]}>{`Longest: ${s.best} day${s.best === 1 ? '' : 's'}`}</Text>
+          <Text style={[st.small, {marginTop: px(2)}]}>{`This month: ${s.month} day${s.month === 1 ? '' : 's'}`}</Text>
+          <Text style={[st.small, {marginTop: px(8), color: '#666666', fontSize: px(13)}]}>A day counts when you open a book.</Text>
+        </View>
+        <View style={[st.profCard, {flex: 1.3}]}>
+          <Text style={st.rowTitle}>{readish.length ? 'Genres you read most' : 'Genres in your libraries'}</Text>
+          {genres.length ? (
+            genres.map(([g, n]) => (
+              <Pressable key={g} onPress={() => onGenre(g)} style={{flexDirection: 'row', alignItems: 'center', marginTop: px(8)}} accessibilityLabel={`${g}, ${n} books`}>
+                <Text style={[st.small, {width: px(120)}]} numberOfLines={1}>{g}</Text>
+                <View style={{flex: 1, height: px(14), justifyContent: 'center'}}>
+                  <View style={{width: `${Math.max(6, Math.round((n / gTop) * 100))}%`, height: px(14), borderRadius: px(7), backgroundColor: BLACK}} />
+                </View>
+                <Text style={[st.small, {width: px(30), textAlign: 'right'}]}>{n}</Text>
+              </Pressable>
+            ))
+          ) : (
+            <Text style={[st.small, {marginTop: px(8)}]}>Add genres to your books to see them here.</Text>
+          )}
+        </View>
+      </View>
+      <View style={{flexDirection: 'row', marginTop: px(14)}}>
+        <Pressable onPress={onQuotes} style={[st.profLink, {marginRight: px(14)}]} accessibilityLabel="Notes and quotes">
+          <Icon name="quote" size={px(34)} />
+          <View style={{marginLeft: px(12), flex: 1}}>
+            <Text style={st.rowTitle}>Notes and quotes</Text>
+            <Text style={st.small}>{`${notes} note${notes === 1 ? '' : 's'}  ·  ${rated} rated book${rated === 1 ? '' : 's'}`}</Text>
+          </View>
+          <Icon name="forward" size={px(24)} />
+        </Pressable>
+        <Pressable onPress={onWish} style={st.profLink} accessibilityLabel="Wishlist">
+          <Icon name="wish" size={px(34)} />
+          <View style={{marginLeft: px(12), flex: 1}}>
+            <Text style={st.rowTitle}>Wishlist</Text>
+            <Text style={st.small}>{`${wishes} book${wishes === 1 ? '' : 's'} to find`}</Text>
+          </View>
+          <Icon name="forward" size={px(24)} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// ---------- notes and quotes: every note from every book on one board ----------
+function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) => string | null; onOpen: (f: Found) => void}) {
+  const [q, setQ] = useState('');
+  const [pg, setPg] = useState(0);
+  const [onlyRated, setOnlyRated] = useState(false);
+  const all = index
+    .flatMap(f => (f.meta.notes || []).map(n => ({f, n, title: shownTitle(f.book, f.meta)})))
+    .sort((a, b) => b.n.at - a.n.at);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const list = all.filter(x => (!onlyRated || x.n.rating) && words.every(w => `${x.n.title || ''} ${x.n.text} ${x.title}`.toLowerCase().includes(w)));
+  const cols = 2, rows = 3, per = cols * rows;
+  const pages = Math.max(1, Math.ceil(list.length / per));
+  const p = Math.min(pg, pages - 1);
+  const boardW = W - px(32);
+  const boardH = H - px(64) - px(84) - px(64) - TASK_H - px(20);
+  const nw = Math.floor(boardW / cols) - px(30);
+  const nh = Math.floor(boardH / rows) - px(26);
+  const lines = Math.max(2, Math.floor((nh - px(96)) / px(25)));
+  return (
+    <>
+      <View style={[st.searchRow, {flexDirection: 'row', alignItems: 'center'}]}>
+        <View style={[st.searchBox, {flex: 1}]}>
+          <Icon name="search" size={px(24)} />
+          <TextInput style={[st.searchInput, {marginLeft: px(8)}]} value={q} onChangeText={t => { setQ(t); setPg(0); }} placeholder="Search your notes and quotes" placeholderTextColor="#666666" />
+          {q ? <Pressable onPress={() => setQ('')} accessibilityLabel="Clear search"><Icon name="close" size={px(22)} /></Pressable> : null}
+        </View>
+        <View style={{marginLeft: px(10)}}><Pill label="Rated" active={onlyRated} onPress={() => { setOnlyRated(!onlyRated); setPg(0); }} /></View>
+      </View>
+      <View style={[st.board, {width: boardW, height: boardH, marginTop: 0}]}>
+        {!list.length ? (
+          <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', padding: px(30)}}>
+            <Icon name="quote" size={px(44)} />
+            <Text style={[st.para, {textAlign: 'center', marginTop: px(10)}]}>{all.length ? 'No notes match.' : 'Notes you pin on books show up here, all together. Open a book and tap the sticky note to add one.'}</Text>
+          </View>
+        ) : (
+          Array.from({length: rows}).map((_, r) => (
+            <View key={r} style={{flexDirection: 'row', flex: 1}}>
+              {list.slice(p * per + r * cols, p * per + r * cols + cols).map((x, c) => (
+                <View key={x.f.lib.path + x.f.book.key + x.n.id} style={st.boardSlot}>
+                  <Pressable onPress={() => onOpen(x.f)} style={[st.sticky, {width: nw, height: nh, backgroundColor: noteBg(x.n.color), transform: [{rotate: `${tilt(x.n.id, r * cols + c)}deg`}]}]} accessibilityLabel={`Note on ${x.title}: ${x.n.title || x.n.text.slice(0, 40)}`}>
+                    <View style={st.pin} />
+                    <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(6)}}>
+                      <Cover uri={cover(x.f)} w={px(30)} h={px(45)} title={x.title} />
+                      <View style={{flex: 1, marginLeft: px(8)}}>
+                        <Text style={[st.small, {fontWeight: 'bold', color: BLACK}]} numberOfLines={1}>{x.title}</Text>
+                        {x.n.rating ? <Stars value={x.n.rating} size={px(16)} /> : <Text style={[st.small, {fontSize: px(12)}]}>{dateText(x.n.at)}</Text>}
+                      </View>
+                    </View>
+                    {x.n.title ? <Text style={st.stickyTitle} numberOfLines={1}>{x.n.title}</Text> : null}
+                    <Text style={st.stickyText} numberOfLines={x.n.title ? lines - 1 : lines}>{x.n.text}</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ))
+        )}
+      </View>
+      <View style={[st.pager, st.pagerClear]}>
+        <IconBtn name="back" label="Previous page" disabled={p <= 0} onPress={() => setPg(p - 1)} />
+        <Text style={st.pageText}>{`${list.length} note${list.length === 1 ? '' : 's'}  ·  ${p + 1} / ${pages}`}</Text>
+        <IconBtn name="forward" label="Next page" disabled={p >= pages - 1} onPress={() => setPg(p + 1)} />
+      </View>
+    </>
+  );
+}
+
+// ---------- wishlist: books you want but don't have yet ----------
+function WishlistPage({wishes, onChange}: {wishes: Wish[]; onChange: (w: Wish[]) => void}) {
+  const [editing, setEditing] = useState<Wish | null>(null);
+  const [edit, setEdit] = useState(false);
+  const [pg, setPg] = useState(0);
+  const per = 6;
+  const pages = Math.max(1, Math.ceil(wishes.length / per));
+  const p = Math.min(pg, pages - 1);
+  const save = () => {
+    if (!editing) return;
+    const w = {...editing, title: editing.title.trim(), author: editing.author?.trim() || undefined, where: editing.where?.trim() || undefined, note: editing.note?.trim() || undefined};
+    if (!w.title) return setEditing(null);
+    onChange(wishes.some(x => x.id === w.id) ? wishes.map(x => (x.id === w.id ? w : x)) : [w, ...wishes]);
+    setEditing(null);
+  };
+  const field = (label: string, k: 'title' | 'author' | 'where' | 'note', ph: string, multi?: boolean) =>
+    editing ? (
+      <View style={{marginBottom: px(8)}}>
+        <Text style={[st.small, {marginBottom: px(3)}]}>{label}</Text>
+        <TextInput style={[st.input, multi && {height: px(80), textAlignVertical: 'top'}]} value={editing[k] || ''} onChangeText={t => setEditing({...editing, [k]: t})} placeholder={ph} placeholderTextColor="#888888" multiline={multi} maxLength={multi ? 300 : 120} />
+      </View>
+    ) : null;
+  return (
+    <>
+      <View style={st.editBar}>
+        <Text style={[st.small, {flex: 1, color: BLACK}]}>{edit ? 'Tap ✕ to take a book off the list.' : 'When a book with the same name turns up in a library, it comes off this list by itself.'}</Text>
+        {wishes.length ? <IconBtn name={edit ? 'check' : 'edit'} dark={edit} label={edit ? 'Done editing' : 'Edit the wishlist'} onPress={() => setEdit(!edit)} style={{marginLeft: px(10)}} /> : null}
+      </View>
+      <View style={{flex: 1, paddingHorizontal: px(16)}}>
+        {!wishes.length ? (
+          <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', padding: px(30)}}>
+            <Icon name="wish" size={px(48)} />
+            <Text style={[st.para, {textAlign: 'center', marginTop: px(10)}]}>Books you want to read but don't have yet. Tap + to add one.</Text>
+          </View>
+        ) : (
+          wishes.slice(p * per, p * per + per).map(w => (
+            <Pressable key={w.id} onPress={() => (edit ? undefined : setEditing(w))} style={st.wishRow} accessibilityLabel={`${w.title}${w.author ? ' by ' + w.author : ''}`}>
+              <View style={st.wishSpine}><Icon name="wish" size={px(26)} /></View>
+              <View style={{flex: 1, marginLeft: px(12)}}>
+                {w.author ? <Text style={st.byLineSmall} numberOfLines={1}>{w.author}</Text> : null}
+                <Text style={st.rowTitle} numberOfLines={1}>{w.title}</Text>
+                <Text style={[st.small, {marginTop: px(2)}]} numberOfLines={2}>{[w.where ? `Where: ${w.where}` : '', w.note || '', `Added ${dateText(w.added)}`].filter(Boolean).join('  ·  ')}</Text>
+              </View>
+              {edit ? <IconBtn name="close" label={`Take ${w.title} off the list`} onPress={() => onChange(wishes.filter(x => x.id !== w.id))} /> : <Icon name="forward" size={px(22)} />}
+            </Pressable>
+          ))
+        )}
+      </View>
+      <View style={[st.pager, st.pagerClear]}>
+        <IconBtn name="back" label="Previous page" disabled={p <= 0} onPress={() => setPg(p - 1)} />
+        <Text style={st.pageText}>{`${wishes.length} book${wishes.length === 1 ? '' : 's'}  ·  ${p + 1} / ${pages}`}</Text>
+        <IconBtn name="forward" label="Next page" disabled={p >= pages - 1} onPress={() => setPg(p + 1)} />
+      </View>
+      <Pressable onPress={() => setEditing({id: Date.now().toString(36), title: '', added: Date.now()})} style={st.fab} accessibilityLabel="Add a book to the wishlist">
+        <Icon name="plus" size={px(34)} color="#ffffff" />
+      </Pressable>
+      {editing ? (
+        <View style={[st.modalWrap, {justifyContent: 'flex-start', paddingTop: px(70)}]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setEditing(null)} accessibilityLabel="Cancel" />
+          <View style={[st.profCard, {width: W - px(80), backgroundColor: '#ffffff', padding: px(20)}]}>
+            <Text style={[st.rowTitle, {fontSize: px(21), marginBottom: px(10)}]}>{wishes.some(x => x.id === editing.id) ? 'Wishlist book' : 'Add to your wishlist'}</Text>
+            {field('Title', 'title', 'The book you want')}
+            {field('Author', 'author', 'Optional')}
+            {field('Where to get it', 'where', 'A shop, a site, a friend… (optional)')}
+            {field('Note', 'note', 'Why you want it, who recommended it… (optional)', true)}
+            <View style={{flexDirection: 'row', justifyContent: 'flex-end', marginTop: px(6)}}>
+              <IconBtn name="close" label="Cancel" onPress={() => setEditing(null)} style={{marginRight: px(10)}} />
+              <IconBtn dark name="check" label="Save" disabled={!editing.title.trim()} onPress={save} />
+            </View>
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 // ---------- taskbar ----------
 
 
 
-type Tab = 'library' | 'new' | 'home' | 'bookmarks' | 'settings';
+type Tab = 'library' | 'new' | 'home' | 'bookmarks' | 'profile';
 function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; newCount: number}) {
   const items: {t: Tab; icon: IconName; label: string}[] = [
     {t: 'library', icon: 'library', label: 'Library'},
     {t: 'new', icon: 'new', label: 'Newly added'},
     {t: 'home', icon: 'home', label: 'Home'},
     {t: 'bookmarks', icon: 'collections', label: 'Collections'},
-    {t: 'settings', icon: 'settings', label: 'Settings'},
+    {t: 'profile', icon: 'profile', label: 'Profile'},
   ];
-  const short: {[t in Tab]: string} = {library: 'Library', new: 'New', home: 'Home', bookmarks: 'Collections', settings: 'Settings'};
+  const short: {[t in Tab]: string} = {library: 'Library', new: 'New', home: 'Home', bookmarks: 'Collections', profile: 'Profile'};
   return (
     <View style={st.taskbar}>
       {items.map(({t, icon, label}) => {
@@ -2873,6 +3313,15 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             />
             <Text style={st.tileLabel}>Turn pages  ·  or scroll</Text>
           </View>
+          <View style={{flex: 2, alignItems: 'center', marginHorizontal: px(6)}}>
+            <Seg
+              options={[
+                {label: 'Off', on: settings.dashAuthor === false, onPress: () => change({dashAuthor: false})},
+                {label: 'On', on: settings.dashAuthor !== false, onPress: () => change({dashAuthor: true})},
+              ]}
+            />
+            <Text style={st.tileLabel}>{'"Title - Author" file names'}</Text>
+          </View>
         </View>
 
         <View style={{flexDirection: 'row', marginTop: px(18)}}>
@@ -2917,6 +3366,8 @@ const SORT_WORDS: {[k in SortBy]: [string, string]} = {
   added: ['Oldest first', 'Newest first'],
   vols: ['Fewest first', 'Most first'],
   category: ['A → Z', 'Z → A'],
+  author: ['A → Z', 'Z → A'],
+  rating: ['Lowest first', 'Highest first'],
 };
 const FLAGS: {k: string; label: string}[] = [
   {k: 'f:unread', label: 'Not read yet'},
@@ -2926,6 +3377,8 @@ const FLAGS: {k: string; label: string}[] = [
   {k: 'f:fav', label: 'Favourite'},
   {k: 'f:inprogress', label: 'In progress'},
   {k: 'f:finished', label: 'Finished by me'},
+  {k: 'f:rated', label: 'Rated by me'},
+  {k: 'f:dup', label: 'Possible duplicate'},
   {k: 'f:notes', label: 'Has notes'},
   {k: 'f:completed', label: 'Completed'},
   {k: 'f:translated', label: 'Completely translated'},
@@ -3045,13 +3498,15 @@ function LibrarySheet(props: {
       {by: 'added', label: 'Date added'},
       {by: 'vols', label: 'Number of volumes'},
       {by: 'category', label: 'Category'},
+      {by: 'author', label: 'Author'},
+      {by: 'rating', label: 'Your rating'},
     ];
     body = (
       <View style={{height: ROWS * px(50) + px(46)}}>
         {opts.map(o => {
           const cur = settings.sort.by === o.by;
           return (
-            <Pressable key={o.by} style={st.triRow} onPress={() => change({sort: {by: o.by, asc: cur ? !settings.sort.asc : o.by === 'title' || o.by === 'category'}})} accessibilityLabel={`Sort by ${o.label}`}>
+            <Pressable key={o.by} style={st.triRow} onPress={() => change({sort: {by: o.by, asc: cur ? !settings.sort.asc : o.by === 'title' || o.by === 'category' || o.by === 'author'}})} accessibilityLabel={`Sort by ${o.label}`}>
               <View style={[st.triBox, {borderWidth: 0}]}>{cur ? <Icon name={settings.sort.asc ? 'up' : 'down'} size={px(24)} /> : null}</View>
               <Text style={[st.triLabel, cur && {fontWeight: 'bold'}]}>{o.label}</Text>
               {cur ? <Text style={st.fCount}>{SORT_WORDS[o.by][settings.sort.asc ? 0 : 1]}</Text> : null}
@@ -3400,7 +3855,7 @@ function HelpPage({q, setQ, onOpen}: {q: string; setQ: (q: string) => void; onOp
 
 // ---------- the grid of collections ----------
 function CollectionGrid({items, onOpen, onNew}: {
-  items: {id: string; name: string; count: number; covers: {cover: string | null; title: string}[]; auto: boolean; pic?: string}[];
+  items: {id: string; name: string; count: number; covers: {cover: string | null; title: string}[]; auto: boolean; pic?: string; icon?: IconName; sub?: string}[];
   onOpen: (id: string) => void;
   onNew: () => void;
 }) {
@@ -3430,7 +3885,11 @@ function CollectionGrid({items, onOpen, onNew}: {
                   </>
                 ) : (
                   <>
-                    {c.pic ? (
+                    {c.icon ? (
+                      <View style={{height: coverH, borderRadius: px(10), backgroundColor: '#f2f2f2', alignItems: 'center', justifyContent: 'center'}}>
+                        <Icon name={c.icon} size={px(52)} />
+                      </View>
+                    ) : c.pic ? (
                       <Image source={{uri: c.pic.startsWith('/') ? 'file://' + c.pic : c.pic}} style={{height: coverH, borderRadius: px(10)}} resizeMode="cover" />
                     ) : (
                       <View style={{height: coverH, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignContent: 'space-between', backgroundColor: '#f2f2f2', borderRadius: px(10), padding: c.covers.length ? 0 : px(8)}}>
@@ -3438,7 +3897,7 @@ function CollectionGrid({items, onOpen, onNew}: {
                       </View>
                     )}
                     <Text style={[st.rowTitle, {fontSize: px(18), marginTop: px(8)}]} numberOfLines={1}>{c.name}</Text>
-                    <Text style={st.small} numberOfLines={1}>{`${c.count} book${c.count === 1 ? '' : 's'}${c.auto ? '  ·  auto' : ''}`}</Text>
+                    <Text style={st.small} numberOfLines={1}>{c.sub || `${c.count} book${c.count === 1 ? '' : 's'}${c.auto ? '  ·  auto' : ''}`}</Text>
                   </>
                 )}
               </Pressable>
@@ -4008,7 +4467,7 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
         paging={paging}
         items={shown.map(f => ({
           key: f.lib.path + f.book.key,
-          title: f.meta.title || f.book.fileTitle,
+          title: shownTitle(f.book, f.meta),
           sub: [f.book.folder || f.lib.name, f.book.added ? dateText(f.book.added) : ''].filter(Boolean).join('  ·  '),
           cover: cover(f),
           isNew: f.isNew,
@@ -4104,7 +4563,7 @@ function Home(props: {
   // ----- searching -----
   if (q.trim()) {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    const title = (f: Found) => f.meta.title || f.book.fileTitle;
+    const title = (f: Found) => shownTitle(f.book, f.meta);
     const found = index
       .filter(f => scope === 'all' || f.lib.path === scope)
       .filter(f => words.every(w => title(f).toLowerCase().includes(w) || f.book.fileTitle.toLowerCase().includes(w)))
@@ -4409,7 +4868,10 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
   onPickCover: () => Promise<string | null>;
   onSplit?: () => void;
 }) {
-  const [title, setTitle] = useState(meta.title || book.fileTitle);
+  const [title, setTitle] = useState(shownTitle(book, meta));
+  const autoTitle = shownTitle(book, {});
+  const autoAuthor = authorOf(book, {}) || '';
+  const [author, setAuthor] = useState(authorOf(book, meta) || '');
   const fromFolders = folderCats(book);
   const [cats, setCats] = useState<string[]>(catsOf(book, meta));
   const [genres, setGenres] = useState<string[]>(meta.genres || []);
@@ -4422,7 +4884,8 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
   const guess = (book.folder.match(/^(\w+)\s+novels?$/i) || [])[1];
   const langs = Array.from(new Set([guess, 'Chinese', 'Korean', 'Japanese', 'English'].filter(Boolean) as string[])).filter(l => l !== language);
   const result = (): Meta => ({
-    title: title.trim() && title.trim() !== book.fileTitle ? title.trim() : undefined,
+    title: title.trim() && title.trim() !== autoTitle ? title.trim() : undefined,
+    author: author.trim() && author.trim() !== autoAuthor ? author.trim() : undefined,
     genres,
     tags,
     description: desc.trim() || undefined,
@@ -4444,6 +4907,9 @@ function EditPage({book, meta, allGenres, allTags, allCats, cover, onSave, onCan
         <Text style={st.label}>Title</Text>
         <TextInput style={st.input} value={title} onChangeText={setTitle} />
         <Text style={st.small}>{`File name: ${book.fileTitle}`}</Text>
+        <Text style={st.label}>Author</Text>
+        <TextInput style={st.input} value={author} onChangeText={setAuthor} placeholder="Who wrote it" />
+        {autoAuthor && !meta.author ? <Text style={st.small}>{'Taken from the file name (after the dash). Change it here if it is wrong.'}</Text> : null}
 
         <PillEditor label="Category" values={cats} setValues={setCats} used={allCats} placeholder="Type a new category, then +" />
         {fromFolders.length ? <Text style={st.small}>{`From its folders: ${fromFolders.join(' › ')}`}</Text> : null}
@@ -4541,6 +5007,10 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
+  dupMark: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), paddingHorizontal: px(6), marginLeft: px(6)},
+  dupMarkText: {fontSize: px(13), fontWeight: 'bold', color: BLACK},
+  byLine: {fontSize: px(15), color: '#444444', fontWeight: 'bold', marginBottom: px(1)},
   statusChip: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(22), height: px(44), paddingHorizontal: px(12), marginLeft: px(10)},
   statusText: {fontSize: px(17), fontWeight: 'bold', color: BLACK, flexShrink: 1},
   statusPick: {flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(24), height: px(50), paddingHorizontal: px(16), marginRight: px(10), marginBottom: px(10)},
@@ -4610,6 +5080,7 @@ const st = StyleSheet.create({
   teaser: {fontSize: px(15), color: '#222222', lineHeight: px(19)},
   gridCell: {flex: 1, alignItems: 'center', paddingTop: px(6)},
   gridTitle: {fontSize: px(14), fontWeight: 'bold', color: BLACK, textAlign: 'center', marginTop: px(4), paddingHorizontal: px(4)},
+  pagerClear: {paddingRight: px(124)}, // the raised Profile button sits under the right end
   pager: {height: px(64), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 2, borderColor: BLACK, paddingHorizontal: px(12)},
   pageBtn: {borderWidth: 2, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(20), paddingVertical: px(8)},
   pageBtnText: {fontSize: px(19), color: BLACK},
@@ -4710,6 +5181,14 @@ const st = StyleSheet.create({
   postitNum: {fontSize: px(20), lineHeight: px(22), fontWeight: 'bold', color: BLACK},
   postitLabel: {fontSize: px(11), color: BLACK},
   board: {alignSelf: 'center', marginTop: px(10), backgroundColor: '#e9e4d8', borderRadius: px(14), borderWidth: 1.5, borderColor: '#9a917f', padding: px(6)},
+  statTile: {flex: 1, marginHorizontal: px(5), borderWidth: 2, borderColor: BLACK, borderRadius: px(16), paddingVertical: px(12), paddingHorizontal: px(10), alignItems: 'center'},
+  statNum: {fontSize: px(36), fontWeight: 'bold', color: BLACK},
+  statLabel: {fontSize: px(14), color: '#333333', textAlign: 'center', marginTop: px(2)},
+  profCard: {borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(14)},
+  profLink: {flex: 1, flexDirection: 'row', alignItems: 'center', borderWidth: 2, borderColor: BLACK, borderRadius: px(16), padding: px(14)},
+  wishRow: {flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#bbbbbb', paddingVertical: px(12)},
+  wishSpine: {width: px(56), height: px(78), borderRadius: px(8), borderWidth: 2, borderColor: BLACK, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center'},
+  fab: {position: 'absolute', right: px(24), bottom: TASK_H + px(84), width: px(66), height: px(66), borderRadius: px(33), backgroundColor: BLACK, alignItems: 'center', justifyContent: 'center'},
   boardSlot: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   sticky: {padding: px(14), paddingTop: px(20), borderWidth: 1, borderColor: '#6d6658', borderRadius: px(3), shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 3, shadowOffset: {width: 2, height: 3}, elevation: 3},
   stickyNew: {borderWidth: 2, borderStyle: 'dashed', borderColor: '#6d6658', borderRadius: px(6), alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.5)'},

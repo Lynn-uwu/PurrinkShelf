@@ -269,6 +269,49 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
     }
 
     /** Add a line to a text file (InkShelf's trouble log). */
+    /** The EPUB's own description file (OPF): title, author, description, language, subjects. */
+    @ReactMethod
+    fun readEpubMeta(path: String, promise: Promise) {
+        try {
+            ZipFile(path).use { zf ->
+                val container = zf.getEntry("META-INF/container.xml")
+                var opf: String? = null
+                if (container != null) {
+                    val c = zf.getInputStream(container).readBytes().toString(Charsets.UTF_8)
+                    opf = Regex("full-path=\"([^\"]+)\"").find(c)?.groupValues?.get(1)
+                }
+                if (opf == null) opf = zf.entries().asSequence().firstOrNull { it.name.endsWith(".opf") }?.name
+                val e = if (opf != null) zf.getEntry(opf) else null
+                promise.resolve(if (e != null) zf.getInputStream(e).readBytes().toString(Charsets.UTF_8) else null)
+            }
+        } catch (e: Throwable) {
+            promise.resolve(null)
+        }
+    }
+
+    /** Open Supernote's file manager (whichever app on the device looks like one). Returns its package or null. */
+    @ReactMethod
+    fun openFileManager(promise: Promise) {
+        try {
+            val pm = reactApplicationContext.packageManager
+            val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val apps = pm.queryIntentActivities(main, 0)
+            val names = apps.map { it.activityInfo.packageName + "/" + it.activityInfo.name + "=" + it.loadLabel(pm) }
+            Log.i(TAG, "launchers: " + names.joinToString())
+            val hit = apps.firstOrNull { val l = (it.loadLabel(pm)?.toString() ?: "").lowercase(); val n = it.activityInfo.packageName.lowercase()
+                l.contains("file") || l.contains("explorer") || n.contains("filemanager") || n.contains("explorer") || n.contains("file") }
+            if (hit == null) { promise.resolve(null); return }
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                .setComponent(ComponentName(hit.activityInfo.packageName, hit.activityInfo.name))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactApplicationContext.startActivity(i)
+            promise.resolve(hit.activityInfo.packageName)
+        } catch (e: Throwable) {
+            Log.e(TAG, "openFileManager failed", e)
+            promise.resolve(null)
+        }
+    }
+
     /** Write a zip (an .xlsx spreadsheet is one) from {name: text}. */
     @ReactMethod
     fun writeZip(path: String, entries: ReadableMap, promise: Promise) {

@@ -13,7 +13,7 @@ const tree = {
   [`${SD}/Books`]: ['Garden Notes.epub'],
   [`${SD}/Music`]: [],
   [`${SD}/Novels`]: ['Chinese Novels/', 'Korean Novels/', '_Library Data/'],
-  [`${SD}/Novels/Korean Novels`]: ['The Lighthouse Keeper - Min Seo.epub', 'Rain Over Busan.epub', 'Salt and Honey.epub', 'Salt and Honey Side Stories.epub'],
+  [`${SD}/Novels/Korean Novels`]: ['The Lighthouse Keeper - Min Seo.epub', 'Rain Over Busan.epub', 'Rain Over Busan (1).epub', 'Salt and Honey.epub', 'Salt and Honey Side Stories.epub'],
   [`${SD}/Novels/Chinese Novels`]: [
     'Moon Over the Jade Pavilion.epub', 'The Tea House on Willow Street.epub', 'A Sword Without a Name.epub',
     'Paper Lanterns in Winter.epub', 'The Fox Who Kept the Library.epub', 'Ten Thousand Steps to the Summit.epub',
@@ -27,23 +27,24 @@ const tree = {
 };
 const files = {};
 window.__files = files;
+const done = (y, m, d) => ({state: 'completed', at: Date.UTC(y, m, d), history: [{state: 'reading', at: Date.UTC(y, m, d - 9)}, {state: 'completed', at: Date.UTC(y, m, d)}]});
 const meta = {
   version: 1,
   books: {
     'Chinese Novels/Moon Over the Jade Pavilion.epub': {notes: [
-      {id: 'a', title: 'Why I love it', text: 'The slow build is perfect. Wen Shu never once explains herself and somehow that makes every scene with the prince hit harder. Re-read chapter 34 (the rain scene).', color: 'lemon', at: Date.UTC(2026, 10, 2)},
-      {id: 'b', title: 'Favourite line', text: '"Some letters are written so they will never be read." Ch 12.', color: 'rose', at: Date.UTC(2026, 10, 5)},
+      {id: 'a', title: 'Why I love it', text: 'The slow build is perfect. Wen Shu never once explains herself and somehow that makes every scene with the prince hit harder. Re-read chapter 34 (the rain scene).', color: 'lemon', at: Date.UTC(2026, 10, 2), rating: 5},
+      {id: 'b', title: 'Favourite line', text: '"Some letters are written so they will never be read." Ch 12.', color: 'rose', at: Date.UTC(2026, 10, 5), rating: 4},
       {id: 'c', text: 'Stopped at ch 78. The Empress Dowager arc starts here.', color: 'sky', at: Date.UTC(2026, 10, 9)},
     ], genres: ['Drama', 'Romance', 'Historical', 'Slice of Life'], tags: ['Archivists', 'Beautiful Female Lead', 'Calm Protagonist', 'Court Politics', 'Hidden Identity', 'Imperial Harem', 'Letters', 'Palace Intrigue', 'Slow Romance', 'Rainy Days', 'Mature Protagonist', 'Royalty', 'Secret Relationship', 'Second Chance', 'Tragic Past', 'Wise Protagonist', 'Clever Protagonist', 'Doting Love Interests', 'Heartwarming', 'Loneliness', 'Older Love Interests', 'Poetry', 'Gardens', 'Strategists', 'Tea Ceremony'], language: 'Chinese', status: '112 Chapters + 4 Extras (Completed)', translated: 'Yes',
       description: 'For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly.\nThen she opened a letter that had been sealed for twenty years, and the quiet prince who lived in the east wing began appearing at her desk every evening with tea she had not asked for.\nHe said he only wanted the letter back.\nHe did not explain why he kept staying after she returned it, or why the palace guards had started to call her "the prince\'s scholar".\nWhen the old Empress Dowager summoned her to the inner court, Wen Shu realised the letter had never been about love at all, but about a debt the whole dynasty would rather forget.\nThe prince, who had always been calm, lost his composure only once: the night she did not come back from the inner court. He walked through the rain to every gate of the palace until he found her, and said nothing at all on the way home.\nLater the court would whisper about it for years.'},
-    'Chinese Novels/The Tea House on Willow Street.epub': {genres: ['Slice of Life', 'Comedy'], tags: ['Retirement', 'Food'], language: 'Chinese', status: '60 Chapters (Completed)', translated: 'Yes', description: 'A retired general opens a tiny tea house and tries very hard to live a quiet life. The neighbours have other plans.'},
-    'Chinese Novels/A Sword Without a Name.epub': {genres: ['Action', 'Fantasy', 'Martial Arts'], tags: ['Sects', 'Weapon Spirits'], language: 'Chinese', description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
-    'Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols': {title: 'Echoes of the Ninth Gate', genres: ['Fantasy', 'Mystery', 'Romance'], tags: ['Exorcists', 'Contracts', 'Rivals to Lovers'], language: 'Chinese', status: '480 Chapters (Completed)', translated: 'No', description: 'Two rival exorcists are bound by a contract neither remembers signing. Nine gates, nine debts, one very long road.'},
-    'Korean Novels/Rain Over Busan.epub': {genres: ['Romance', 'Drama'], tags: ['Photography', 'Weather'], language: 'Korean', status: '45 Chapters (Completed)', translated: 'Yes', description: 'A weather forecaster who is always wrong meets a photographer who only shoots storms.'},
-    'Korean Novels/Winter Ferry.epub': {genres: ['Romance', 'Slice of Life'], tags: ['Islands', 'Letters'], language: 'Korean', status: '30 Chapters (Completed)', description: 'A ferry captain carries the same passenger every winter. This year she does not get off.'},
+    'Chinese Novels/The Tea House on Willow Street.epub': {fav: true, reading: done(2026, 9, 14), notes: [{id: 't1', title: 'Comfort read', text: 'The general arguing with the baker about dumpling folds. Every single chapter.', color: 'mint', at: Date.UTC(2026, 9, 14), rating: 4}], genres: ['Slice of Life', 'Comedy'], tags: ['Retirement', 'Food'], language: 'Chinese', status: '60 Chapters (Completed)', translated: 'Yes', description: 'A retired general opens a tiny tea house and tries very hard to live a quiet life. The neighbours have other plans.'},
+    'Chinese Novels/A Sword Without a Name.epub': {reading: done(2026, 7, 3), genres: ['Action', 'Fantasy', 'Martial Arts'], tags: ['Sects', 'Weapon Spirits'], language: 'Chinese', description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
+    'Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols': {reading: {state: 'reading', at: Date.UTC(2026, 10, 1), history: [{state: 'reading', at: Date.UTC(2026, 10, 1)}]}, title: 'Echoes of the Ninth Gate', genres: ['Fantasy', 'Mystery', 'Romance'], tags: ['Exorcists', 'Contracts', 'Rivals to Lovers'], language: 'Chinese', status: '480 Chapters (Completed)', translated: 'No', description: 'Two rival exorcists are bound by a contract neither remembers signing. Nine gates, nine debts, one very long road.'},
+    'Korean Novels/Rain Over Busan.epub': {fav: true, reading: done(2026, 10, 6), notes: [{id: 'r1', title: 'Favourite line', text: '"Forecasts are just hopes with numbers attached." Ch 9.', color: 'sky', at: Date.UTC(2026, 10, 6), rating: 5}, {id: 'r2', text: 'Ending felt rushed but the last photo scene made up for it.', color: 'paper', at: Date.UTC(2026, 10, 7)}], genres: ['Romance', 'Drama'], tags: ['Photography', 'Weather'], language: 'Korean', status: '45 Chapters (Completed)', translated: 'Yes', description: 'A weather forecaster who is always wrong meets a photographer who only shoots storms.'},
+    'Korean Novels/Winter Ferry.epub': {reading: done(2026, 1, 20), genres: ['Romance', 'Slice of Life'], tags: ['Islands', 'Letters'], language: 'Korean', status: '30 Chapters (Completed)', description: 'A ferry captain carries the same passenger every winter. This year she does not get off.'},
     'Korean Novels/The Lighthouse Keeper.epub': {genres: ['Drama', 'Mystery'], tags: ['Lighthouses', 'Small Town'], language: 'Korean', description: 'Moved here after a rename: the details come back on their own.'},
     'Chinese Novels/Historical/Lotus Court/Lotus Court 1-50.epub': {genres: ['Historical', 'Romance'], tags: ['Court Politics', 'Embroidery'], language: 'Chinese', status: '152 Chapters (Completed)', description: 'Three files in one folder, shown as one book with three parts.'},
-    'Chinese Novels/Starlight Courier.epub': {genres: ['Sci-fi', 'Comedy'], tags: ['Space', 'Delivery'], description: 'The galaxy\'s most punctual delivery driver is assigned a parcel that keeps trying to escape.'},
+    'Chinese Novels/Starlight Courier.epub': {reading: done(2026, 4, 11), genres: ['Sci-fi', 'Comedy'], tags: ['Space', 'Delivery'], description: 'The galaxy\'s most punctual delivery driver is assigned a parcel that keeps trying to escape.'},
   },
 };
 const COLORS = ['#c9d6df', '#f2d7b6', '#d8c7e8', '#cfe3c5', '#f0c9c9', '#c7dbe8', '#e8e2c7'];
@@ -74,6 +75,14 @@ NativeModules.InkShelf = {
   ], how: 'volume:' + SD}),
   copyText: async t => ((window.__copied = t), true),
   prepareImage: async (src, out) => (out.includes('/covers/own-') ? svgCover('Lotus Court Screenshot Cover') : out),
+  // what is written inside each EPUB (OPF): a few have an author and a blurb
+  readEpubMeta: async p => {
+    const name = p.split('/').pop();
+    const by = {'A Sword Without a Name.epub': 'Gu Feng', 'Starlight Courier.epub': 'Ada Lin', 'Salt and Honey.epub': 'Han Yuri', 'Paper Lanterns in Winter.epub': 'Mo Qing'};
+    const blurb = {'Paper Lanterns in Winter.epub': 'Every winter a lantern-maker hangs one lantern for each person the town has forgotten. This year there is one for her.', 'Salt and Honey.epub': 'A beekeeper and a salt farmer share one stretch of coast and refuse to share anything else.'};
+    return `<package><metadata><dc:title>${name}</dc:title>${by[name] ? `<dc:creator>${by[name]}</dc:creator>` : '<dc:creator>Unknown</dc:creator>'}${blurb[name] ? `<dc:description>&lt;p&gt;${blurb[name]}&lt;/p&gt;</dc:description>` : ''}<dc:language>${p.includes('Korean') ? 'ko' : 'zh'}</dc:language></metadata></package>`;
+  },
+  openFileManager: async () => ((window.__fm = 1), true),
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },
 };
 if (new URLSearchParams(location.search).get('lib')) {
@@ -108,7 +117,7 @@ if (new URLSearchParams(location.search).get('backup')) {
 }
 window.__pasted = [];
 export const PluginCommAPI = {
-  getCurrentFilePath: async () => ({success: true, result: '/storage/emulated/0/Note/Book reviews.note'}),
+  getCurrentFilePath: async () => ({success: true, result: new URLSearchParams(location.search).get('reading') ? `${SD}/Novels/Korean Novels/Rain Over Busan.epub` : '/storage/emulated/0/Note/Book reviews.note'}),
   getPageDisplaySize: async () => ({success: true, result: {width: 1404, height: 1872}}),
 };
 export const PluginNoteAPI = {
@@ -138,5 +147,11 @@ if (new URLSearchParams(location.search).get('state')) {
     bookmarks: [moon, echoes, rain],
     searches: ['jade', 'fox', 'ninth gate', 'busan'],
     lastLib: N,
+    days: (() => { const out = []; const d = new Date(); for (let i = 0; i < 40; i++) { if (![5, 6, 12, 19, 20, 21, 30].includes(i)) out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); d.setDate(d.getDate() - 1); } return out.reverse(); })(),
+    wishlist: [
+      {id: 'w1', title: 'The Moonlit Archive', author: 'Shen Yu', where: 'Recommended in the book club', note: 'Sequel to the archivist story everyone talks about', added: Date.UTC(2026, 10, 3)},
+      {id: 'w2', title: 'Ferryman of the North Sea', where: 'Novel site, vol 1 is free', added: Date.UTC(2026, 9, 20)},
+      {id: 'w3', title: 'Salt and Honey', author: 'Han Yuri', note: 'Mina said the ending made her cry', added: Date.UTC(2026, 9, 2)},
+    ],
   });
 }
