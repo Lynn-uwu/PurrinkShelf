@@ -2652,6 +2652,10 @@ function BookPage(props: {
   if (m.loan) field(m.loan.dir === 'lent' ? 'Lent to' : 'Borrowed from', `${m.loan.who}, since ${day(m.loan.at)}`);
   if (b.vols.length > 1) field('Files', `${b.vols.length} parts${b.series === 'group' ? ' (combined by you)' : b.series ? ' (one folder)' : ''}`);
 
+  // Start the first time; after that, Continue where you were (also when you opened it from Supernote)
+  const lastPath = m.progress?.last && b.files.includes(m.progress.last) ? m.progress.last : undefined;
+  const lastVol = lastPath ? b.vols.find(v => v.path === lastPath) : undefined;
+  const opened = new Set(m.progress?.opened || []);
   // ----- right: description, then volumes -----
   const right: Item[] = [];
   const perLine = Math.floor(rIn / (px(18) * 0.53));
@@ -2756,10 +2760,6 @@ function BookPage(props: {
       <PostIt notes={m.notes || []} onPress={() => setNotesOpen(true)} style={{position: 'absolute', right: 0, bottom: 0}} />
     </View>
   );
-  // Start the first time; after that, Continue where you were (also when you opened it from Supernote)
-  const lastPath = m.progress?.last && b.files.includes(m.progress.last) ? m.progress.last : undefined;
-  const lastVol = lastPath ? b.vols.find(v => v.path === lastPath) : undefined;
-  const opened = new Set(m.progress?.opened || []);
   const start = b.ext === 'paper' ? (
     // a paper book has nothing to open: the button sets where you are with it instead
     <Pressable style={[st.startBtn, {width: lIn, backgroundColor: '#ffffff', borderWidth: 2, borderColor: BLACK}]} onPress={() => setStatusOpen(true)} accessibilityLabel="Paper book: set your reading status">
