@@ -12,7 +12,10 @@ const tree = {
   '/storage/emulated/0/Document': ['Welcome.pdf'],
   [`${SD}/Books`]: ['Garden Notes.epub'],
   [`${SD}/Music`]: [],
-  [`${SD}/Novels`]: ['Chinese Novels/', 'Korean Novels/', '_Library Data/'],
+  [`${SD}/Novels`]: ['Chinese Novels/', 'Korean Novels/', 'Calibre/', 'Paper books/', '_Library Data/'],
+  [`${SD}/Novels/Calibre`]: ['Leviathan Wakes (12)/'],
+  [`${SD}/Novels/Calibre/Leviathan Wakes (12)`]: ['Leviathan Wakes - James S. A. Corey.epub', 'metadata.opf', 'cover.jpg'],
+  [`${SD}/Novels/Paper books`]: ['The Little Prince.paper'],
   [`${SD}/Novels/Korean Novels`]: ['The Lighthouse Keeper - Min Seo.epub', 'Rain Over Busan.epub', 'Rain Over Busan (1).epub', 'Salt and Honey.epub', 'Salt and Honey Side Stories.epub'],
   [`${SD}/Novels/Chinese Novels`]: [
     'Moon Over the Jade Pavilion.epub', 'The Tea House on Willow Street.epub', 'A Sword Without a Name.epub',
@@ -26,6 +29,8 @@ const tree = {
   [`${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate`]: ['Echoes of the Ninth Gate Vol 1 (Ch 1-40).epub', 'Echoes of the Ninth Gate Vol 2 - Ninefold Debts.epub', 'Echoes of the Ninth Gate Vol 3 - Lanterns at Dusk.epub', 'Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub', 'Echoes of the Ninth Gate Vol 5 (Ch 161-200).epub', 'Echoes of the Ninth Gate Vol 6 (Ch 201-240).epub', 'Echoes of the Ninth Gate Vol 7 (Ch 241-280).epub', 'Echoes of the Ninth Gate Vol 8 (Ch 281-320).epub', 'Echoes of the Ninth Gate Vol 9 (Ch 321-360).epub', 'Echoes of the Ninth Gate Vol 10 (Ch 361-400).epub', 'Echoes of the Ninth Gate Vol 11 (Ch 401-440).epub', 'Echoes of the Ninth Gate Vol 12 (Ch 441-480).epub'],
 };
 const files = {};
+// ?goal=1: the extras turned on in Settings
+if (new URLSearchParams(location.search).get('goal')) window.__settings = JSON.stringify({profile: {goal: true, chart: true, streak: true, genres: true, time: true}, goal: 12, length: true, warnings: true});
 window.__files = files;
 const done = (y, m, d) => ({state: 'completed', at: Date.UTC(y, m, d), history: [{state: 'reading', at: Date.UTC(y, m, d - 9)}, {state: 'completed', at: Date.UTC(y, m, d)}]});
 const meta = {
@@ -38,7 +43,8 @@ const meta = {
     ], genres: ['Drama', 'Romance', 'Historical', 'Slice of Life'], tags: ['Archivists', 'Beautiful Female Lead', 'Calm Protagonist', 'Court Politics', 'Hidden Identity', 'Imperial Harem', 'Letters', 'Palace Intrigue', 'Slow Romance', 'Rainy Days', 'Mature Protagonist', 'Royalty', 'Secret Relationship', 'Second Chance', 'Tragic Past', 'Wise Protagonist', 'Clever Protagonist', 'Doting Love Interests', 'Heartwarming', 'Loneliness', 'Older Love Interests', 'Poetry', 'Gardens', 'Strategists', 'Tea Ceremony'], language: 'Chinese', status: '112 Chapters + 4 Extras (Completed)', translated: 'Yes',
       description: 'For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly.\nThen she opened a letter that had been sealed for twenty years, and the quiet prince who lived in the east wing began appearing at her desk every evening with tea she had not asked for.\nHe said he only wanted the letter back.\nHe did not explain why he kept staying after she returned it, or why the palace guards had started to call her "the prince\'s scholar".\nWhen the old Empress Dowager summoned her to the inner court, Wen Shu realised the letter had never been about love at all, but about a debt the whole dynasty would rather forget.\nThe prince, who had always been calm, lost his composure only once: the night she did not come back from the inner court. He walked through the rain to every gate of the palace until he found her, and said nothing at all on the way home.\nLater the court would whisper about it for years.'},
     'Chinese Novels/The Tea House on Willow Street.epub': {fav: true, reading: done(2026, 9, 14), notes: [{id: 't1', title: 'Comfort read', text: 'The general arguing with the baker about dumpling folds. Every single chapter.', color: 'mint', at: Date.UTC(2026, 9, 14), rating: 4}], genres: ['Slice of Life', 'Comedy'], tags: ['Retirement', 'Food'], language: 'Chinese', status: '60 Chapters (Completed)', translated: 'Yes', description: 'A retired general opens a tiny tea house and tries very hard to live a quiet life. The neighbours have other plans.'},
-    'Chinese Novels/A Sword Without a Name.epub': {reading: done(2026, 7, 3), genres: ['Action', 'Fantasy', 'Martial Arts'], tags: ['Sects', 'Weapon Spirits'], language: 'Chinese', description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
+    'Paper books/The Little Prince.paper': {paper: true, author: 'Antoine de Saint-Exupéry', genres: ['Fable'], language: 'French', source: 'Secondhand shop in Fremantle', loan: {dir: 'lent', who: 'Mina', at: Date.UTC(2026, 9, 28)}, reading: done(2026, 8, 21), description: 'A pilot stranded in the desert meets a small prince from another planet.'},
+    'Chinese Novels/A Sword Without a Name.epub': {reading: done(2026, 7, 3), warnings: ['Graphic violence', 'Major character death'], genres: ['Action', 'Fantasy', 'Martial Arts'], tags: ['Sects', 'Weapon Spirits'], language: 'Chinese', description: 'An apprentice inherits a blade that refuses to be named, and every sect in the land wants to know why.'},
     'Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols': {reading: {state: 'reading', at: Date.UTC(2026, 10, 1), history: [{state: 'reading', at: Date.UTC(2026, 10, 1)}]}, title: 'Echoes of the Ninth Gate', genres: ['Fantasy', 'Mystery', 'Romance'], tags: ['Exorcists', 'Contracts', 'Rivals to Lovers'], language: 'Chinese', status: '480 Chapters (Completed)', translated: 'No', description: 'Two rival exorcists are bound by a contract neither remembers signing. Nine gates, nine debts, one very long road.'},
     'Korean Novels/Rain Over Busan.epub': {fav: true, reading: done(2026, 10, 6), notes: [{id: 'r1', title: 'Favourite line', text: '"Forecasts are just hopes with numbers attached." Ch 9.', color: 'sky', at: Date.UTC(2026, 10, 6), rating: 5}, {id: 'r2', text: 'Ending felt rushed but the last photo scene made up for it.', color: 'paper', at: Date.UTC(2026, 10, 7)}], genres: ['Romance', 'Drama'], tags: ['Photography', 'Weather'], language: 'Korean', status: '45 Chapters (Completed)', translated: 'Yes', description: 'A weather forecaster who is always wrong meets a photographer who only shoots storms.'},
     'Korean Novels/Winter Ferry.epub': {reading: done(2026, 1, 20), genres: ['Romance', 'Slice of Life'], tags: ['Islands', 'Letters'], language: 'Korean', status: '30 Chapters (Completed)', description: 'A ferry captain carries the same passenger every winter. This year she does not get off.'},
@@ -47,6 +53,8 @@ const meta = {
     'Chinese Novels/Starlight Courier.epub': {reading: done(2026, 4, 11), genres: ['Sci-fi', 'Comedy'], tags: ['Space', 'Delivery'], description: 'The galaxy\'s most punctual delivery driver is assigned a parcel that keeps trying to escape.'},
   },
 };
+const CAL_OPF = `<package><metadata><dc:title>Leviathan Wakes</dc:title><dc:creator opf:role="aut">James S. A. Corey</dc:creator><dc:description>&lt;p&gt;Humanity has colonized the solar system. A derelict ship, a missing girl, and a conspiracy that threatens everyone.&lt;/p&gt;</dc:description><dc:language>eng</dc:language><dc:subject>Space Opera</dc:subject><dc:subject>Mystery</dc:subject><meta name="calibre:series" content="The Expanse"/><meta name="calibre:series_index" content="1.0"/><meta name="calibre:rating" content="8.0"/></metadata></package>`;
+const GR_CSV = 'Book Id,Title,Author,My Rating,Date Read,Date Added,Bookshelves,Exclusive Shelf,My Review\r\n1,"Starlight Courier",Ada Lin,4,2026/05/11,2026/04/01,,read,"Silly and warm."\r\n2,"The Fox Who Kept the Library",,5,2026/09/02,2026/08/20,favorites,read,"The ending!"\r\n3,"Ferryman of the North Sea",,0,,2026/10/01,,to-read,\r\n4,"Glass Orchard",Ren Hao,0,,2026/10/03,,to-read,\r\n';
 const COLORS = ['#c9d6df', '#f2d7b6', '#d8c7e8', '#cfe3c5', '#f0c9c9', '#c7dbe8', '#e8e2c7'];
 function svgCover(title) {
   let h = 0; for (const ch of title) h = (h * 31 + ch.charCodeAt(0)) | 0;
@@ -63,7 +71,7 @@ function svgCover(title) {
 window.__opened = [];
 NativeModules.InkShelf = {
   listDir: async path => (tree[path] || []).map((n, i) => ({name: n.replace(/\/$/, ''), path: `${path}/${n.replace(/\/$/, '')}`, isDir: n.endsWith('/'), size: 1000, mtime: Date.UTC(2026, 10, 11) - ((n.length * 7 + i * 3) % 40) * 86400000})).concat(Object.keys(files).filter(f => f.slice(0, f.lastIndexOf('/')) === path && !(tree[path] || []).includes(f.slice(f.lastIndexOf('/') + 1))).map(f => ({name: f.slice(f.lastIndexOf('/') + 1), path: f, isDir: false, size: 1, mtime: (window.__mt || {})[f] || 1}))),
-  readText: async path => (path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
+  readText: async path => (path.endsWith('metadata.opf') ? CAL_OPF : path.endsWith('settings.json') && window.__settings && !files[path] ? window.__settings : path.endsWith('.csv') ? GR_CSV : path.endsWith('state.json') ? window.__state || null : path.endsWith('/.inkshelf/library.json') ? files[path] || JSON.stringify(path.includes('/Novels/') ? novelsMeta() : {version: 1, books: {}}) : path.endsWith('libraries.json') ? (window.__libs || null) : files[path] || null),
   writeZip: async (path, entries) => { files[path] = entries; (window.__mt = window.__mt || {})[path] = Date.now(); window.__zip = entries; return true; },
   readZip: async path => files[path] || null,
   appendText: async (p, t) => { console.log('LOG', t.trim()); return true; },
@@ -82,6 +90,8 @@ NativeModules.InkShelf = {
     const blurb = {'Paper Lanterns in Winter.epub': 'Every winter a lantern-maker hangs one lantern for each person the town has forgotten. This year there is one for her.', 'Salt and Honey.epub': 'A beekeeper and a salt farmer share one stretch of coast and refuse to share anything else.'};
     return `<package><metadata><dc:title>${name}</dc:title>${by[name] ? `<dc:creator>${by[name]}</dc:creator>` : '<dc:creator>Unknown</dc:creator>'}${blurb[name] ? `<dc:description>&lt;p&gt;${blurb[name]}&lt;/p&gt;</dc:description>` : ''}<dc:language>${p.includes('Korean') ? 'ko' : 'zh'}</dc:language></metadata></package>`;
   },
+  epubWords: async p => ({words: /Korean|Calibre/.test(p) ? 82000 + (p.length % 7) * 9000 : 0, cjk: /Chinese/.test(p) ? 180000 + (p.length % 5) * 40000 : 0}),
+  removePaper: async p => true,
   openFileManager: async () => ((window.__fm = 1), true),
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },
 };
@@ -128,7 +138,7 @@ export const PluginFileAPI = {openFile: async () => ({success: true, result: tru
 export const RattaFileSelector = {
   selectImage: async () => null,
   // Supernote's own file picker: pretend the reader picked a book inside Novels/Chinese Novels
-  selectFile: async o => ((window.__picker = o), o?.suffixList?.includes('png') ? [`${o.needSelectFolder}/20261110_201533.png`] : [`${SD}/Novels/Chinese Novels/Moon Over the Jade Pavilion.epub`]),
+  selectFile: async o => ((window.__picker = o), o?.suffixList?.includes('csv') ? ['/storage/emulated/0/Document/goodreads_library_export.csv'] : o?.suffixList?.includes('png') ? [`${o.needSelectFolder}/20261110_201533.png`] : [`${SD}/Novels/Chinese Novels/Moon Over the Jade Pavilion.epub`]),
 };
 
 // ?state=1 : pretend some books were read, bookmarked and searched for

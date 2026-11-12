@@ -289,6 +289,58 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    /** How long a book is: words in its text, and CJK characters (counted apart, they read at a different speed). */
+    @ReactMethod
+    fun epubWords(path: String, promise: Promise) {
+        Thread {
+            try {
+                var words = 0L
+                var cjk = 0L
+                val tag = Regex("<[^>]*>")
+                val ent = Regex("&[a-zA-Z#0-9]+;")
+                val word = Regex("[\\p{L}\\p{N}'’]+")
+                ZipFile(path).use { zf ->
+                    for (e in zf.entries().asSequence()) {
+                        val n = e.name.lowercase()
+                        if (e.isDirectory || !(n.endsWith(".xhtml") || n.endsWith(".html") || n.endsWith(".htm"))) continue
+                        if (e.size > 8_000_000) continue
+                        var t = zf.getInputStream(e).readBytes().toString(Charsets.UTF_8)
+                        val body = t.indexOf("<body", ignoreCase = true)
+                        if (body > 0) t = t.substring(body)
+                        t = ent.replace(tag.replace(t, " "), " ")
+                        val latin = StringBuilder()
+                        for (ch in t) {
+                            val b = Character.UnicodeBlock.of(ch)
+                            if (b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS || b == Character.UnicodeBlock.HIRAGANA || b == Character.UnicodeBlock.KATAKANA ||
+                                b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A) {
+                                cjk++
+                                latin.append(' ')
+                            } else latin.append(ch)
+                        }
+                        words += word.findAll(latin).count()
+                    }
+                }
+                val m = Arguments.createMap()
+                m.putDouble("words", words.toDouble())
+                m.putDouble("cjk", cjk.toDouble())
+                promise.resolve(m)
+            } catch (e: Throwable) {
+                promise.resolve(null)
+            }
+        }.start()
+    }
+
+    /** Remove a paper-book listing. Only InkShelf's own .paper files: never a real book. */
+    @ReactMethod
+    fun removePaper(path: String, promise: Promise) {
+        try {
+            if (!path.endsWith(".paper")) { promise.resolve(false); return }
+            promise.resolve(File(path).delete())
+        } catch (e: Throwable) {
+            promise.resolve(false)
+        }
+    }
+
     /** Open Supernote's file manager (whichever app on the device looks like one). Returns its package or null. */
     @ReactMethod
     fun openFileManager(promise: Promise) {

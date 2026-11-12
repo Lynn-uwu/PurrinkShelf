@@ -99,6 +99,37 @@ export const HELP: HelpTopic[] = [
       'When a book with the same name turns up in a library, it comes off the list by itself, and your note is pinned on the book.',
       'Tap the pencil, then ✕ to take a book off the list.',
     ]},
+  {id: 'paper', title: 'Paper books', icon: 'library', words: 'paper physical printed book shelf add by hand lend lent borrow borrowed format',
+    steps: [
+      'In the library, tap + next to the view buttons and type the title (the author is optional).',
+      'It goes in its own "Paper books" folder inside the library, so it shows as a category apart from your e-books.',
+      'It works like any book: cover, genres, tags, notes, reading status and collections. Its button sets your reading status instead of opening a file.',
+      'When there are paper books, the filter panel\'s More tab has Paper book and E-book.',
+      'On the Edit page, Lent or borrowed keeps who has it. Remove this paper book is at the bottom of the Edit page.',
+    ]},
+  {id: 'goodreads', title: 'Goodreads and StoryGraph', icon: 'restore', words: 'goodreads storygraph import export csv shelves ratings reviews history',
+    steps: [
+      'Goodreads: My Books › Import and export › Export library. StoryGraph: Manage account › Export StoryGraph library. Copy the .csv to the Supernote.',
+      'Settings › Data and storage › Backup and sheet › Import their file, then pick the .csv.',
+      'Books found in your libraries get their status, finished date, and rating and review (as a note). Books you want to read but don\'t have go on your wishlist.',
+      'Make a file for them saves Document › InkShelf › InkShelf for Goodreads and StoryGraph.csv, which both sites can import.',
+    ]},
+  {id: 'calibre', title: 'Calibre libraries', icon: 'database', words: 'calibre metadata opf series cover tags rating',
+    steps: [
+      'Copy books with their Calibre folders (each book next to metadata.opf and cover.jpg).',
+      'InkShelf reads the series and number, tags, description, rating and cover once, and only fills empty fields.',
+    ]},
+  {id: 'activity', title: 'Messages and Activity', icon: 'clock', words: 'message messages notification toast activity log history changes',
+    steps: [
+      'Messages appear see-through above the bottom bar and never block a tap: you can keep using what is underneath.',
+      'Every message is kept in Settings › Activity, newest first, so you can read what changed later.',
+    ]},
+  {id: 'extras', title: 'Goal, reading time and warnings', icon: 'profile', words: 'goal yearly target reading time length hours words content warnings hide show profile',
+    steps: [
+      'Settings › Show on Profile picks what the Profile page shows. Turn on Reading goal and set how many books with the arrows.',
+      'Time spent reading adds up the length of the books you finished this year. Turn on How long it takes to read to see it on book pages.',
+      'Content warnings are their own list on the Edit page and in the filter panel (Warn). Turn them off in Settings to hide them everywhere.',
+    ]},
   {id: 'duplicates', title: 'Duplicate files', icon: 'copy', words: 'duplicate duplicates copy twice same name (1) delete keep both',
     steps: [
       'Two files with the same name in the same folder (like "Book.epub" and "Book (1).epub") are flagged on the book page.',

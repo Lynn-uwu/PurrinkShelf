@@ -1,0 +1,17 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots13'); 
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const L = s => p.getByLabel(s, {exact: true}).first();
+  const tab = name => p.getByRole('button', {name, exact: true}).last();
+  const shot = async n => { await p.waitForTimeout(400); await p.screenshot({path: path.join(out, n + '.png')}); console.log('shot', n); };
+  const U = q => 'file://' + path.join(__dirname, 'index.html') + q;
+  await p.goto(U('?lib=2&state=1&goal=1')); await p.waitForTimeout(16000);
+  await tab('Library').click(); await p.waitForTimeout(800);
+  await L('Content warnings').click(); await shot('09-filter-warnings');
+  await p.getByText('Leviathan Wakes').first().click(); await p.waitForTimeout(500); await shot('10-calibre-book');
+  await L('Close page').click().catch(() => {}); await p.waitForTimeout(300);
+  await tab('Profile').click(); await L('Settings').click(); await L('Data and storage').click().catch(async () => p.getByText('Data and storage').first().click()); await p.waitForTimeout(300);
+  await p.getByText('Backup and sheet').first().click(); await shot('11-goodreads-section');
+  await p.getByText('Import their file').click(); await p.waitForTimeout(800); await shot('12-goodreads-imported');
+  await b.close(); })();

@@ -33,6 +33,13 @@ export type Meta = {
   fav?: boolean;
   reading?: Reading; // your reading status, with dates
   author?: string;
+  seriesName?: string; // e.g. from Calibre: "The Expanse"
+  seriesNo?: number; // its place in that series
+  length?: {words: number; cjk: number}; // how long the text is (EPUB), for reading time
+  warnings?: string[]; // content warnings: their own category, can be hidden
+  source?: string; // where you got it (a shop, a site…), optional
+  paper?: boolean; // a physical book (listed by hand in the Paper books library)
+  loan?: {dir: 'lent' | 'borrowed'; who: string; at: number}; // lent to / borrowed from someone
   probed?: boolean; // the EPUB's own details were looked at once
   progress?: {last: string; opened: string[]; at: number}; // which volumes were opened (from InkShelf or Supernote)
   seen?: string[]; // files (inside the library) this book was last found as, to reconnect it
@@ -126,7 +133,7 @@ export function inCollection(c: Collection, x: BookFacts): boolean {
 
 /** anything worth keeping when the file disappears */
 export const hasDetails = (m?: Meta) =>
-  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading || m.author || m.progress);
+  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading || m.author || m.progress || m.seriesName || m.warnings?.length || m.source || m.loan);
 /** still waiting for a genre/tag or a summary */
 export const needsDetails = (m: Meta) => !(m.genres?.length || m.tags?.length) || !m.description;
 export type Settings = {
@@ -141,7 +148,19 @@ export type Settings = {
   badges: {newBadge: boolean; notes: boolean; vols: boolean};
   backupDir: string; // where the backup file is kept (survives reinstalling InkShelf)
   dashAuthor: boolean; // "Title - Author.epub": show the part after the dash as the author
+  profile: ProfileParts; // what the Profile page shows
+  goal: number; // books to finish this year (0 = no goal)
+  length: boolean; // show how long books take to read
+  warnings: boolean; // show content warnings (off: hidden everywhere)
 };
+export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
+export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
+  {id: 'goal', label: 'Reading goal'},
+  {id: 'chart', label: 'Finished by month'},
+  {id: 'time', label: 'Time spent reading'},
+  {id: 'streak', label: 'Reading days'},
+  {id: 'genres', label: 'Top genres'},
+];
 export const DEFAULT_BACKUP_DIR = '/storage/emulated/0/Document/InkShelf';
 export const BACKUP_NAME = 'InkShelf backup.json';
 export type SortBy = 'title' | 'read' | 'added' | 'vols' | 'category' | 'author' | 'rating';
@@ -150,6 +169,10 @@ export const DEFAULT_SETTINGS: Settings = {
   missing: 'flag', sort: {by: 'title', asc: true}, libFolders: false, badges: {newBadge: true, notes: true, vols: true},
   backupDir: DEFAULT_BACKUP_DIR,
   dashAuthor: true,
+  profile: {goal: false, chart: true, streak: true, genres: true, time: false},
+  goal: 0,
+  length: false,
+  warnings: true,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
@@ -169,6 +192,9 @@ let dashOn = true;
 export const setDashAuthor = (on: boolean) => (dashOn = on);
 export const authorOf = (b: Book, m?: Meta) => m?.author || (dashOn ? splitDash(b.fileTitle)?.author : undefined) || undefined;
 export const shownTitle = (b: Book, m?: Meta) => m?.title || (dashOn ? splitDash(b.fileTitle)?.title : undefined) || b.fileTitle;
+/** about how long a book takes to read, in minutes (250 words or 400 Chinese/Japanese characters a minute) */
+export const readMinutes = (m?: Meta) => (m?.length ? Math.round(m.length.words / 250 + m.length.cjk / 400) : 0);
+export const hoursText = (min: number) => (min < 60 ? `${Math.max(1, min)} min` : min < 600 ? `${(min / 60).toFixed(1).replace(/\.0$/, '')} h` : `${Math.round(min / 60)} h`);
 /** your rating: the average of the stars on the book's notes */
 export function ratingOf(m?: Meta): number | undefined {
   const r = (m?.notes || []).map(n => n.rating || 0).filter(Boolean);
@@ -176,7 +202,7 @@ export function ratingOf(m?: Meta): number | undefined {
 }
 
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
-export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number; wishlist?: Wish[]; dupIgnore?: string[]; days?: string[]};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number; wishlist?: Wish[]; dupIgnore?: string[]; days?: string[]; activity?: {t: string; at: number}[]};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {
   version: 1;
@@ -294,7 +320,7 @@ export function missingBooks(meta: MetaStore): Book[] {
     .map(k => ({key: k, fileTitle: keyName(k), folder: keyDir(k).split('/')[0] || '', dir: keyDir(k), files: [], vols: [], ext: '', added: meta.missing![k], missing: true}));
 }
 
-const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx'];
+const BOOK_EXT = ['epub', 'pdf', 'cbz', 'fb2', 'xps', 'mobi', 'txt', 'docx', 'paper']; // .paper: a paper book listed by hand in InkShelf
 const DATA_DIR = '.inkshelf';
 
 // ---------- the list of libraries (kept with the plugin) ----------
@@ -352,7 +378,7 @@ export async function loadSettings(): Promise<Settings> {
   const t = await readText(`${await pluginDir()}/settings.json`);
   try {
     const v = t ? JSON.parse(t) : {};
-    return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}};
+    return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}, profile: {...DEFAULT_SETTINGS.profile, ...(v.profile || {})}};
   } catch (e) {
     return DEFAULT_SETTINGS;
   }
@@ -573,3 +599,6 @@ export async function coverFor(root: string, b: Book, meta: Meta | undefined, ca
   cache[b.key] = p;
   return p;
 }
+
+/** where paper books listed by hand are kept inside a library (their own folder, so they show as a category) */
+export const PAPER_DIR = 'Paper books';

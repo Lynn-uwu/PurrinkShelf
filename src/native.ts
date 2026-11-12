@@ -187,20 +187,46 @@ export async function readZip(path: string): Promise<{[name: string]: string} | 
 }
 
 /** title/author/description/language/subjects written inside an EPUB */
-export async function epubMeta(path: string): Promise<{title?: string; author?: string; description?: string; language?: string; subjects: string[]} | null> {
+export type OpfMeta = {title?: string; author?: string; description?: string; language?: string; subjects: string[]; series?: string; seriesNo?: number; rating?: number; words?: number; cjk?: number};
+/** the details in an OPF file (inside an EPUB, or Calibre's metadata.opf next to a book) */
+export function parseOpf(opf: string): OpfMeta {
+  const un = (t: string) =>
+    t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+  const all = (tag: string) => Array.from(opf.matchAll(new RegExp(`<dc:${tag}\\b[^>]*>([\\s\\S]*?)</dc:${tag}>`, 'gi'))).map(m => un(m[1])).filter(Boolean);
+  const metaOf = (name: string) => {
+    const m = opf.match(new RegExp(`<meta\\b[^>]*name="${name}"[^>]*>`, 'i'));
+    return m?.[0].match(/content="([^"]*)"/i)?.[1];
+  };
+  const langs: {[k: string]: string} = {zh: 'Chinese', ko: 'Korean', ja: 'Japanese', en: 'English', es: 'Spanish', fr: 'French', de: 'German', id: 'Indonesian', vi: 'Vietnamese', th: 'Thai', ru: 'Russian', pt: 'Portuguese'};
+  const l = (all('language')[0] || '').toLowerCase().slice(0, 2);
+  const author = all('creator').filter(a => !/^(unknown|anonymous|calibre)/i.test(a))[0];
+  const series = metaOf('calibre:series');
+  const idx = Number(metaOf('calibre:series_index'));
+  const rating = Number(metaOf('calibre:rating'));
+  return {
+    title: all('title')[0], author, description: all('description')[0], language: langs[l], subjects: all('subject'),
+    series: series ? un(series) : undefined, seriesNo: series && idx > 0 ? idx : undefined, rating: rating > 0 ? Math.max(1, Math.min(5, Math.round(rating / 2))) : undefined,
+  };
+}
+export async function epubMeta(path: string): Promise<OpfMeta | null> {
   if (!N?.readEpubMeta) return null;
   let opf: string | null = null;
   try {
     opf = await N.readEpubMeta(path);
   } catch (e) {}
   if (!opf) return null;
-  const un = (t: string) =>
-    t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
-  const all = (tag: string) => Array.from(opf!.matchAll(new RegExp(`<dc:${tag}\\b[^>]*>([\\s\\S]*?)</dc:${tag}>`, 'gi'))).map(m => un(m[1])).filter(Boolean);
-  const langs: {[k: string]: string} = {zh: 'Chinese', ko: 'Korean', ja: 'Japanese', en: 'English', es: 'Spanish', fr: 'French', de: 'German', id: 'Indonesian', vi: 'Vietnamese', th: 'Thai', ru: 'Russian', pt: 'Portuguese'};
-  const l = (all('language')[0] || '').toLowerCase().slice(0, 2);
-  const author = all('creator').filter(a => !/^(unknown|anonymous|calibre)/i.test(a))[0];
-  return {title: all('title')[0], author, description: all('description')[0], language: langs[l], subjects: all('subject')};
+  const m = parseOpf(opf);
+  try {
+    if (N.epubWords) {
+      const w = await N.epubWords(path);
+      // words (Korean too: it has spaces); Chinese/Japanese characters are counted one by one
+      if (w) {
+        m.words = Math.round(Number(w.words) || 0);
+        m.cjk = Math.round(Number(w.cjk) || 0);
+      }
+    }
+  } catch (e) {}
+  return m;
 }
 /** opens the device's file manager app; returns its name, or null when there isn't one to open */
 export async function openFileManager(): Promise<string | null> {
@@ -209,5 +235,15 @@ export async function openFileManager(): Promise<string | null> {
     return (await N.openFileManager()) || null;
   } catch (e) {
     return null;
+  }
+}
+
+/** delete a paper-book listing (a .paper file InkShelf made); real books are never deleted */
+export async function removePaper(path: string): Promise<boolean> {
+  if (!N?.removePaper || !path.endsWith('.paper')) return false;
+  try {
+    return !!(await N.removePaper(path));
+  } catch (e) {
+    return false;
   }
 }
