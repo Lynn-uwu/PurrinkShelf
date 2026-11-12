@@ -15,7 +15,7 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
   <img src="docs/screens/profile.png" width="32%" alt="Profile with reading stats">
 </p>
 
-*The screenshots use made-up demo books.*
+*The screenshots use made-up demo books.* ▶ **[Watch the 6-minute walkthrough](docs/InkShelf-walkthrough.mp4)** of every feature.
 
 ## What it does
 

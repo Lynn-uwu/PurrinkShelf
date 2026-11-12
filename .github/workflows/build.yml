@@ -3,6 +3,7 @@ name: Build plugin
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
   release:
     types: [published]
@@ -46,7 +47,7 @@ jobs:
           path: build/outputs/*.snplg
 
       - name: Save the build to the 'builds' branch
-        if: github.event_name != 'release'
+        if: github.event_name != 'release' && !startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -65,3 +66,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" build/outputs/*.snplg --clobber
+
+      # A version tag (v1.0.0…) publishes a GitHub Release with the plugin file, its notes and the walkthrough video
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NOTES=".github/release-notes/${TAG}.md"
+          [ -f "$NOTES" ] || NOTES=/dev/null
+          cp build/outputs/*.snplg /tmp/InkShelf.snplg
+          FILES="/tmp/InkShelf.snplg"
+          [ -f docs/InkShelf-walkthrough.mp4 ] && FILES="$FILES docs/InkShelf-walkthrough.mp4"
+          gh release create "$TAG" --title "InkShelf ${TAG#v}" --notes-file "$NOTES" $FILES
