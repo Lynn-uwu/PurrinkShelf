@@ -30,8 +30,7 @@ const tree = {
 };
 const files = {};
 // ?goal=1: the extras turned on in Settings
-if (new URLSearchParams(location.search).get('cat')) window.__settings = JSON.stringify({look: 'cat'});
-if (new URLSearchParams(location.search).get('goal')) window.__settings = JSON.stringify({profile: {goal: true, chart: true, streak: true, genres: true, time: true}, goal: 12, length: true, warnings: true, ...(new URLSearchParams(location.search).get('cat') ? {look: 'cat'} : {})});
+if (new URLSearchParams(location.search).get('goal')) window.__settings = JSON.stringify({profile: {goal: true, chart: true, streak: true, genres: true, time: true}, goal: 12, length: true, warnings: true});
 window.__files = files;
 const done = (y, m, d) => ({state: 'completed', at: Date.UTC(y, m, d), history: [{state: 'reading', at: Date.UTC(y, m, d - 9)}, {state: 'completed', at: Date.UTC(y, m, d)}]});
 const meta = {
