@@ -183,7 +183,7 @@ const steps = []; let n = 0; let chapter = '';
   ch('Settings');
   await tap(L('Settings'), 'The gear opens Settings. Every change applies straight away.');
   await tap(T('Show and hide'), 'Show and hide: each part of the Profile and book pages, with what it does.');
-  await tap(p.getByText('Off', {exact: true}).first(), 'Tap On or Off. Off only hides it; nothing is deleted (here the reading goal comes on).');
+  await tap(p.getByText(/^(On|Off)$/).first(), 'Tap On or Off. Off only hides it; nothing is deleted.');
   await outside(); await p.waitForTimeout(300);
   await tap(T('Appearance'), 'Appearance: Original, or Cats.');
   await tap(T('Cats'), 'Cats: hand-drawn lines, cat toggles, paw prints and little cats around the pages.', 3.6);
