@@ -2,8 +2,6 @@
 
 # PurrinkShelf
 
-*Formerly InkShelf.*
-
 
 A library for the books on your Supernote, in the spirit of NovelUpdates and Mihon. Point it at the folders where your EPUBs live and you get covers, genres, tags, reading status, notes and ratings, collections and stats. Everything stays on your device. You can also fill in many books at once on a computer.
 

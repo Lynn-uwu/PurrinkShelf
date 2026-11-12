@@ -3791,7 +3791,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Icon name="logo" size={px(52)} />
             <View style={{marginLeft: px(14), flex: 1}}>
               <Text style={[st.h2, {marginTop: 0, marginBottom: 0}]}>PurrinkShelf</Text>
-              <Text style={st.small}>{`Version ${VERSION}  ·  formerly InkShelf`}</Text>
+              <Text style={st.small}>{`Version ${VERSION}`}</Text>
             </View>
           </View>
           {line('A library for the books on your Supernote.')}
