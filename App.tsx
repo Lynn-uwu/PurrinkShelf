@@ -41,6 +41,8 @@ const CAT_IMG = {
 // height / width of each picture
 const CAT_RATIO: {[k in keyof typeof CAT_IMG]: number} = {peek: 0.5349, ears: 0.4848, paw: 0.8213, loaf: 0.7054, sitting: 1.0231, sleepy: 0.8558, stretch: 0.9286};
 let CAT = false; // set from Settings on every render
+const CAT_EAR_L = require('./assets/cat/ear-left.png');
+const CAT_EAR_R = require('./assets/cat/ear-right.png');
 
 // ---------- the hand-drawn look (Settings › Look): every ink border becomes a slightly wobbly pen line ----------
 // The line pictures (tools/sketch/make.py) are cropped, never stretched, so the wobble looks the same on short and long edges.
@@ -183,6 +185,27 @@ const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTe
 const CatImg = ({name, w, style}: {name: keyof typeof CAT_IMG; w: number; h?: number; style?: any}) => (
   <Image source={CAT_IMG[name]} style={[{width: w, height: Math.round(w * CAT_RATIO[name]), pointerEvents: 'none'}, style]} resizeMode="contain" />
 );
+/** the bottom bar's round button (70 wide, its top 36 above the bar) wears an ear on each shoulder, tilted with the circle */
+const EAR = {w: px(36), h: px(20)}; // ear-left/right.png are about 84 x 44
+const Ears = () => {
+  const a = 52 * Math.PI / 180, d = px(41); // the ear's base tucks under the button's rim // angle from the top, distance from the circle's middle
+  const cy = -px(36) + px(35);
+  return (
+    <>
+      {[-1, 1].map(sd => (
+        <Image key={sd} source={sd < 0 ? CAT_EAR_L : CAT_EAR_R} resizeMode="contain"
+          style={{position: 'absolute', width: EAR.w, height: EAR.h, top: cy - d * Math.cos(a) - EAR.h / 2, left: '50%', marginLeft: sd * d * Math.sin(a) - EAR.w / 2, transform: [{rotate: `${sd * 30}deg`}], pointerEvents: 'none'} as any} />
+      ))}
+    </>
+  );
+};
+/** two little paw prints walking into a sticky note's bottom-left corner */
+const PawTrail = () => (
+  <RNView pointerEvents="none" style={{position: 'absolute', left: px(8), bottom: px(6), width: px(44), height: px(34)}}>
+    <CatImg name="paw" w={px(16)} style={{position: 'absolute', left: 0, top: 0, transform: [{rotate: '-28deg'}]}} />
+    <CatImg name="paw" w={px(16)} style={{position: 'absolute', left: px(22), top: px(14), transform: [{rotate: '-18deg'}]}} />
+  </RNView>
+);
 // picture sizes (the Supernote screen is 300 pixels per inch: 600 px is about 51 mm)
 const SIZE_COVER = '2:3 tall, e.g. 600 × 900 px (about 51 × 76 mm on the screen)';
 const SIZE_COLL = '4:3 wide, e.g. 800 × 600 px (about 68 × 51 mm on the screen)';
@@ -286,13 +309,23 @@ function Cover({uri, w, h, title, isNew, badge}: {uri?: string | null; w: number
   const [bad, setBad] = useState(false);
   const img =
     !uri || bad ? (
-      <View style={[st.noCover, {width: w, height: h}]}>
+      <View style={[st.noCover, SKETCH && {borderWidth: 0}, {width: w, height: h}]}>
         {title ? <Text style={[st.noCoverText, {fontSize: Math.max(px(9), Math.round(w / 9))}]} numberOfLines={5}>{title}</Text> : null}
       </View>
     ) : (
       <Image source={{uri: /^[a-z]+:/i.test(uri) ? uri : 'file://' + uri}} style={{width: w, height: h}} resizeMode="cover" onError={() => setBad(true)} />
     );
   const tag = badge || (isNew ? 'NEW' : '');
+  if (SKETCH) {
+    // soft corners and a pen line around the picture
+    const r = Math.max(px(5), Math.round(Math.min(w, h) * 0.07));
+    return (
+      <View style={{width: w, height: h, borderRadius: r, overflow: 'hidden', borderWidth: w < px(70) ? 1.5 : 2, borderColor: BLACK}}>
+        <RNView style={{position: 'absolute', top: 0, left: 0, width: w, height: h}}>{img}</RNView>
+        {tag ? <View style={st.newBadge}><Text style={[st.newBadgeText, badge ? {fontSize: Math.max(px(9), Math.min(px(11), Math.round(w / 11))), letterSpacing: 0} : null]}>{tag}</Text></View> : null}
+      </View>
+    );
+  }
   if (!tag) return img;
   return (
     <View style={{width: w, height: h}}>
@@ -303,7 +336,7 @@ function Cover({uri, w, h, title, isNew, badge}: {uri?: string | null; w: number
 }
 
 function ViewIcon({kind, on, onPress}: {kind: 'list' | 'grid'; on: boolean; onPress: () => void}) {
-  return <IconBtn name={kind} label={kind === 'list' ? 'List view' : 'Grid view'} dark={on} onPress={onPress} size={px(44)} style={{marginLeft: px(8), borderRadius: px(10)}} />;
+  return <IconBtn name={kind} label={kind === 'list' ? 'List view' : 'Grid view'} dark={on} onPress={onPress} size={px(42)} style={{marginLeft: px(8), borderRadius: px(10)}} />;
 }
 
 function FilterRow({label, count, state, onPress}: {label: string; count: number; state: 0 | 1 | -1; onPress: () => void}) {
@@ -2516,10 +2549,10 @@ function InkShelfApp(): React.JSX.Element {
         </Pressable>
         {active && !showFilters ? <Pill small label="Clear  ✕" onPress={clearAll} /> : null}
         <View style={{flexDirection: 'row'}}>
-          <IconBtn name="plus" label="Add a book" onPress={() => setPaperOpen(true)} size={px(44)} style={{marginRight: px(8), borderRadius: px(10)}} />
+          <IconBtn name="plus" label="Add a book" onPress={() => setPaperOpen(true)} size={px(42)} style={{marginRight: px(8), borderRadius: px(10)}} />
           <ViewIcon kind="list" on={!grid && !settings.libFolders} onPress={() => { changeSettings({libraryGrid: false, libFolders: false}); setPage(Math.floor(((pg - 1) * per) / LIST_PER_PAGE) + 1); }} />
           <ViewIcon kind="grid" on={grid && !settings.libFolders} onPress={() => { changeSettings({libraryGrid: true, libFolders: false}); setPage(Math.floor(((pg - 1) * per) / GRID_PER_PAGE) + 1); }} />
-          <IconBtn name="folder" label="Folder view" dark={settings.libFolders} onPress={() => changeSettings({libFolders: !settings.libFolders})} size={px(44)} style={{marginLeft: px(8), borderRadius: px(10)}} />
+          <IconBtn name="folder" label="Folder view" dark={settings.libFolders} onPress={() => changeSettings({libFolders: !settings.libFolders})} size={px(42)} style={{marginLeft: px(8), borderRadius: px(10)}} />
         </View>
       </View>
       {settings.libFolders && lib ? (
@@ -3130,7 +3163,7 @@ function PostIt({notes, onPress, style}: {notes: Note[]; onPress: () => void; st
   const sz = px(52);
   return (
     <Pressable onPress={onPress} hitSlop={px(6)} accessibilityLabel={n ? `${n} notes` : 'Add a note'} style={style}>
-      <View style={[st.postit, {width: sz, height: sz, backgroundColor: n ? noteBg(notes[0].color) : '#fbf0a0'}]}>
+      <View style={[st.postit, SKETCH && {borderRadius: px(8), overflow: 'hidden', borderWidth: 1.5, borderColor: BLACK}, {width: sz, height: sz, backgroundColor: n ? noteBg(notes[0].color) : '#fbf0a0'}]}>
         <View style={st.postitFold} />
         {n ? (
           <>
@@ -3173,7 +3206,7 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
   const rows = Math.max(2, Math.ceil(slots / cols));
   const nw = Math.floor(boardW / cols) - px(28);
   const nh = Math.floor(boardH / rows) - px(26);
-  const lines = Math.max(2, Math.floor((nh - px(60)) / px(25)));
+  const lines = Math.max(2, Math.floor((nh - px(60) - (CAT ? px(16) : 0)) / px(25)));
   return (
     <View style={[StyleSheet.absoluteFill, {backgroundColor: '#ffffff'}]}>
       <View style={st.header}>
@@ -3209,9 +3242,9 @@ function NotesBoard({title, notes, onChange, onClose}: {title: string; notes: No
                 <View key={c} style={st.boardSlot}>
                   <Pressable
                     onPress={() => (picking ? setPicked(sel ? picked.filter(x => x !== n.id) : [...picked, n.id]) : setEditing(n))}
-                    style={[st.sticky, {width: nw, height: nh, backgroundColor: noteBg(n.color), transform: [{rotate: `${tilt(n.id, i)}deg`}]}, sel && {borderWidth: 3.5, borderColor: BLACK}]}
+                    style={[st.sticky, SKETCH && {borderRadius: px(12)}, {width: nw, height: nh, backgroundColor: noteBg(n.color), transform: [{rotate: `${tilt(n.id, i)}deg`}]}, sel && {borderWidth: 3.5, borderColor: BLACK}]}
                     accessibilityLabel={picking ? `${sel ? 'Unselect' : 'Select'} note ${i + 1}` : `Note ${i + 1}: ${n.title || n.text.slice(0, 30)}`}>
-                    {CAT ? <CatImg name="paw" w={px(22)} h={px(22)} style={{position: 'absolute', top: px(2), left: '50%', marginLeft: -px(11)}} /> : <View style={st.pin} />}
+                    <View style={st.pin} />{CAT ? <PawTrail /> : null}
                     {n.title ? <Text style={st.stickyTitle} numberOfLines={1}>{n.title}</Text> : null}
                     {n.rating ? <View style={{marginBottom: px(4)}}><Stars value={n.rating} size={px(20)} /></View> : null}
                     <Text style={st.stickyText} numberOfLines={(n.title ? lines - 1 : lines) - (n.rating ? 1 : 0)}>{n.text}</Text>
@@ -3503,7 +3536,7 @@ function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) =
   const boardH = H - px(64) - px(84) - px(64) - TASK_H - px(20);
   const nw = Math.floor(boardW / cols) - px(30);
   const nh = Math.floor(boardH / rows) - px(26);
-  const lines = Math.max(2, Math.floor((nh - px(96)) / px(25)));
+  const lines = Math.max(2, Math.floor((nh - px(96) - (CAT ? px(16) : 0)) / px(25)));
   return (
     <>
       <View style={[st.searchRow, {flexDirection: 'row', alignItems: 'center'}]}>
@@ -3526,7 +3559,7 @@ function QuotesPage({index, cover, onOpen}: {index: Found[]; cover: (f: Found) =
               {list.slice(p * per + r * cols, p * per + r * cols + cols).map((x, c) => (
                 <View key={x.f.lib.path + x.f.book.key + x.n.id} style={st.boardSlot}>
                   <Pressable onPress={() => onOpen(x.f)} style={[st.sticky, {width: nw, height: nh, backgroundColor: noteBg(x.n.color), transform: [{rotate: `${tilt(x.n.id, r * cols + c)}deg`}]}]} accessibilityLabel={`Note on ${x.title}: ${x.n.title || x.n.text.slice(0, 40)}`}>
-                    {CAT ? <CatImg name="paw" w={px(22)} h={px(22)} style={{position: 'absolute', top: px(2), left: '50%', marginLeft: -px(11)}} /> : <View style={st.pin} />}
+                    <View style={st.pin} />{CAT ? <PawTrail /> : null}
                     <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(6)}}>
                       <Cover uri={cover(x.f)} w={px(30)} h={px(45)} title={x.title} />
                       <View style={{flex: 1, marginLeft: px(8)}}>
@@ -3659,7 +3692,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
                 {/* the open tab sits in a dip cut into the bar, like a call-to-action button */}
                 {/* one smooth curve: flat bar, soft shoulder, round dip around the button, soft shoulder */}
                 <Image source={DIP_IMG} style={st.dip} resizeMode="stretch" />
-                {CAT ? <CatImg name="ears" w={px(58)} style={{position: 'absolute', top: -px(36) - px(12), alignSelf: 'center'}} /> : null}
+                {CAT ? <Ears /> : null}
                 <View style={st.taskCta}>
                   <Icon name={icon} size={px(32)} />
                   {badge}
@@ -3812,9 +3845,9 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
         {settings.profile.goal ? (
           <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(4)}}>
             <Text style={[st.small, {color: BLACK, marginRight: px(10)}]}>{`Goal: books to finish in ${new Date().getFullYear()}`}</Text>
-            <IconBtn name="back" label="Fewer" disabled={settings.goal <= 1} onPress={() => change({goal: Math.max(1, (settings.goal || 12) - 1)})} size={px(40)} />
+            <IconBtn name="back" label="Fewer" disabled={settings.goal <= 1} onPress={() => change({goal: Math.max(1, (settings.goal || 12) - 1)})} size={px(42)} />
             <Text style={[st.rowTitle, {width: px(54), textAlign: 'center'}]}>{settings.goal || 12}</Text>
-            <IconBtn name="forward" label="More" onPress={() => change({goal: (settings.goal || 12) + 1})} size={px(40)} />
+            <IconBtn name="forward" label="More" onPress={() => change({goal: (settings.goal || 12) + 1})} size={px(42)} />
           </View>
         ) : null}
         <Text style={[st.section, {marginTop: px(12)}]}>On book pages</Text>
@@ -4144,7 +4177,7 @@ function CollectionEditor({start, values, count, onSave, onCancel, onDelete, onP
         <Text style={[st.ruleText, !r.value && {color: '#888888'}]} numberOfLines={1}>{r.value || 'choose…'}</Text>
         <Icon name={open === 'value' ? 'up' : 'down'} size={px(18)} />
       </Pressable>
-      <IconBtn name="close" label="Remove rule" onPress={() => { setPick(null); setC({...c, rules: c.rules.filter((_, j) => j !== i)}); }} size={px(40)} style={{marginLeft: px(6)}} />
+      <IconBtn name="close" label="Remove rule" onPress={() => { setPick(null); setC({...c, rules: c.rules.filter((_, j) => j !== i)}); }} size={px(42)} style={{marginLeft: px(6)}} />
     </View>
   );
   return (
@@ -4301,7 +4334,7 @@ function HelpPage({q, setQ, onOpen}: {q: string; setQ: (q: string) => void; onOp
         <View style={st.helpSearch}>
           <Icon name="search" size={px(26)} />
           <TextInput style={st.helpInput} value={q} onChangeText={t => { setQ(t); setPg(0); }} placeholder="Search the guides, e.g. cover, backup, series" />
-          {q ? <IconBtn bare name="close" label="Clear search" onPress={() => setQ('')} size={px(40)} /> : null}
+          {q ? <IconBtn bare name="close" label="Clear search" onPress={() => setQ('')} size={px(42)} /> : null}
         </View>
       </View>
       <View style={{flex: 1, paddingHorizontal: px(16)}}>
@@ -4851,7 +4884,7 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
           </View>
         ) : null}
         {x.action ? (
-          <IconBtn name={x.action.icon} label={x.action.label} dark={x.action.dark} onPress={x.action.onPress} size={px(40)} style={{position: 'absolute', right: px(4), bottom: px(4)}} />
+          <IconBtn name={x.action.icon} label={x.action.label} dark={x.action.dark} onPress={x.action.onPress} size={px(42)} style={{position: 'absolute', right: px(4), bottom: px(4)}} />
         ) : null}
       </View>
       <Text style={[st.cardTitle, {alignSelf: 'stretch'}]} numberOfLines={1}>{x.title}</Text>
@@ -4961,7 +4994,7 @@ function NewList({items, libs, ready, paging, grid, setGrid, cover, wantCovers, 
     <>
       {wait}
       <Chips options={opts} value={which} onChange={setWhich} />
-      <Toolbar text={`${shown.length} book${shown.length === 1 ? '' : 's'}  ·  newest first`} grid={grid} setGrid={setGrid} extra={justAdded ? <IconBtn name="check" label="Mark all as seen" onPress={onAllSeen} size={px(44)} style={{borderRadius: px(10)}} /> : null} />
+      <Toolbar text={`${shown.length} book${shown.length === 1 ? '' : 's'}  ·  newest first`} grid={grid} setGrid={setGrid} extra={justAdded ? <IconBtn name="check" label="Mark all as seen" onPress={onAllSeen} size={px(42)} style={{borderRadius: px(10)}} /> : null} />
       <Collection
         key={which + grid}
         grid={grid}
@@ -5049,7 +5082,7 @@ function Home(props: {
             onSubmitEditing={() => onSearched(q)}
           />
           {q ? (
-            <IconBtn bare name="close" label="Clear search" onPress={() => setQ('')} size={px(40)} />
+            <IconBtn bare name="close" label="Clear search" onPress={() => setQ('')} size={px(42)} />
           ) : null}
         </View>
         <Pressable onPress={() => setScopeOpen(!scopeOpen)} style={[st.filterBtn, (scopeOpen || scope !== 'all') && st.btnDark]} accessibilityLabel="Search filters">
@@ -5110,11 +5143,11 @@ function Home(props: {
       <View style={{flexDirection: 'row', alignItems: 'center'}}>
         {!scroll && pages > 1 ? (
           <>
-            <IconBtn name="back" label="Previous" size={px(38)} disabled={page <= 0} onPress={() => setPage(page - 1)} style={{marginLeft: px(6)}} />
-            <IconBtn name="forward" label="Next" size={px(38)} disabled={page >= pages - 1} onPress={() => setPage(page + 1)} style={{marginLeft: px(6)}} />
+            <IconBtn name="back" label="Previous" size={px(42)} disabled={page <= 0} onPress={() => setPage(page - 1)} style={{marginLeft: px(8)}} />
+            <IconBtn name="forward" label="Next" size={px(42)} disabled={page >= pages - 1} onPress={() => setPage(page + 1)} style={{marginLeft: px(8)}} />
           </>
         ) : null}
-        <IconBtn name="arrow-right" label="View all" size={px(38)} onPress={() => onViewAll(what)} style={{marginLeft: px(10)}} />
+        <IconBtn name="arrow-right" label="View all" size={px(42)} onPress={() => onViewAll(what)} style={{marginLeft: px(8)}} />
       </View>
     </View>
   );
@@ -5151,7 +5184,7 @@ function Home(props: {
         <View style={{paddingHorizontal: px(16)}}>
           <View style={st.secHead}>
             <Text style={st.secTitle}>Recent searches</Text>
-            <IconBtn name="trash" label="Clear all searches" size={px(38)} onPress={() => onForgetSearch('')} />
+            <IconBtn name="trash" label="Clear all searches" size={px(42)} onPress={() => onForgetSearch('')} />
           </View>
           <View style={[st.pillWrap, {maxHeight: px(84), overflow: 'hidden'}]}>
             {searches.map(t => (
@@ -5170,7 +5203,7 @@ function Home(props: {
 
       {libs.length ? (
         <>
-          <View style={{paddingHorizontal: px(16), marginTop: px(10)}}>{head('Recently', 'read', rpg, rPages, setRp, 'recent')}</View>
+          <View style={{paddingHorizontal: px(16), marginTop: px(2)}}>{head('Recently', 'read', rpg, rPages, setRp, 'recent')}</View>
           {recent.length ? (
             row(
               rShown.map((r, i) => (
@@ -5188,7 +5221,7 @@ function Home(props: {
             <Text style={[st.small, {paddingHorizontal: px(16)}]}>Books you open will show up here.</Text>
           )}
 
-          <View style={{paddingHorizontal: px(16), marginTop: px(16)}}>{head('Explore', 'by genre', gpg, gPages, setGp, 'genres')}</View>
+          <View style={{paddingHorizontal: px(16), marginTop: px(6)}}>{head('Explore', 'by genre', gpg, gPages, setGp, 'genres')}</View>
           {genres.length ? (
             <View style={[st.genrePanel, {marginHorizontal: px(16)}]}>
               {(scroll ? [<ScrollView key="s" horizontal showsHorizontalScrollIndicator={false}><View style={{flexDirection: 'row'}}>{gTiles()}</View></ScrollView>] : [<View key="r" style={{flexDirection: 'row'}}>{gTiles()}</View>])}
@@ -5203,7 +5236,7 @@ function Home(props: {
   function gTiles() {
     return gShown.map((g, i) => (
       <Pressable key={g.name} onPress={() => onGenre(g.name)} style={{width: gw, marginLeft: i ? px(10) : 0, alignItems: 'center'}}>
-        <Cover uri={g.f ? cover(g.f) : null} w={gw} h={Math.round(gw * 1.45)} title={g.name} />
+        <Cover uri={g.f ? cover(g.f) : null} w={gw} h={Math.round(gw * 1.4)} title={g.name} />
         <Text style={[st.cardTitle, {textAlign: 'center'}]} numberOfLines={1}>{g.name}</Text>
         <Text style={[st.cardSub, {textAlign: 'center'}]}>{`${g.count} book${g.count === 1 ? '' : 's'}`}</Text>
       </Pressable>
@@ -5806,7 +5839,7 @@ const st = StyleSheet.create({
   cardTitle: {fontSize: px(16), fontWeight: 'bold', color: BLACK, marginTop: px(6)},
   cardSub: {fontSize: px(13), color: '#666666', marginTop: px(1)},
   filterBtn: {width: px(54), height: px(54), borderRadius: px(27), borderWidth: 2, borderColor: BLACK, alignItems: 'center', justifyContent: 'center', marginLeft: px(10)},
-  secHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(40)},
+  secHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(50)}, // room above and below the round buttons
   secTitle: {fontSize: px(20), fontWeight: 'bold', color: BLACK},
   secSub: {fontWeight: 'normal', color: '#777777'},
   viewAll: {fontSize: px(16), color: '#444444', textDecorationLine: 'underline', marginLeft: px(12)},
