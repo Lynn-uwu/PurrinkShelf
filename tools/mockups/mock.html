@@ -27,7 +27,8 @@ body{font-family:Inter;color:#111;background:#ccc}
 .az span.on{background:#111;color:#fff}.az span.off{color:#bbb}
 .letter{font-weight:700;font-size:13px;color:#fff;background:#111;border-radius:8px;padding:1px 8px;display:inline-block;margin:6px 0 2px}
 .chips{display:flex;flex-wrap:wrap;gap:4px 5px}
-.chip{border:1.5px solid #111;border-radius:14px;padding:2px 8px;font-size:13.5px;white-space:nowrap}
+.chip{border:1.5px solid #111;border-radius:14px;padding:2px 7px;font-size:13px;white-space:nowrap}
+.chip i{margin-left:2px}
 .chip i{font-style:normal;color:#666;font-size:12px;margin-left:3px}
 .chip.on{background:#111;color:#fff}.chip.on i{color:#ccc}
 .chip.no{text-decoration:line-through;border-style:dashed}
@@ -48,7 +49,7 @@ body{font-family:Inter;color:#111;background:#ccc}
 .bk{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #ccc}
 .cov{width:74px;height:104px;border:2px solid #111;border-radius:6px;flex:none;background:#efe3c8;font-size:11px;padding:6px;text-align:center}
 .vol{display:flex;align-items:center;justify-content:space-between;border:2px solid #111;border-radius:12px;padding:8px 12px;margin:6px 0;font-size:15px}
-.vol.done{color:#777;border-color:#999}
+.vol.done{color:#8a8a8a;border-color:#b5b5b5;background:#ececec}
 .bar{height:8px;border:1.5px solid #111;border-radius:5px;width:110px;overflow:hidden}.bar i{display:block;height:100%;background:#111}
 .toast{position:absolute;left:30px;right:30px;bottom:96px;border:2.5px solid #111;border-radius:18px;background:#fff;padding:12px 14px;box-shadow:0 4px 0 #111}
 .btn{display:inline-block;border:2px solid #111;border-radius:14px;padding:8px 14px;font-weight:700;font-size:15px}
@@ -56,6 +57,7 @@ body{font-family:Inter;color:#111;background:#ccc}
 .note{position:absolute;left:0;right:0;bottom:0;background:#fffbe6;border-top:2px dashed #111;padding:8px 14px;font-size:13.5px}
 .found td{padding:5px 6px;font-size:14px;vertical-align:top}
 .found td:first-child{font-weight:700;width:96px}
+.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.key{height:46px;border:2px solid #111;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}.key.off{border-color:#ccc;color:#ccc}.key.on{background:#111;color:#fff}
 .tick{color:#111;font-weight:700}
 </style></head><body>
 
@@ -65,8 +67,8 @@ body{font-family:Inter;color:#111;background:#ccc}
  <div class="side">
   <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700;font-size:22px">Filters</div><div class="ib" style="width:36px;height:36px;font-size:17px">⚙</div></div>
   <div class="tabs"><div class="tab">Genre</div><div class="tab on">Tags</div><div class="tab">Author</div><div class="tab">Warnings</div><div class="tab">More</div></div>
-  <div style="border:2px solid #111;border-radius:16px;height:32px;font-size:13px;color:#888;padding:6px 10px;margin:4px 26px 6px 0">🔍 Find a tag…</div>
-  <div style="margin-right:24px">
+  <div style="display:flex;gap:6px;margin:4px 0 6px"><div style="flex:1;border:2px solid #111;border-radius:16px;height:40px;font-size:13px;color:#888;padding:10px 10px">Find a tag…</div><div class="btn" style="height:40px;padding:8px 10px">A–Z</div></div>
+  <div>
    <div class="letter">F</div>
    <div class="row"><span><i class="cb"></i>Face Slapping</span><span class="n">6</span></div>
    <div class="row"><span><i class="cb on">✓</i>Fake Marriage</span><span class="n">3</span></div>
@@ -81,9 +83,7 @@ body{font-family:Inter;color:#111;background:#ccc}
    <div class="row"><span><i class="cb"></i>Historical Setting</span><span class="n">9</span></div>
    <div class="row"><span><i class="cb"></i>Hurt/Comfort</span><span class="n">11</span></div>
   </div>
-  <div class="az">
-   <span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span class="on">F</span><span>G</span><span>H</span><span class="off">I</span><span>J</span><span class="off">K</span><span>L</span><span>M</span><span class="off">N</span><span>O</span><span>P</span><span class="off">Q</span><span>R</span><span>S</span><span>T</span><span class="off">U</span><span>V</span><span>W</span><span class="off">X</span><span>Y</span><span class="off">Z</span><span>#</span>
-  </div>
+  
  </div>
  <div class="main">
   <div style="font-weight:700;font-size:20px;margin:6px 0 8px">3 books <span class="sub">· Tag: Fake Marriage · not Gore</span></div>
@@ -94,20 +94,55 @@ body{font-family:Inter;color:#111;background:#ccc}
  <div class="task"><b>Library</b><span>New</span><span>Home</span><span>Collections</span><span>Profile</span></div>
 </div>
 
+<div class="f" id="f1b">
+ <div class="top"><div class="ib dark">▤</div><div><div class="ttl">All ⌄</div><div class="sub" style="text-align:center">Novels</div></div><div style="display:flex;gap:10px"><div class="ib">?</div><div class="ib">⚙</div></div></div>
+ <div class="side">
+  <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700;font-size:22px">Filters</div><div class="ib" style="width:36px;height:36px;font-size:17px">⚙</div></div>
+  <div class="tabs"><div class="tab">Genre</div><div class="tab on">Tags</div><div class="tab">Author</div><div class="tab">Warnings</div><div class="tab">More</div></div>
+  <div style="display:flex;gap:6px;margin:4px 0 6px"><div style="flex:1;border:2px solid #111;border-radius:16px;height:40px;font-size:13px;color:#888;padding:10px 10px">Find a tag…</div><div class="btn" style="height:40px;padding:8px 10px">A–Z</div></div>
+  <div>
+   <div class="letter">F</div>
+   <div class="row"><span><i class="cb"></i>Face Slapping</span><span class="n">6</span></div>
+   <div class="row"><span><i class="cb on">✓</i>Fake Marriage</span><span class="n">3</span></div>
+   <div class="row"><span><i class="cb"></i>Fluff</span><span class="n">14</span></div>
+   <div class="row"><span><i class="cb"></i>Found Family</span><span class="n">5</span></div>
+   <div class="letter">G</div>
+   <div class="row"><span><i class="cb"></i>Gender Bender</span><span class="n">2</span></div>
+   <div class="row"><span><i class="cb x">✕</i>Gore</span><span class="n">1</span></div>
+   <div class="row"><span><i class="cb"></i>Grumpy x Sunshine</span><span class="n">7</span></div>
+   <div class="letter">H</div>
+   <div class="row"><span><i class="cb"></i>Hidden Identity</span><span class="n">4</span></div>
+   <div class="row"><span><i class="cb"></i>Historical Setting</span><span class="n">9</span></div>
+   <div class="row"><span><i class="cb"></i>Hurt/Comfort</span><span class="n">11</span></div>
+  </div>
+  
+ <div style="position:absolute;left:10px;right:10px;top:150px;background:#fff;border:2.5px solid #111;border-radius:16px;padding:10px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Jump to</b><div class="ib" style="width:34px;height:34px;font-size:15px">✕</div></div>
+<div class="keys"><div class="key">A</div><div class="key">B</div><div class="key">C</div><div class="key">D</div><div class="key">E</div><div class="key on">F</div><div class="key">G</div><div class="key">H</div><div class="key off">I</div><div class="key">J</div><div class="key off">K</div><div class="key">L</div><div class="key">M</div><div class="key off">N</div><div class="key">O</div><div class="key">P</div><div class="key off">Q</div><div class="key">R</div><div class="key">S</div><div class="key">T</div><div class="key off">U</div><div class="key">V</div><div class="key">W</div><div class="key off">X</div><div class="key">Y</div><div class="key off">Z</div><div class="key">#</div></div><div class="sub" style="margin-top:8px">Grey letters have no tags.</div></div></div>
+ <div class="main">
+  <div style="font-weight:700;font-size:20px;margin:6px 0 8px">3 books <span class="sub">· Tag: Fake Marriage · not Gore</span></div>
+  <div class="bk"><div class="cov">The Fake Consort</div><div><b style="font-size:17px">The Fake Consort</b><div class="chips" style="margin-top:6px"><span class="chip">Romance</span><span class="chip">Fake Marriage</span></div></div></div>
+  <div class="bk"><div class="cov" style="background:#d9e8d0">Contract Spring</div><div><b style="font-size:17px">Contract Spring</b><div class="chips" style="margin-top:6px"><span class="chip">Drama</span><span class="chip">Fake Marriage</span></div></div></div>
+  <div class="bk"><div class="cov" style="background:#e5d9ef">Wedding Lies</div><div><b style="font-size:17px">Wedding Lies</b><div class="chips" style="margin-top:6px"><span class="chip">Comedy</span><span class="chip">+3</span></div></div></div>
+ </div>
+ <div class="task"><b>Library</b><span>New</span><span>Home</span><span>Collections</span><span>Profile</span></div>
+</div>
+
+
 <!-- 2: AO3 compact -->
 <div class="f" id="f2">
  <div class="top"><div class="ib dark">▤</div><div><div class="ttl">AO3 ⌄</div><div class="sub" style="text-align:center">Fanfiction · 286 works</div></div><div style="display:flex;gap:10px"><div class="ib">?</div><div class="ib">⚙</div></div></div>
- <div class="side" style="width:330px">
-  <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700;font-size:22px">Filters <span class="sub">AO3 style</span></div><div class="ib" style="width:36px;height:36px;font-size:17px">⚙</div></div>
-  <div class="tabs"><div class="tab">Rating</div><div class="tab">Warnings</div><div class="tab">Fandom</div><div class="tab">Ship</div><div class="tab">Character</div><div class="tab on">Tags</div></div>
-  <div style="border:2px solid #111;border-radius:16px;height:32px;font-size:13px;color:#888;padding:6px 10px;margin:4px 0 6px">🔍 Find a tag…</div>
+ <div class="side">
+  <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700;font-size:22px">Filters</div><div class="ib" style="width:36px;height:36px;font-size:17px">⚙</div></div>
+  <div class="tabs"><div class="tab">Rating</div><div class="tab">Fandom</div><div class="tab">Ship</div><div class="tab on">Tags</div><div class="tab">More</div></div>
+  <div style="display:flex;gap:6px;margin:4px 0 6px"><div style="flex:1;border:2px solid #111;border-radius:16px;height:40px;font-size:13px;color:#888;padding:10px 10px">Find a tag…</div><div class="btn" style="height:40px;padding:8px 10px">A–Z</div></div>
   <div class="h">Additional tags <span>by most works</span></div>
-  <div class="chips">
-   <span class="chip on">Fluff<i>142</i></span><span class="chip">Angst<i>131</i></span><span class="chip">Hurt/Comfort<i>98</i></span><span class="chip">Romance<i>91</i></span><span class="chip">Alternate Universe<i>77</i></span><span class="chip">Slow Burn<i>64</i></span><span class="chip no">Major Character Death<i>12</i></span><span class="chip">Happy Ending<i>58</i></span><span class="chip">Canon Divergence<i>52</i></span><span class="chip">Humor<i>49</i></span><span class="chip">Friends to Lovers<i>44</i></span><span class="chip">Domestic Fluff<i>41</i></span><span class="chip">Mutual Pining<i>39</i></span><span class="chip">Getting Together<i>37</i></span><span class="chip">Fix-It<i>33</i></span><span class="chip">Established Relationship<i>31</i></span><span class="chip">Coffee Shops<i>18</i></span><span class="chip">Soulmates<i>27</i></span><span class="chip">Enemies to Lovers<i>26</i></span><span class="chip">Time Travel<i>21</i></span><span class="chip">Modern AU<i>20</i></span><span class="chip">Found Family<i>19</i></span><span class="chip">Pining<i>17</i></span><span class="chip">Crack<i>15</i></span><span class="chip">Character Study<i>14</i></span><span class="chip">Whump<i>13</i></span><span class="chip">Post-Canon<i>12</i></span><span class="chip">Oneshot<i>11</i></span><span class="chip">Tooth-Rotting Fluff<i>10</i></span><span class="chip">Sickfic<i>9</i></span><span class="chip">Aged-Up Characters<i>8</i></span><span class="chip">Fluff and Angst<i>8</i></span><span class="chip">Domestic<i>7</i></span><span class="chip">Hogwarts AU<i>6</i></span>
+  <div class="chips" style="gap:4px 4px">
+   <span class="chip on">Fluff<i>142</i></span><span class="chip">Angst<i>131</i></span><span class="chip">Hurt/Comfort<i>98</i></span><span class="chip">Romance<i>91</i></span><span class="chip">Alternate Universe<i>77</i></span><span class="chip">Slow Burn<i>64</i></span><span class="chip no">Major Character Death<i>12</i></span><span class="chip">Happy Ending<i>58</i></span><span class="chip">Canon Divergence<i>52</i></span><span class="chip">Humor<i>49</i></span><span class="chip">Friends to Lovers<i>44</i></span><span class="chip">Domestic Fluff<i>41</i></span><span class="chip">Mutual Pining<i>39</i></span><span class="chip">Getting Together<i>37</i></span><span class="chip">Fix-It<i>33</i></span><span class="chip">Soulmates<i>27</i></span><span class="chip">Time Travel<i>21</i></span><span class="chip">Modern AU<i>20</i></span><span class="chip">Pining<i>17</i></span><span class="chip">Crack<i>15</i></span><span class="chip">Whump<i>13</i></span><span class="chip">Oneshot<i>11</i></span><span class="chip">Sickfic<i>9</i></span><span class="chip">Domestic<i>7</i></span>
   </div>
-  <div class="sub" style="margin-top:10px">Tap once to include, twice to exclude. 1 of 4 pages ›</div>
+  <div class="sub" style="margin-top:8px">Tap once to include, twice to exclude.</div>
  </div>
- <div class="main" style="left:330px">
+ <div class="main">
   <div style="font-weight:700;font-size:18px;margin:6px 0 8px">142 works</div>
   <div style="border-bottom:1px solid #ccc;padding:6px 0"><b>Tea for Two</b><div class="sub">Fandom A · 12k words · Complete</div><div class="chips" style="margin-top:5px"><span class="chip">G</span><span class="chip">Fluff</span><span class="chip">Coffee Shops</span></div></div>
   <div style="border-bottom:1px solid #ccc;padding:6px 0"><b>Snowed In</b><div class="sub">Fandom B · 4k words</div><div class="chips" style="margin-top:5px"><span class="chip">T</span><span class="chip">Fluff</span><span class="chip">+5</span></div></div>
@@ -128,19 +163,33 @@ body{font-family:Inter;color:#111;background:#ccc}
    <div class="sec">Tags look</div>
    <div class="seg"><div>List with ticks</div><div class="on">Compact chips (AO3)</div></div>
    <div class="sec">Show in the Filters tabs <span class="sub" style="font-weight:400">· drag ≡ to reorder</span></div>
-   <div class="row" style="height:40px"><span><i class="cb on">✓</i>Genre</span><span class="n">≡</span></div>
-   <div class="row" style="height:40px"><span><i class="cb on">✓</i>Tags</span><span class="n">≡</span></div>
-   <div class="row" style="height:40px"><span><i class="cb on">✓</i>Author</span><span class="n">≡</span></div>
-   <div class="row" style="height:40px"><span><i class="cb"></i>Content warnings</span><span class="n">≡</span></div>
-   <div class="row" style="height:40px"><span><i class="cb on">✓</i>Status (reading, completed…)</span><span class="n">≡</span></div>
-   <div class="row" style="height:40px"><span><i class="cb"></i>Language / origin</span><span class="n">≡</span></div>
-   <div class="row" style="height:40px"><span><i class="cb"></i>Rating, format, series, source</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb on">✓</i>Genre</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb on">✓</i>Tags</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb on">✓</i>Author</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb"></i>Content warnings</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb on">✓</i>Status (reading, completed…)</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb"></i>Language / origin</span><span class="n">≡</span></div>
+   <div class="row" style="height:33px"><span><i class="cb"></i>Rating, format, series, source</span><span class="n">≡</span></div>
+   <div class="sec">Quick filters on the Library page</div>
+   <div class="sub" style="margin-bottom:6px">Pick the genres, tags or anything else you filter by most. They sit above your books, one tap away.</div>
+   <div class="chips"><span class="chip on">Romance</span><span class="chip on">Fluff</span><span class="chip on">Reading</span><span class="chip on">Chinese</span><span class="chip">+ Add</span></div>
    <div class="sub" style="margin-top:10px;text-align:center">Changes apply straight away.</div>
   </div>
  </div>
  <div class="task"><b>Library</b><span>New</span><span>Home</span><span>Collections</span><span>Profile</span></div>
 </div>
 
+<div class="f" id="f3b">
+ <div class="top"><div class="ib">▤</div><div><div class="ttl">All ⌄</div><div class="sub" style="text-align:center">Novels</div></div><div style="display:flex;gap:10px"><div class="ib">?</div><div class="ib">⚙</div></div></div>
+ <div style="padding:12px 14px">
+  <div style="font-weight:700;font-size:20px;margin:2px 0 8px">5 books <span class="sub">· Romance · Reading</span></div>
+  <div style="display:flex;align-items:center;gap:6px;border-bottom:2px solid #111;padding-bottom:10px;margin-bottom:6px"><span class="sub" style="color:#111;font-weight:700">Quick:</span><span class="chip on" style="font-size:15px;padding:5px 12px">Romance</span><span class="chip" style="font-size:15px;padding:5px 12px">Fluff</span><span class="chip on" style="font-size:15px;padding:5px 12px">Reading</span><span class="chip" style="font-size:15px;padding:5px 12px">Chinese</span></div>
+  <div class="bk"><div class="cov">The Fake Consort</div><div><b style="font-size:17px">The Fake Consort</b><div class="chips" style="margin-top:6px"><span class="chip">Romance</span><span class="chip">Historical</span></div><div class="sub" style="margin-top:6px">Reading · Vol 2</div></div></div>
+  <div class="bk"><div class="cov" style="background:#d9e8d0">Contract Spring</div><div><b style="font-size:17px">Contract Spring</b><div class="chips" style="margin-top:6px"><span class="chip">Romance</span><span class="chip">Drama</span></div><div class="sub" style="margin-top:6px">Reading</div></div></div>
+  <div class="bk"><div class="cov" style="background:#e5d9ef">Moon Over the Jade Pavilion</div><div><b style="font-size:17px">Moon Over the Jade Pavilion</b><div class="chips" style="margin-top:6px"><span class="chip">Romance</span><span class="chip">Slice of Life</span></div><div class="sub" style="margin-top:6px">Reading</div></div></div>
+ </div>
+ <div class="task"><b>Library</b><span>New</span><span>Home</span><span>Collections</span><span>Profile</span></div>
+</div>
 <!-- 4: AO3 library mode -->
 <div class="f" id="f4">
  <div class="dim"></div>
@@ -179,12 +228,31 @@ body{font-family:Inter;color:#111;background:#ccc}
  </div>
  <div class="toast">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-   <div><b style="font-size:17px">You finished Vol 3 🎉</b><div class="sub">Echoes of the Ninth Gate · 9 volumes left</div></div>
+   <div><b style="font-size:17px">You finished Vol 3</b><div class="sub">Echoes of the Ninth Gate · 9 volumes left</div></div>
    <div style="display:flex;gap:8px"><span class="btn">Later</span><span class="btn dark">▶ Start Vol 4</span></div>
   </div>
  </div>
  <div class="task"><b>Library</b><span>New</span><span>Home</span><span>Collections</span><span>Profile</span></div>
 </div>
+
+<div class="f" id="f5b">
+ <div class="dim"></div>
+ <div class="card" style="bottom:96px">
+  <div class="ch"><div class="ib">‹</div><div class="ttl">Echoes of the Ninth Gate</div><div class="ib">✕</div></div>
+  <div class="pad">
+   <div style="display:flex;justify-content:space-between;align-items:center"><div class="sec" style="margin:0;border:0">Volumes</div><div class="sub">3 of 12 read</div></div>
+   <div class="vol done"><span>✓ Vol 1 · Ch 1–40</span><span>read 2 Nov</span></div>
+   <div class="vol done"><span>✓ Vol 2 · Ch 41–80</span><span>read 6 Nov</span></div>
+   <div class="vol done"><span>✓ Vol 3 · Ch 81–120</span><span>read today</span></div>
+   <div class="vol" style="border-width:3px"><span><b>▶ Vol 4 · Ch 121–160</b><div class="sub">next up</div></span><span class="btn dark">Start</span></div>
+   <div class="vol"><span>Vol 5 · Ch 161–200</span><span class="sub">not started</span></div>
+   <div class="vol"><span>Vol 6 · Ch 201–240</span><span class="sub">not started</span></div>
+   <div class="sub" style="margin-top:6px">Continue opens the page you were on: Vol 4, page 12 of 310 <span class="bar" style="display:inline-block;vertical-align:middle;margin-left:6px"><i style="width:4%"></i></span></div>
+  </div>
+ </div>
+ <div class="task"><b>Library</b><span>New</span><span>Home</span><span>Collections</span><span>Profile</span></div>
+</div>
+
 
 <!-- 6: up next + found details -->
 <div class="f" id="f6">
