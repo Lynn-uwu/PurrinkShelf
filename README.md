@@ -49,16 +49,19 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 - **How to use:** short guides with search, inside the plugin.
 
 ## Install
-1. Download the latest `PurrinkShelf.snplg` from [Releases](../../releases).
-2. Copy it to the **MyStyle** folder on your Supernote (USB, Supernote Cloud or Browse & Access).
-3. On the Supernote: **Settings › Apps › Plugins › Add Plugin**, then pick the file.
-4. Open any book or note and tap the **PurrinkShelf** button in its toolbar.
-5. The first time, add a library: the gear › **Data and storage** › the folder button › choose the folder that holds your books.
+You need Supernote firmware **Chauvet 3.30.45 or newer** (the update that added plugins).
+
+1. Download `PurrinkShelf.snplg` from the latest [Release](../../releases/latest).
+2. Put it in the **MyStyle** folder on your Supernote (USB, Supernote Cloud or Browse & Access).
+3. On the Supernote, open the plugin file and choose the **folder** option.
+4. Tap **Install**.
+5. Open any book or note and tap the **PurrinkShelf** button in its toolbar.
+6. The first time, add a library: the gear › **Data and storage** › the folder button › choose the folder that holds your books.
 
 Supernote asks once for each permission (read files, write files). Choose **Always allow** so it doesn't ask again.
 
 ## Updating
-Install the new file the same way (**Add Plugin**). It replaces the old version in place, and your libraries, details, notes and settings stay. You don't need to uninstall first.
+Install the new file the same way. It replaces the old version in place, and your libraries, details, notes and settings stay. You don't need to uninstall first.
 
 PurrinkShelf also keeps a backup in `Document/PurrinkShelf/PurrinkShelf backup.json` after every change. If you ever remove and reinstall the plugin, it finds the backup and restores everything by itself.
 
