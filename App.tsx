@@ -7,7 +7,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {bareTitle, goodreadsCsv, parseTable, readSiteExport} from './src/sites';
-import {LICENSE_TEXT, SOURCE, VERSION} from './src/about';
+import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
 import {AppState, Book, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
@@ -3870,7 +3870,8 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
               <Text style={st.small}>{`Version ${VERSION}`}</Text>
             </View>
           </View>
-          {line('A library for the books on your Supernote.')}
+          {line("A library for the books on your Supernote. It's free; if you'd like to say thanks:")}
+          <Text style={[st.small, {color: BLACK, fontSize: px(15), fontWeight: 'bold', marginTop: px(2)}]}>{`Ko-fi: ${SUPPORT}`}</Text>
           {sec('License')}
           {line('Free to use, but not open source.')}
           {line('You may: use it on your own devices, share the official release file for free with a link back, and change it for your own private use.')}

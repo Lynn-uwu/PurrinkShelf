@@ -16,6 +16,8 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
   <img src="docs/screens/profile.png" width="32%" alt="Profile with reading stats">
 </p>
 
+☕ **Like it?** You can support PurrinkShelf on [Ko-fi](https://ko-fi.com/s/09103cecbb).
+
 *The screenshots use made-up demo books.* ▶ **[Watch the 6-minute walkthrough](docs/PurrinkShelf-walkthrough.mp4)** of every feature.
 
 ## What it does
@@ -76,6 +78,9 @@ PurrinkShelf also keeps a backup in `Document/PurrinkShelf/PurrinkShelf backup.j
 
 ## Status
 Built and tested on a Supernote Nomad (A6 X2). It may work on the Manta (A5 X2) too, but it hasn't been tested there. Bug reports and ideas are welcome in [Issues](../../issues).
+
+## Support
+PurrinkShelf is free to use. If it makes your reading nicer and you'd like to say thanks, you can pay what you want on **[Ko-fi](https://ko-fi.com/s/09103cecbb)**. 💛
 
 ## How it was made
 PurrinkShelf was vibe-coded: I designed it, decided how everything should look and work, and tested it on my own Nomad, while the code was written with Claude (an AI by Anthropic).
