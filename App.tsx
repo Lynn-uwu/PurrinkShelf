@@ -2857,8 +2857,12 @@ function BookPage(props: {
   const lIn = LW - px(28);
   const rIn = RW - px(32);
   const statusW = px(190);
-  const titleLines = Math.min(2, wrapWords(title, Math.floor((CARD_W - px(32) - statusW) / (px(26) * 0.56))).length);
-  const titleH = px(14) + titleLines * px(34) + px(10);
+  // the whole title always shows: long titles get a step smaller, and the title area grows (up to 4 lines)
+  const tFont = title.length <= 34 ? px(26) : title.length <= 64 ? px(22) : px(19);
+  const tLine = Math.round(tFont * 1.3);
+  const titleLines = Math.min(4, wrapWords(title, Math.floor((CARD_W - px(32) - statusW - px(12)) / (tFont * 0.56))).length);
+  const authorLines = author ? Math.min(2, wrapWords(author, Math.floor((CARD_W - px(32) - statusW - px(12)) / (px(15) * 0.56))).length) : 0;
+  const titleH = px(14) + titleLines * tLine + authorLines * px(20) + px(10);
   const colH = CARD_H - px(64) - titleH;
   const pagerH = px(56);
 
@@ -2877,7 +2881,7 @@ function BookPage(props: {
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
-    const lines = Math.min(3, wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length);
+    const lines = wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length;
     // the name and its value stay together (never split across two pages)
     left.push({
       h: px(32) + lines * px(24) + px(8),
@@ -2885,7 +2889,7 @@ function BookPage(props: {
       node: (
         <View>
           <Text style={st.infoLabel}>{name}</Text>
-          <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]} numberOfLines={3}>
+          <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]}>
             {v}
           </Text>
         </View>
@@ -2992,13 +2996,13 @@ function BookPage(props: {
     if (!volGrid) {
       b.vols.forEach(v =>
         right.push({
-          h: px(50),
+          h: vlabel(v) && vlabel(v).length > 22 ? px(70) : px(50),
           vol: true,
           node: (
             <Pressable style={st.volRow} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
               <Icon name={opened.has(v.path) ? 'check' : 'play'} size={px(22)} />
               <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
-              <Text style={st.volName} numberOfLines={1}>{vlabel(v)}</Text>
+              <Text style={st.volName} numberOfLines={2}>{vlabel(v)}</Text>
             </Pressable>
           ),
         }),
@@ -3090,10 +3094,10 @@ function BookPage(props: {
         <View style={{flex: 1}}>
           {author ? (
             <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`}>
-              <Text style={st.byLine} numberOfLines={1}>{author}</Text>
+              <Text style={st.byLine} numberOfLines={2}>{author}</Text>
             </Pressable>
           ) : null}
-          <Text style={st.bookTitle} numberOfLines={author ? 1 : 2}>{title}</Text>
+          <Text style={[st.bookTitle, {fontSize: tFont, lineHeight: tLine}]} numberOfLines={4}>{title}</Text>
         </View>
         <Pressable onPress={() => setStatusOpen(true)} style={[st.statusChip, {maxWidth: statusW}, m.reading && st.btnDark]} accessibilityLabel="Reading status">
           <StatusDot state={m.reading?.state} light={!!m.reading} />
@@ -6087,7 +6091,7 @@ const st = StyleSheet.create({
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},
   volHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(56)},
-  volRow: {height: px(42), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},
+  volRow: {minHeight: px(42), paddingVertical: px(6), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},
   volRowText: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginRight: px(10)},
   volName: {flex: 1, fontSize: px(17), color: BLACK},
   volCell: {height: px(74), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},

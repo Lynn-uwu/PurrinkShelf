@@ -24,6 +24,7 @@ const tree = {
     'Moon Over the Jade Pavilion.epub', 'The Tea House on Willow Street.epub', 'A Sword Without a Name.epub',
     'Paper Lanterns in Winter.epub', 'The Fox Who Kept the Library.epub', 'Ten Thousand Steps to the Summit.epub',
     'Starlight Courier.epub', 'The Quiet Alchemist.epub', 'River of Small Lights.epub', 'Crane and the Clockmaker.epub',
+    ...(new URLSearchParams(location.search).get('long') ? ['The Reluctant Court Physician Is Spoiled by the Emperor Every Day.epub', 'After Transmigrating Into a Cannon Fodder Side Character I Accidentally Became the Villain\'s Favourite Cook.epub'] : []), // ?long=1: very long titles
     'Echoes of the Ninth Gate/', 'Historical/', 'JavaScript Fundamentals/',
   ],
   [`${SD}/Novels/Chinese Novels/JavaScript Fundamentals`]: ['Chapter 01 - Introduction.pdf', 'Chapter 02 - Variables and Types.pdf', 'Chapter 03 - Functions.pdf', 'Chapter 04 - Arrays and Loops.pdf', 'Chapter 05 - Objects.pdf'],
