@@ -172,33 +172,43 @@ function Text(props: React.ComponentProps<typeof RNText>) {
   );
 }
 // ---------- keyboard: the box being typed in always moves up above the keyboard ----------
-let typingIn: ((el: RNTextInput | null) => void) | null = null;
+// The whole box goes above the keyboard, so every new line stays in view. A box taller than the space
+// left is shortened to fit, and then it scrolls inside itself to keep the line being typed in view.
+type Typing = {el: RNTextInput | null; setCap: (h: number | undefined) => void};
+let typingIn: ((t: Typing | null) => void) | null = null;
+let typingChanged: (() => void) | null = null;
 function KeyboardLift({children}: {children: React.ReactNode}) {
   const [lift, setLift] = useState(0);
   const liftRef = useRef(0);
   const kb = useRef(0);
-  const input = useRef<RNTextInput | null>(null);
+  const cur = useRef<Typing | null>(null);
   const update = useCallback(() => {
-    const el: any = input.current;
-    if (!el || !kb.current || !el.measureInWindow) {
+    const t = cur.current;
+    const el: any = t?.el;
+    if (!t || !el || !kb.current || !el.measureInWindow) {
+      t?.setCap(undefined);
       liftRef.current = 0;
       setLift(0);
       return;
     }
     el.measureInWindow((_x: number, y: number, _w: number, h: number) => {
       const top = y + liftRef.current; // where the box is without the lift
-      const visible = H - kb.current; // the screen above the keyboard
-      let up = Math.max(0, top + Math.min(h, px(120)) + px(16) - visible); // its top part (and a gap) above the keyboard
-      up = Math.min(up, Math.max(0, top - px(12))); // never past the top of the screen
+      const room = H - kb.current - px(28); // the space above the keyboard, with a gap at each end
+      const tall = h > room;
+      t.setCap(tall ? room : undefined);
+      const boxH = tall ? room : h;
+      const up = Math.max(0, Math.min(top - px(12), top + boxH + px(16) - (H - kb.current)));
       liftRef.current = up;
       setLift(up);
     });
   }, []);
   useEffect(() => {
-    typingIn = el => {
-      input.current = el;
+    typingIn = t => {
+      if (!t && cur.current) cur.current.setCap(undefined);
+      cur.current = t;
       setTimeout(update, 60);
     };
+    typingChanged = () => setTimeout(update, 30); // the box grew a line
     const show = Keyboard.addListener('keyboardDidShow', e => {
       kb.current = e.endCoordinates?.height || 0;
       update();
@@ -210,6 +220,7 @@ function KeyboardLift({children}: {children: React.ReactNode}) {
     if (Platform.OS === 'web') (globalThis as any).__fakeKeyboard = (h: number) => { kb.current = h; update(); }; // the preview has no keyboard
     return () => {
       typingIn = null;
+      typingChanged = null;
       show.remove();
       hide.remove();
     };
@@ -218,6 +229,7 @@ function KeyboardLift({children}: {children: React.ReactNode}) {
 }
 const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTextInput>>((props, ref) => {
   const local = useRef<RNTextInput | null>(null);
+  const [cap, setCap] = useState<number | undefined>(undefined);
   const setRef = (r: RNTextInput | null) => {
     local.current = r;
     if (typeof ref === 'function') ref(r);
@@ -225,16 +237,18 @@ const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTe
   };
   const p = {
     ...props,
-    onFocus: (e: any) => { typingIn?.(local.current); props.onFocus?.(e); },
-    onBlur: (e: any) => { if (local.current) typingIn?.(null); props.onBlur?.(e); },
+    onFocus: (e: any) => { typingIn?.({el: local.current, setCap}); props.onFocus?.(e); },
+    onBlur: (e: any) => { typingIn?.(null); props.onBlur?.(e); },
+    onContentSizeChange: (e: any) => { typingChanged?.(); props.onContentSizeChange?.(e); },
   };
+  const capStyle = cap ? {maxHeight: cap, height: Math.min(cap, (StyleSheet.flatten(props.style) as any)?.height || cap)} : null;
   const f = SKETCH ? StyleSheet.flatten(props.style) : null;
   const k = f ? inkOf(f) : null;
-  if (!k) return <RNTextInput ref={setRef} {...p} />;
+  if (!k) return <RNTextInput ref={setRef} {...p} style={[props.style, capStyle]} />;
   const {box, inner} = split(f, k);
   return (
     <RNView style={box}>
-      <RNTextInput ref={setRef} {...p} style={inner} />
+      <RNTextInput ref={setRef} {...p} style={[inner, capStyle]} />
       <SketchLines k={k} />
     </RNView>
   );
