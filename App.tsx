@@ -172,7 +172,7 @@ function Text(props: React.ComponentProps<typeof RNText>) {
   );
 }
 // ---------- keyboard: the box being typed in always moves up above the keyboard ----------
-// The whole box goes above the keyboard, so every new line stays in view. A box taller than the space
+// The whole box goes to the middle of the space above the keyboard, so every new line stays in view. A box taller than the space
 // left is shortened to fit, and then it scrolls inside itself to keep the line being typed in view.
 type Typing = {el: RNTextInput | null; setCap: (h: number | undefined) => void};
 let typingIn: ((t: Typing | null) => void) | null = null;
@@ -197,7 +197,9 @@ function KeyboardLift({children}: {children: React.ReactNode}) {
       const tall = h > room;
       t.setCap(tall ? room : undefined);
       const boxH = tall ? room : h;
-      const up = Math.max(0, Math.min(top - px(12), top + boxH + px(16) - (H - kb.current)));
+      // the box sits in the middle of the space above the keyboard (never past the top of the screen)
+      const middle = (H - kb.current) / 2;
+      const up = Math.max(0, Math.min(top - px(12), top + boxH / 2 - middle));
       liftRef.current = up;
       setLift(up);
     });
