@@ -3,8 +3,8 @@
  * Pick any folder as a library; books are listed by file name; add titles, tags,
  * descriptions and covers on the device; filter by folder and tag; tap to read.
  */
-import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Dimensions, Image, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {Dimensions, Image, Keyboard, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {bareTitle, goodreadsCsv, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
@@ -171,14 +171,70 @@ function Text(props: React.ComponentProps<typeof RNText>) {
     </RNView>
   );
 }
+// ---------- keyboard: the box being typed in always moves up above the keyboard ----------
+let typingIn: ((el: RNTextInput | null) => void) | null = null;
+function KeyboardLift({children}: {children: React.ReactNode}) {
+  const [lift, setLift] = useState(0);
+  const liftRef = useRef(0);
+  const kb = useRef(0);
+  const input = useRef<RNTextInput | null>(null);
+  const update = useCallback(() => {
+    const el: any = input.current;
+    if (!el || !kb.current || !el.measureInWindow) {
+      liftRef.current = 0;
+      setLift(0);
+      return;
+    }
+    el.measureInWindow((_x: number, y: number, _w: number, h: number) => {
+      const top = y + liftRef.current; // where the box is without the lift
+      const visible = H - kb.current; // the screen above the keyboard
+      let up = Math.max(0, top + Math.min(h, px(120)) + px(16) - visible); // its top part (and a gap) above the keyboard
+      up = Math.min(up, Math.max(0, top - px(12))); // never past the top of the screen
+      liftRef.current = up;
+      setLift(up);
+    });
+  }, []);
+  useEffect(() => {
+    typingIn = el => {
+      input.current = el;
+      setTimeout(update, 60);
+    };
+    const show = Keyboard.addListener('keyboardDidShow', e => {
+      kb.current = e.endCoordinates?.height || 0;
+      update();
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      kb.current = 0;
+      update();
+    });
+    if (Platform.OS === 'web') (globalThis as any).__fakeKeyboard = (h: number) => { kb.current = h; update(); }; // the preview has no keyboard
+    return () => {
+      typingIn = null;
+      show.remove();
+      hide.remove();
+    };
+  }, [update]);
+  return <RNView style={{flex: 1, transform: [{translateY: -lift}]}}>{children}</RNView>;
+}
 const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTextInput>>((props, ref) => {
+  const local = useRef<RNTextInput | null>(null);
+  const setRef = (r: RNTextInput | null) => {
+    local.current = r;
+    if (typeof ref === 'function') ref(r);
+    else if (ref) (ref as any).current = r;
+  };
+  const p = {
+    ...props,
+    onFocus: (e: any) => { typingIn?.(local.current); props.onFocus?.(e); },
+    onBlur: (e: any) => { if (local.current) typingIn?.(null); props.onBlur?.(e); },
+  };
   const f = SKETCH ? StyleSheet.flatten(props.style) : null;
   const k = f ? inkOf(f) : null;
-  if (!k) return <RNTextInput ref={ref} {...props} />;
+  if (!k) return <RNTextInput ref={setRef} {...p} />;
   const {box, inner} = split(f, k);
   return (
     <RNView style={box}>
-      <RNTextInput ref={ref} {...props} style={inner} />
+      <RNTextInput ref={setRef} {...p} style={inner} />
       <SketchLines k={k} />
     </RNView>
   );
@@ -416,7 +472,9 @@ class Guard extends React.Component<{children: React.ReactNode}, {err: {message:
 export default function App(): React.JSX.Element {
   return (
     <Guard>
-      <PurrinkShelfApp />
+      <KeyboardLift>
+        <PurrinkShelfApp />
+      </KeyboardLift>
     </Guard>
   );
 }
