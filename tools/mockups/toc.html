@@ -37,6 +37,9 @@ p{font-size:15.5px;line-height:1.5;margin-bottom:9px}
 .bmnote{font-size:13px;color:#333;margin:-2px 0 6px 12px;padding:4px 10px;border-left:3px solid #111;background:#f4f4f4;border-radius:0 8px 8px 0}
 .fbtn{border:2px solid #111;border-radius:12px;padding:6px 12px;font-weight:700;font-size:14px;display:flex;align-items:center;gap:6px}
 .fbtn.on{background:#111;color:#fff}
+.bmbtn{position:relative;width:40px;height:40px;border:2px solid #111;border-radius:20px;display:flex;align-items:center;justify-content:center}
+.bmbtn.on{background:#111}.bmbtn .bm{margin:0;transform:scale(.8)}.bmbtn.on .bm:before{background:#fff;border-color:#fff}.bmbtn.on .bm:after{background:#111;border-color:#fff}
+.badge{position:absolute;top:-6px;right:-8px;background:#111;color:#fff;border:2px solid #fff;border-radius:10px;font-size:11px;font-weight:700;padding:0 5px;line-height:16px}
 </style></head><body>
 <!-- A: description scrolls -->
 <div class="f" id="a"><div class="card">
@@ -151,7 +154,7 @@ p{font-size:15.5px;line-height:1.5;margin-bottom:9px}
   <div class="l"><div class="cov" style="background:#efe3c8">Echoes of the Ninth Gate</div><div class="lab">Volumes</div><div class="val">12 · Ch 1–1,204</div><div class="lab">Progress</div><div class="prog"><i style="width:13%"></i></div><div class="sub">Vol 4 · about Ch 158 · 13%</div><div class="btn">Continue · Ch 158</div></div>
   <div class="r">
    <div class="tabs"><div class="tab">Description</div><div class="tab on">Chapters</div></div>
-   <div class="go" style="justify-content:space-between"><div class="fbtn">Bookmarks · 3</div><div class="b">Vol 4 ⌄</div></div>
+   <div class="go" style="justify-content:space-between"><div class="bmbtn"><i class="bm"></i><span class="badge">3</span></div><div class="b">Vol 4 ⌄</div></div>
    <div class="ch read"><span>Ch 155 · Ash on the Water</span><span style="display:flex;align-items:center"><span class="sub">read</span><i class="bm"></i></span></div>
    <div class="ch read"><span>Ch 156 · The Ninth Seal</span><span style="display:flex;align-items:center"><span class="sub">read</span><i class="bm on"></i></span></div><div class="bmnote">The rain scene. Reread before the finale.</div>
    <div class="ch read"><span>Ch 157 · Old Debts</span><span style="display:flex;align-items:center"><span class="sub">read</span><i class="bm"></i></span></div>
@@ -170,7 +173,7 @@ p{font-size:15.5px;line-height:1.5;margin-bottom:9px}
   <div class="l"><div class="cov" style="background:#efe3c8">Echoes of the Ninth Gate</div><div class="lab">Volumes</div><div class="val">12 · Ch 1–1,204</div><div class="lab">Progress</div><div class="prog"><i style="width:13%"></i></div><div class="sub">Vol 4 · about Ch 158 · 13%</div><div class="btn">Continue · Ch 158</div></div>
   <div class="r">
    <div class="tabs"><div class="tab">Description</div><div class="tab on">Chapters</div></div>
-   <div class="go" style="justify-content:space-between"><div class="fbtn on">Bookmarks · 3</div><div class="b">All volumes</div></div>
+   <div class="go" style="justify-content:space-between"><div class="bmbtn on"><i class="bm on"></i><span class="badge">3</span></div><div class="b">All volumes</div></div>
    <div class="sub" style="margin-bottom:4px">Only bookmarked chapters. Tap one to open near it, or the note to change it.</div>
    <div class="ch read"><span>Vol 1 · Ch 12 · First Contract</span><i class="bm on"></i></div><div class="bmnote">Where they first meet. Funniest line in the book.</div>
    <div class="ch read"><span>Vol 3 · Ch 97 · The Lantern Market</span><i class="bm on"></i></div><div class="bmnote">+ Add a note</div>
