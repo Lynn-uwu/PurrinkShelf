@@ -1,0 +1,59 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:Inter;src:url(file:///usr/share/fonts/opentype/inter/Inter-Regular.otf)}
+@font-face{font-family:Inter;font-weight:700;src:url(file:///usr/share/fonts/opentype/inter/Inter-Bold.otf)}
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter;color:#111;background:#bbb}
+.f{width:702px;height:936px;position:relative;display:none;background:#bbb}.f.on{display:block}
+.card{position:absolute;left:26px;right:26px;top:26px;bottom:96px;border:2.5px solid #111;border-radius:22px;background:#fff;overflow:hidden}
+.bar{height:58px;border-bottom:2px solid #111;display:flex;align-items:center;justify-content:space-between;padding:0 12px}
+.ib{width:38px;height:38px;border:2px solid #111;border-radius:19px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.pad{padding:14px 18px}.sub{font-size:13.5px;color:#555}
+.row{display:flex;align-items:center;gap:12px;border:2px solid #111;border-radius:14px;padding:10px 12px;margin:8px 0}
+.cov{width:46px;height:64px;border:2px solid #111;border-radius:5px;background:#efe3c8;flex:none}
+.pill{border:1.5px solid #111;border-radius:12px;padding:2px 8px;font-size:12.5px}
+.seg{display:flex;background:#eee;border-radius:14px;padding:3px;margin:10px 0}.seg div{flex:1;text-align:center;padding:10px 4px;font-size:15px;border-radius:11px}.seg div.on{background:#fff;border:2px solid #111;font-weight:700}
+.field{font-weight:700;font-size:15px;margin:12px 0 4px;display:flex;justify-content:space-between}
+.box{border:2px solid #111;border-radius:12px;padding:10px 12px;font-size:15px;line-height:1.45}
+.diff{background:#e6e6e6;border-radius:4px;padding:0 3px}
+.btn{border:2px solid #111;border-radius:14px;padding:11px 14px;font-weight:700;font-size:15px;text-align:center}.btn.dark{background:#111;color:#fff}
+.foot{position:absolute;left:18px;right:18px;bottom:16px;display:flex;gap:10px}
+.dots{display:flex;gap:6px;justify-content:center;margin-top:6px}.dots i{width:9px;height:9px;border-radius:5px;border:1.5px solid #111}.dots i.on{background:#111}
+</style></head><body>
+<div class="f" id="a"><div class="card">
+ <div class="bar"><div class="ib">‹</div><b style="font-size:20px">Changes from Calibre</b><div class="ib">✕</div></div>
+ <div class="pad">
+  <div class="sub" style="font-size:15px">Synced 15 Nov, 2:30 pm. 24 books updated by themselves. These 3 were changed in both places, so pick which to keep.</div>
+  <div class="row"><div class="cov"></div><div style="flex:1"><b>Moon Over the Jade Pavilion</b><div class="sub">Description, Genres</div></div><span class="pill">Choose</span></div>
+  <div class="row"><div class="cov" style="background:#d9e8d0"></div><div style="flex:1"><b>Echoes of the Ninth Gate</b><div class="sub">Series number</div></div><span class="pill">Choose</span></div>
+  <div class="row"><div class="cov" style="background:#e5d9ef"></div><div style="flex:1"><b>Contract Spring</b><div class="sub">Author</div></div><span class="pill">Choose</span></div>
+  <div class="field" style="margin-top:18px">Going to Calibre next sync <span class="sub" style="font-weight:400">only fills its empty details</span></div>
+  <div class="box" style="font-size:14px">12 books have details on the Supernote that Calibre doesn't have yet (genres, tags, summaries). They'll be added to Calibre the next time you sync.</div>
+ </div>
+ <div class="foot"><div class="btn" style="flex:1">Keep all Supernote</div><div class="btn" style="flex:1">Use all Calibre</div></div>
+</div></div>
+<div class="f" id="b"><div class="card">
+ <div class="bar"><div class="ib">‹</div><b style="font-size:20px">Moon Over the Jade Pavilion</b><div class="ib">✕</div></div>
+ <div class="pad">
+  <div class="sub">Changed in both places since the last sync. Tap a tab to compare.</div>
+  <div class="seg"><div class="on">On Supernote</div><div>From Calibre</div></div>
+  <div class="field">Description <span class="sub" style="font-weight:400">1 of 2 differences</span></div>
+  <div class="box">For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly. <span class="diff">Then she opened a letter sealed for twenty years.</span></div>
+  <div class="field">Genres</div>
+  <div class="box"><span class="pill">Drama</span> <span class="pill">Romance</span> <span class="pill">Historical</span> <span class="pill diff">Slice of Life</span></div>
+  <div class="sub" style="margin-top:12px">Shaded parts are what's different from the other version.</div>
+ </div>
+ <div class="foot"><div class="btn" style="flex:1">Decide later</div><div class="btn dark" style="flex:2">Use Supernote version</div></div>
+</div></div>
+<div class="f" id="c"><div class="card">
+ <div class="bar"><div class="ib">‹</div><b style="font-size:20px">Moon Over the Jade Pavilion</b><div class="ib">✕</div></div>
+ <div class="pad">
+  <div class="sub">Changed in both places since the last sync. Tap a tab to compare.</div>
+  <div class="seg"><div>On Supernote</div><div class="on">From Calibre</div></div>
+  <div class="field">Description <span class="sub" style="font-weight:400">1 of 2 differences</span></div>
+  <div class="box">For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly. <span class="diff">Then a sealed letter, twenty years old, changed everything.</span></div>
+  <div class="field">Genres</div>
+  <div class="box"><span class="pill">Drama</span> <span class="pill">Romance</span> <span class="pill">Historical</span> <span class="pill diff">Palace Intrigue</span></div>
+  <div class="sub" style="margin-top:12px">Shaded parts are what's different from the other version.</div>
+ </div>
+ <div class="foot"><div class="btn" style="flex:1">Decide later</div><div class="btn dark" style="flex:2">Use Calibre version</div></div>
+</div></div>
+</body></html>
