@@ -39,7 +39,7 @@ export const HELP: HelpTopic[] = [
       'Tap a chapter to open the book near it. This works once PurrinkShelf has seen that volume from inside the reader (it needs its page count).',
       'Tap the bookmark on a chapter to keep it. The bookmark button at the top shows only bookmarked chapters; tap a note line to write why you kept it.',
       'Finish a volume (open PurrinkShelf on its last page) and it offers the next one. Finished volumes are shaded on the book page.',
-      'Settings › Book pages: show Description or Chapters first, and open the list where you are or at chapter 1.',
+      'Settings › Book pages: show Description or Chapters first, or Once started (Chapters only for books you are partway through), and open the list where you are or at chapter 1.',
     ]},
   {id: 'ao3', title: 'Fanfiction from AO3', icon: 'layers', words: 'ao3 archive of our own fanfiction fanfic fandom ship relationship character rating warning separate together',
     steps: [

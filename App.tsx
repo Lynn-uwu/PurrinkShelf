@@ -3614,7 +3614,7 @@ function BookPage(props: {
   dup: {others: {title: string; where: string; onOpen: () => void}[]; ignored: boolean; onIgnore: () => void; onFiles: () => void} | null;
   onReadAt?: (file: string, f: number) => void; // open a chapter (a place in the file, 0..1)
   onMarks?: (marks: ChapterMark[]) => void;
-  first?: 'about' | 'chapters';
+  first?: 'about' | 'chapters' | 'started';
   chaptersAt?: 'here' | 'start';
   nextUp?: {from: string; to: string} | null; // you just finished a volume: start the next one?
   onNextLater?: () => void;
@@ -3626,7 +3626,8 @@ function BookPage(props: {
   const tocs = useChapters(epubs);
   const where = whereAmI(b, m, tocs);
   const hasCh = epubs.length > 0 && !epubs.every(f => tocs[f] && !tocs[f].length);
-  const [rTab, setRTab] = useState<'about' | 'ch'>(props.first === 'chapters' && epubs.length ? 'ch' : 'about');
+  const started = !!m.progress?.last && m.reading?.state !== 'completed';
+  const [rTab, setRTab] = useState<'about' | 'ch'>((props.first === 'chapters' || (props.first === 'started' && started)) && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -4717,8 +4718,12 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
         <CardHeader title="Book pages" onBack={back} onClose={onClose} />
         <View style={[st.pad, {flex: 1}]}>
           {sec('Show first on the right side', px(4))}
-          <Seg options={[{label: 'Description', on: settings.bookFirst !== 'chapters', onPress: () => change({bookFirst: 'about'})}, {label: 'Chapters', on: settings.bookFirst === 'chapters', onPress: () => change({bookFirst: 'chapters'})}]} />
-          <Text style={[st.small, {marginTop: px(6)}]}>The other one is a tap away on the tab next to it. Chapters show for EPUB books.</Text>
+          <Seg options={[
+            {label: 'Description', on: settings.bookFirst === 'about', onPress: () => change({bookFirst: 'about'})},
+            {label: 'Chapters', on: settings.bookFirst === 'chapters', onPress: () => change({bookFirst: 'chapters'})},
+            {label: 'Once started', on: settings.bookFirst === 'started', onPress: () => change({bookFirst: 'started'})},
+          ]} />
+          <Text style={[st.small, {marginTop: px(6)}]}>{settings.bookFirst === 'started' ? "Once started: Description for books you haven't opened yet, Chapters for books you're partway through." : 'The other one is a tap away on the tab next to it. Chapters show for EPUB books.'}</Text>
           {sec('Description')}
           <Seg options={[{label: 'Turn pages with arrows', on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})}, {label: 'Scroll', on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})}]} />
           {sec('Chapters list')}
@@ -4999,7 +5004,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           </RoundBtn>
         </View>
         <View style={{flexDirection: 'row', marginTop: px(12)}}>
-          <RoundBtn label="Book pages" note={settings.bookFirst === 'chapters' ? 'Chapters first' : 'Description first'} onPress={() => setPage('book')}>
+          <RoundBtn label="Book pages" note={settings.bookFirst === 'chapters' ? 'Chapters first' : settings.bookFirst === 'started' ? 'Once started' : 'Description first'} onPress={() => setPage('book')}>
             <Icon name="pages" size={px(30)} />
           </RoundBtn>
           <RoundBtn label="Filters" note={settings.filterOrder === 'count' ? 'Most books' : settings.filterOrder === 'tapped' ? 'Most tapped' : 'A–Z'} onPress={() => setPage('filters')}>

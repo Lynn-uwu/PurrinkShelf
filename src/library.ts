@@ -182,7 +182,7 @@ export type Settings = {
   warnings: boolean; // show content warnings (off: hidden everywhere)
   look: 'plain' | 'drawn'; // straight lines, or slightly wobbly hand-drawn ones
   cats: boolean; // little cats on cards, the bottom bar and empty pages
-  bookFirst: 'about' | 'chapters'; // book page, right side: Description or Chapters first
+  bookFirst: 'about' | 'chapters' | 'started'; // book page, right side: Description, Chapters, or Chapters once you've started the book
   chaptersAt: 'here' | 'start'; // the Chapters list opens where you are, or at chapter 1
   filterOrder: 'count' | 'alpha' | 'tapped'; // genres and tags in the filters: most books, A to Z, or most tapped
   filterTabs: string[]; // which tabs the Filters panel shows, in order (g, t, a, w, s, l, x, f)
