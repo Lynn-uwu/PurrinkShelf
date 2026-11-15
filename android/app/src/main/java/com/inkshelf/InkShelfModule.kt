@@ -327,7 +327,11 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                     val spine = Regex("<itemref\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(opf).mapNotNull { attr(it.value, "idref")?.let { r -> items[r] } }.toList()
                     // how much text each file holds, so a chapter's place in the book can be worked out
                     val tag = Regex("<[^>]*>")
-                    val sizes = spine.map { n -> val t = read(n) ?: ""; val b = t.indexOf("<body", ignoreCase = true); tag.replace(if (b > 0) t.substring(b) else t, "").trim().length.toLong().coerceAtLeast(1) }
+                    val raws = spine.map { n -> read(n) ?: "" }
+                    fun bodyOf(t: String): String { val b = t.indexOf("<body", ignoreCase = true); return if (b > 0) t.substring(b) else t }
+                    val sizes = raws.map { t -> tag.replace(bodyOf(t), "").trim().length.toLong().coerceAtLeast(1) }
+                    val spineIdx = HashMap<String, Int>()
+                    spine.forEachIndexed { i, n -> if (!spineIdx.containsKey(n)) spineIdx[n] = i }
                     val total = sizes.sum().coerceAtLeast(1)
                     val startOf = HashMap<String, Double>()
                     // a rough page for each file before the reader has laid the book out: every file starts a new page
@@ -346,7 +350,16 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                         if (t.isEmpty()) return
                         val key = resolve(base, href)
                         val f = startOf[key] ?: return
-                        out.put(org.json.JSONObject().put("t", t).put("d", depth).put("f", f).put("p0", pageOf[key] ?: 0))
+                        val si = spineIdx[key] ?: return
+                        // a chapter that starts part-way into a file (file.xhtml#ch12): how much text comes before it in that file
+                        var o = 0L
+                        val frag = href.substringAfter('#', "")
+                        if (frag.isNotEmpty()) {
+                            val body = bodyOf(raws[si])
+                            val at = Regex("(id|name)\\s*=\\s*[\"']" + Regex.escape(frag) + "[\"']").find(body)?.range?.first ?: -1
+                            if (at > 0) o = tag.replace(body.substring(0, body.lastIndexOf('<', at).coerceAtLeast(0)), "").trim().length.toLong()
+                        }
+                        out.put(org.json.JSONObject().put("t", t).put("d", depth).put("f", f + o.toDouble() / total).put("p0", pageOf[key] ?: 0).put("s", si).put("o", o))
                     }
                     val nav = navHref?.let { read(it) }
                     if (nav != null) {
@@ -373,7 +386,7 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                     }
                     val first = StringBuilder()
                     for (n in spine.take(3)) { first.append(read(n) ?: ""); if (first.length > 60000) break }
-                    val r = org.json.JSONObject().put("toc", out).put("first", if (first.length > 60000) first.substring(0, 60000) else first.toString())
+                    val r = org.json.JSONObject().put("toc", out).put("sizes", org.json.JSONArray(sizes)).put("first", if (first.length > 60000) first.substring(0, 60000) else first.toString())
                     promise.resolve(r.toString())
                 }
             } catch (e: Throwable) {

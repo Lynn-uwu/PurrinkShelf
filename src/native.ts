@@ -249,15 +249,15 @@ export async function removePaper(path: string): Promise<boolean> {
 }
 
 /** a chapter in an EPUB's contents: its title, how deep it sits, and where it starts (0..1 of the book's text) */
-export type Chapter = {t: string; d: number; f: number; p0?: number}; // p0: a rough page before the reader has laid the book out
+export type Chapter = {t: string; d: number; f: number; p0?: number; s?: number; o?: number}; // p0: a rough page before the reader has laid the book out; s: its file in reading order; o: text before it in that file
 /** the EPUB's chapters, and the start of its first pages (for AO3's tags) */
-export async function epubContents(path: string): Promise<{toc: Chapter[]; first: string} | null> {
+export async function epubContents(path: string): Promise<{toc: Chapter[]; first: string; sizes: number[]} | null> {
   if (!N?.epubContents) return null;
   try {
     const s = await N.epubContents(path);
     if (!s) return null;
     const j = JSON.parse(s);
-    return {toc: Array.isArray(j.toc) ? j.toc : [], first: String(j.first || '')};
+    return {toc: Array.isArray(j.toc) ? j.toc : [], first: String(j.first || ''), sizes: Array.isArray(j.sizes) ? j.sizes.map(Number) : []};
   } catch (e) {
     return null;
   }

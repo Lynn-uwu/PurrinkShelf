@@ -528,6 +528,8 @@ function PurrinkShelfApp(): React.JSX.Element {
   const [covers, setCovers] = useState<{[k: string]: string | null}>({});
   const coverCache = useRef<{[k: string]: string | null}>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [askOpen, setAskOpen] = useState<{title: string; text: string; ok: string; go: () => void} | null>(null);
+  const pendingJump = useRef<{key: string; file: string; i: number} | null>(null); // a chapter to turn to once PurrinkShelf is opened inside its volume
   // short notes at the bottom that go away by themselves (never block the page).
   // A new one appears at the bottom and pushes the older ones up; each leaves 4.5 s after it came.
   const [toasts, setToasts] = useState<{id: number; t: string}[]>([]);
@@ -1696,36 +1698,75 @@ function PurrinkShelfApp(): React.JSX.Element {
    * Open a chapter. Over that very volume: find the page with the chapter's title and turn to it.
    * Elsewhere: the page found before (Settings keeps it per page count), else worked out from where the chapter sits in the text.
    */
+  /**
+   * Turn to a chapter only on a page that really shows it: PurrinkShelf reads the pages of the volume it is open over
+   * and looks for the chapter's number or title at the top. No match, no jump.
+   */
+  async function confirmJump(b: Book, file: string, i: number): Promise<'jumped' | 'notfound' | 'notext' | 'nopages'> {
+    const c = TOCS[file]?.[i] || (await loadContents(file))[i];
+    const pg = await currentPage();
+    if (!c || !pg) return 'nopages';
+    const m = metaOf(b);
+    const cur = m.pageMap?.[file];
+    let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
+    let texts = 0;
+    const read = async (q: number) => { const t = await pageText(q); if (t.trim()) texts++; return t; };
+    if (p < 0) p = await findChapterPage(c, pg.pages, pageGuess(file, c, pg.pages), read, 40);
+    if (p < 0) {
+      log('jump to page', texts ? `no page shows ${c.t}` : 'the reader gave no page text');
+      return texts ? 'notfound' : 'notext';
+    }
+    const at = cur && cur.pages === pg.pages ? [...cur.at] : (TOCS[file] || []).map(() => -1);
+    at[i] = p;
+    await updateMeta(b.key, {pageMap: {...(metaOf(b).pageMap || {}), [file]: {pages: pg.pages, at}}});
+    log('jump to page', `${p} for ${c.t} (checked: the page shows it)`);
+    if (await jumpTo(p)) return 'jumped';
+    const err = await openAt(file, p);
+    if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+    return 'jumped';
+  }
+  const noJump = (r: 'notfound' | 'notext' | 'nopages', c?: Chapter) =>
+    setMessage(
+      r === 'notext'
+        ? "Your Supernote doesn't share the text of this book's pages with plugins, so PurrinkShelf can't check where a chapter starts. Use the reader's own table of contents for now."
+        : `PurrinkShelf looked through the pages around ${c ? chShort(c) : 'the chapter'} and none shows it at the top, so it didn't move the page. Use the reader's table of contents for this one.`,
+    );
   async function readAt(b: Book, file: string, f: number, i: number) {
     const m = metaOf(b);
     const c = TOCS[file]?.[i];
-    markSeen(b);
-    await updateMeta(b.key, openedPatch(m, file));
-    markDay();
+    const opened = async () => { markSeen(b); await updateMeta(b.key, openedPatch(metaOf(b), file)); markDay(); };
+    if (!c) { await opened(); return read(file); }
+    // the volume PurrinkShelf is open over: find the page that shows the chapter, then turn to it
+    if ((await currentFile()) === file) {
+      await opened();
+      const r = await confirmJump(b, file, i);
+      if (r !== 'jumped') noJump(r, c);
+      return;
+    }
+    // another volume: a page checked before (the chapter was seen on it at this page count) opens straight there
     const known = m.pos?.[file]?.pages;
     const map = m.pageMap?.[file];
-    const mapped = map && map.pages === known ? map.at[i] ?? -1 : -1;
-    // the volume PurrinkShelf is open over: turn to the chapter's page there (a quick look for its title, at most 8 pages)
-    if (settings.findPages && c && (await currentFile()) === file) {
-      const pg = await currentPage();
-      if (pg) {
-        const cur = metaOf(b).pageMap?.[file];
-        let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
-        if (p < 0) p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText, 8);
-        if (p < 0) p = Math.round(f * pg.pages);
-        log('jump to page', `${p} for ${c.t}`);
-        if (await jumpTo(p)) return;
-        log('jump to page', 'the reader did not turn the page; opening the book at it instead');
-        const err = await openAt(file, p);
-        if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
-        return;
-      }
+    const checked = map && map.pages === known ? map.at[i] ?? -1 : -1;
+    if (checked >= 0) {
+      await opened();
+      log('open at page', `${checked} (checked before) ${file.split('/').pop()}`);
+      const err = await openAt(file, checked);
+      if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+      return;
     }
-    // another volume: open it at the page found before, or worked out
-    const page = mapped >= 0 ? mapped : known ? Math.min(known - 1, Math.round(f * known)) : c?.p0 ?? 0;
-    log('open at page', `${page}${mapped >= 0 ? ' (found by title)' : known ? ' (worked out)' : ' (rough, first time)'} ${file.split('/').pop()}`);
-    const err = await openAt(file, page);
-    if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+    // not checked yet: open the volume; once PurrinkShelf is opened inside it, it finds the chapter's page and turns to it
+    const vol = volName(b, file) || 'the book';
+    setAskOpen({
+      title: `Open ${vol} at ${chShort(c)}`,
+      text: `${vol} opens first. Then tap PurrinkShelf in the reader's toolbar: it reads the pages, finds the one that shows ${chShort(c)}, and turns to it. After that, this volume's chapters open straight away.`,
+      ok: `Open ${vol}`,
+      go: async () => {
+        await opened();
+        pendingJump.current = {key: b.key, file, i};
+        log('open, then find', `${c.t} in ${file.split('/').pop()}`);
+        read(file);
+      },
+    });
   }
   /** while PurrinkShelf is open over a volume: find the page every chapter starts on, by its title (once per page count) */
   async function mapChapters(l: Lib, key: string, file: string, pages: number) {
@@ -1754,7 +1795,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     };
     let drift = 0, found = 0;
     for (let k = 0; k < toc.length; k++) {
-      const est = Math.round(toc[k].f * pages);
+      const est = pageGuess(file, toc[k], pages);
       if (at[k] >= 0) { drift = at[k] - est; continue; }
       const p = await findChapterPage(toc[k], pages, Math.max(0, Math.min(pages - 1, est + drift)), readPage);
       if (p >= 0) { at[k] = p; drift = p - est; found++; }
@@ -1791,6 +1832,13 @@ function PurrinkShelfApp(): React.JSX.Element {
       ...(pg ? {pos: {...(f.meta.pos || {}), [path]: {...pg, at: Date.now()}}} : {}),
       ...(finished && !f.meta.done?.[path] ? {done: {...(f.meta.done || {}), [path]: Date.now()}} : {}),
     });
+    const waiting = pendingJump.current;
+    if (waiting && waiting.file === path && waiting.key === f.book.key) {
+      pendingJump.current = null;
+      const r = await confirmJump(f.book, path, waiting.i);
+      if (r === 'jumped') return;
+      noJump(r, TOCS[path]?.[waiting.i]);
+    }
     if (pg && settings.findPages && /\.epub$/i.test(path)) mapChapters(f.lib, f.book.key, path, pg.pages).catch(e => log('chapter pages failed', String(e)));
     const k = f.book.files.indexOf(path);
     const next = f.book.files[k + 1];
@@ -2174,6 +2222,18 @@ function PurrinkShelfApp(): React.JSX.Element {
           <View style={st.dialog}>
             <Text style={st.para}>{message}</Text>
             <Btn dark label="OK" onPress={() => setMessage(null)} />
+          </View>
+        </View>
+      ) : null}
+      {askOpen ? (
+        <View style={st.overlay}>
+          <View style={st.dialog}>
+            <Text style={[st.h2, {marginTop: 0}]}>{askOpen.title}</Text>
+            <Text style={st.para}>{askOpen.text}</Text>
+            <View style={{flexDirection: 'row', marginTop: px(6)}}>
+              <Btn label="Cancel" onPress={() => setAskOpen(null)} style={{flex: 1, marginRight: px(8)}} />
+              <Btn dark label={askOpen.ok} onPress={() => { const go = askOpen.go; setAskOpen(null); go(); }} style={{flex: 2}} />
+            </View>
           </View>
         </View>
       ) : null}
@@ -3353,13 +3413,16 @@ function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPag
 
 // ---------- chapters (from each EPUB's contents) and where you are in the whole book ----------
 const TOCS: {[file: string]: Chapter[]} = {}; // read once per file while PurrinkShelf is open
-const FRONT = /^(cover|cover page|front ?cover|title|title ?page|information|info|book info(rmation)?|novel info(rmation)?|about (this|the) (book|novel)|copyright|copyright page|contents|table of contents|toc|navigation|nav|front ?matter|dedication|epigraph|credits|colophon|imprint|preface|summary|synopsis|description|tags|metadata|translator'?s? notes?)$/i;
+const SIZES: {[file: string]: number[]} = {}; // how much text each file inside the EPUB holds, in reading order
+const FRONT = /^(n\/a|cover|cover page|front ?cover|title|title ?page|information|info|book info(rmation)?|novel info(rmation)?|about (this|the) (book|novel)|copyright|copyright page|contents|table of contents|toc|navigation|nav|front ?matter|dedication|epigraph|credits|colophon|imprint|preface|summary|synopsis|description|tags|metadata|translator'?s? notes?)$/i;
 const FIRSTS: {[file: string]: string} = {};
 async function loadContents(file: string): Promise<Chapter[]> {
   if (TOCS[file]) return TOCS[file];
   const r = /\.epub$/i.test(file) ? await epubContents(file) : null;
-  // the pages before the story (cover, information, contents…) are left out of the chapter list
-  TOCS[file] = (r?.toc || []).filter(c => !FRONT.test(c.t.trim()));
+  // the pages before the story (cover, information, contents, a title page named like the book) are left out of the chapter list
+  const base = squash((file.split('/').pop() || '').replace(/\.[^.]+$/, ''));
+  TOCS[file] = (r?.toc || []).filter(c => !FRONT.test(c.t.trim()) && !(chNum(c.t) === undefined && squash(c.t).length >= 4 && base.startsWith(squash(c.t))));
+  if (r?.sizes?.length) SIZES[file] = r.sizes;
   if (r?.first) FIRSTS[file] = r.first;
   return TOCS[file];
 }
@@ -3437,6 +3500,26 @@ function whereAmI(b: Book, m: Meta, tocs: {[file: string]: Chapter[]}): Where | 
   }
   return {file, vol: n > 1 ? volName(b, file) : '', page: p?.page, pages: p?.pages, frac: (vi + inFile) / n, ch, chText};
 }
+/**
+ * The page a chapter should start on, for a page count: the reader starts every file inside the EPUB on a new page,
+ * so the pages are worked out file by file (the text per page is found from the page count), not as a share of the whole text.
+ */
+function pageGuess(file: string, c: Chapter, pages: number): number {
+  const sz = SIZES[file];
+  if (!sz?.length || c.s === undefined || c.s >= sz.length) return Math.min(pages - 1, Math.round(c.f * pages));
+  const count = (cpp: number) => sz.reduce((a, n) => a + Math.max(1, Math.ceil(n / cpp)), 0);
+  if (count(1e9) > pages) return Math.min(pages - 1, Math.round(c.f * pages));
+  let lo = 20, hi = 1e7;
+  for (let k = 0; k < 50; k++) {
+    const mid = (lo + hi) / 2;
+    if (count(mid) > pages) lo = mid;
+    else hi = mid;
+  }
+  let p = 0;
+  for (let j = 0; j < c.s; j++) p += Math.max(1, Math.ceil(sz[j] / hi));
+  p += Math.floor((c.o || 0) / hi);
+  return Math.max(0, Math.min(pages - 1, p));
+}
 /** the words of a chapter title as they would appear on its page: lowercase letters and digits only */
 const squash = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 /**
@@ -3457,7 +3540,16 @@ async function findChapterPage(c: Chapter, pages: number, guess: number, read: (
       if (reads++ >= maxReads) return -1;
       const top = squash(await read(p)).slice(0, 400); // a chapter's title is at the top of its first page
       // "chapter12" must not match "chapter120": the next character can't be a digit
-      if (keys.some(k => { const i = top.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(top.charAt(i + k.length))); })) return p;
+      const has = (t: string) => keys.some(k => { const i = t.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(t.charAt(i + k.length))); });
+      if (has(top)) {
+        // a page header can repeat the chapter's title on every page: go back to the first page that has it
+        let q = p;
+        for (let back = 0; back < 40 && q > 0; back++) {
+          if (!has(squash(await read(q - 1)).slice(0, 400))) break;
+          q--;
+        }
+        return q;
+      }
     }
   }
   return -1;
@@ -3756,6 +3848,7 @@ function BookPage(props: {
   const started = !!m.progress?.last && m.reading?.state !== 'completed';
   const [rTab, setRTab] = useState<'about' | 'ch'>((props.first === 'chapters' || (props.first === 'started' && started)) && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -4122,37 +4215,39 @@ function BookPage(props: {
         </View>
       </View>
       {statusOpen ? (
-        <View style={st.sheetWrap}>
-          <Pressable style={{flex: 1}} onPress={() => setStatusOpen(false)} accessibilityLabel="Close" />
-          <View style={st.sheet}>
-            <Pressable onPress={() => setStatusOpen(false)} hitSlop={px(12)} style={{alignItems: 'center'}}>
-              <View style={st.handle} />
-              <Text style={st.sheetTitle}>Reading status</Text>
+        // a drop-down under the status button
+        <View style={StyleSheet.absoluteFill}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => { setStatusOpen(false); setHistOpen(false); }} accessibilityLabel="Close" />
+          <View style={[st.dropMenu, {top: px(64) + titleH / 2 + px(26), right: px(16)}]}>
+            {READ_STATES.map((r, k) => {
+              const on = m.reading?.state === r.id;
+              return (
+                <Pressable key={r.id} onPress={() => { onReading(on ? null : r.id); setStatusOpen(false); }} style={[st.dropRow, k > 0 && st.dropLine, on && {backgroundColor: '#e6e6e6'}]} accessibilityLabel={r.label}>
+                  <StatusDot state={r.id} />
+                  <Text style={[st.statusText, {flex: 1, fontSize: px(18), marginLeft: px(10)}, on && {fontWeight: 'bold'}]}>{r.label}</Text>
+                  {on ? <Icon name="check" size={px(22)} /> : null}
+                </Pressable>
+              );
+            })}
+            {m.reading ? (
+              <Pressable onPress={() => { onReading(null); setStatusOpen(false); }} style={[st.dropRow, st.dropLine]} accessibilityLabel="Clear status">
+                <Icon name="close" size={px(20)} />
+                <Text style={[st.statusText, {flex: 1, fontSize: px(17), marginLeft: px(10)}]}>Clear status</Text>
+              </Pressable>
+            ) : null}
+            <Pressable onPress={() => setHistOpen(!histOpen)} style={[st.dropRow, st.dropLine, {minHeight: px(44)}]} accessibilityLabel="History">
+              <Text style={[st.small, {flex: 1}]}>{(m.reading?.history || []).length ? `History (${(m.reading?.history || []).length})` : 'No changes yet'}</Text>
+              {(m.reading?.history || []).length ? <Icon name={histOpen ? 'up' : 'down'} size={px(18)} /> : null}
             </Pressable>
-            <View style={{flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10)}}>
-              {READ_STATES.map(r => {
-                const on = m.reading?.state === r.id;
-                return (
-                  <Pressable key={r.id} onPress={() => { onReading(on ? null : r.id); setStatusOpen(false); }} style={[st.statusPick, on && st.btnDark]} accessibilityLabel={r.label}>
-                    <StatusDot state={r.id} light={on} />
-                    <Text style={[st.statusText, {fontSize: px(19)}, on && {color: '#ffffff'}]}>{r.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            {m.reading ? <Btn small icon="close" label="Clear status" onPress={() => { onReading(null); setStatusOpen(false); }} style={{marginTop: px(6)}} /> : null}
-            <Text style={[st.section, {marginTop: px(14)}]}>History</Text>
-            {(m.reading?.history || []).length ? (
-              [...(m.reading?.history || [])].reverse().slice(0, 6).map((h, i) => (
-                <View key={i} style={st.histRow}>
-                  <StatusDot state={h.state} />
-                  <Text style={[st.statusText, {flex: 1}]}>{readLabel(h.state)}</Text>
-                  <Text style={st.small}>{dayTime(h.at)}</Text>
-                </View>
-              ))
-            ) : (
-              <Text style={st.small}>{'No changes yet. Opening a book marks it Reading; set Completed when you finish, and the date is kept.'}</Text>
-            )}
+            {histOpen
+              ? [...(m.reading?.history || [])].reverse().slice(0, 5).map((h, i) => (
+                  <View key={i} style={[st.dropRow, {minHeight: px(36), paddingVertical: px(2)}]}>
+                    <StatusDot state={h.state} />
+                    <Text style={[st.small, {flex: 1, marginLeft: px(8), color: BLACK}]}>{readLabel(h.state)}</Text>
+                    <Text style={st.small}>{dayTime(h.at)}</Text>
+                  </View>
+                ))
+              : null}
           </View>
         </View>
       ) : null}
@@ -7109,6 +7204,9 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 const st = StyleSheet.create({
   diffBox: {borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, backgroundColor: '#e9e9e9', borderRadius: px(8), marginHorizontal: -px(3), paddingHorizontal: px(3)},
   diffInline: {borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, backgroundColor: '#e9e9e9', borderRadius: px(6), alignSelf: 'flex-start', paddingHorizontal: px(4)},
+  dropMenu: {position: 'absolute', width: px(300), backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: BLACK, borderRadius: px(14), overflow: 'hidden'},
+  dropRow: {flexDirection: 'row', alignItems: 'center', minHeight: px(52), paddingHorizontal: px(14)},
+  dropLine: {borderTopWidth: 1, borderColor: '#bbbbbb'},
   calRow: {flexDirection: 'row', alignItems: 'center', minHeight: px(62), borderWidth: 2, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(12), paddingVertical: px(6), marginBottom: px(8), backgroundColor: '#ffffff'},
   aboutLink: {flexDirection: 'row', alignItems: 'center', height: px(56), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(16), paddingHorizontal: px(14)},
   showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},

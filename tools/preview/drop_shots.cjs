@@ -1,0 +1,14 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots33'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const shot = async n => { await p.waitForTimeout(700); await p.screenshot({path: path.join(out, n + '.png')}); console.log(n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1'); await p.waitForTimeout(12000);
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await p.waitForTimeout(600);
+  await p.getByLabel('Reading status').click(); await shot('1-dropdown');
+  await p.getByLabel('History').click(); await shot('2-history');
+  await p.getByLabel('Close', {exact: true}).first().click(); await p.waitForTimeout(400);
+  await p.getByLabel('Chapters', {exact: true}).click(); await p.waitForTimeout(400);
+  await p.getByLabel('Choose a volume').click(); await p.getByText('Vol 5', {exact: true}).last().click(); await p.waitForTimeout(400);
+  await p.getByLabel('Open Chapter 170', {exact: false}).first().click(); await shot('3-ask');
+  await b.close(); })();

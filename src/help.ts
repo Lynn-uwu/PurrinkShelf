@@ -36,7 +36,7 @@ export const HELP: HelpTopic[] = [
       "Open PurrinkShelf from the toolbar inside a book: it notes the page you are on. The book page then shows your progress through the whole book, and the play button reads where you are (Vol 4 · Ch 158).",
       'Tap Chapters on the right of a book page (EPUB books). The list opens where you are; read chapters are shaded. Choose a volume, or All volumes, with the button at the top.',
       'The numbers under the list turn its pages; tap … to type a chapter or page number.',
-      "Tap a chapter to open it at its first page: PurrinkShelf opens the volume underneath, finds the page with the chapter's title, and turns to it (with a different font size it looks again). To save battery, turn off Let plugin run in background in Settings › Permissions: chapters then open close to their page.",
+      "Tap a chapter to turn to it. PurrinkShelf only turns to a page it has checked shows that chapter (it reads the pages around it for the chapter's number or title). In a volume it hasn't checked yet, the volume opens first: tap PurrinkShelf in the reader's toolbar and it finds the chapter and turns to it.",
       'Tap the bookmark on a chapter to keep it. The bookmark button at the top shows only bookmarked chapters; tap a note line to write why you kept it.',
       'Finish a volume (open PurrinkShelf on its last page) and it offers the next one. Finished volumes are shaded on the book page.',
       'Settings › Book pages: show Description or Chapters first, or Once started (Chapters only for books you are partway through), and open the list where you are or at chapter 1.',
