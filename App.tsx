@@ -1711,8 +1711,9 @@ function PurrinkShelfApp(): React.JSX.Element {
       if (pg) {
         const cur = metaOf(b).pageMap?.[file];
         let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
-        if (p < 0) p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText, 8);
-        if (p < 0) p = Math.round(f * pg.pages);
+        const guess = pageGuess(file, c, pg.pages);
+        if (p < 0) p = await findChapterPage(c, pg.pages, guess, pageText, 10);
+        if (p < 0) p = guess;
         log('jump to page', `${p} for ${c.t}`);
         if (await jumpTo(p)) return;
         log('jump to page', 'the reader did not turn the page; opening the book at it instead');
@@ -1722,7 +1723,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       }
     }
     // another volume: open it at the page found before, or worked out
-    const page = mapped >= 0 ? mapped : known ? Math.min(known - 1, Math.round(f * known)) : c?.p0 ?? 0;
+    const page = mapped >= 0 ? mapped : known && c ? pageGuess(file, c, known) : known ? Math.min(known - 1, Math.round(f * known)) : c?.p0 ?? 0;
     log('open at page', `${page}${mapped >= 0 ? ' (found by title)' : known ? ' (worked out)' : ' (rough, first time)'} ${file.split('/').pop()}`);
     const err = await openAt(file, page);
     if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
@@ -1754,7 +1755,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     };
     let drift = 0, found = 0;
     for (let k = 0; k < toc.length; k++) {
-      const est = Math.round(toc[k].f * pages);
+      const est = pageGuess(file, toc[k], pages);
       if (at[k] >= 0) { drift = at[k] - est; continue; }
       const p = await findChapterPage(toc[k], pages, Math.max(0, Math.min(pages - 1, est + drift)), readPage);
       if (p >= 0) { at[k] = p; drift = p - est; found++; }
@@ -3353,13 +3354,16 @@ function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPag
 
 // ---------- chapters (from each EPUB's contents) and where you are in the whole book ----------
 const TOCS: {[file: string]: Chapter[]} = {}; // read once per file while PurrinkShelf is open
-const FRONT = /^(cover|cover page|front ?cover|title|title ?page|information|info|book info(rmation)?|novel info(rmation)?|about (this|the) (book|novel)|copyright|copyright page|contents|table of contents|toc|navigation|nav|front ?matter|dedication|epigraph|credits|colophon|imprint|preface|summary|synopsis|description|tags|metadata|translator'?s? notes?)$/i;
+const SIZES: {[file: string]: number[]} = {}; // how much text each file inside the EPUB holds, in reading order
+const FRONT = /^(n\/a|cover|cover page|front ?cover|title|title ?page|information|info|book info(rmation)?|novel info(rmation)?|about (this|the) (book|novel)|copyright|copyright page|contents|table of contents|toc|navigation|nav|front ?matter|dedication|epigraph|credits|colophon|imprint|preface|summary|synopsis|description|tags|metadata|translator'?s? notes?)$/i;
 const FIRSTS: {[file: string]: string} = {};
 async function loadContents(file: string): Promise<Chapter[]> {
   if (TOCS[file]) return TOCS[file];
   const r = /\.epub$/i.test(file) ? await epubContents(file) : null;
-  // the pages before the story (cover, information, contents…) are left out of the chapter list
-  TOCS[file] = (r?.toc || []).filter(c => !FRONT.test(c.t.trim()));
+  // the pages before the story (cover, information, contents, a title page named like the book) are left out of the chapter list
+  const base = squash((file.split('/').pop() || '').replace(/\.[^.]+$/, ''));
+  TOCS[file] = (r?.toc || []).filter(c => !FRONT.test(c.t.trim()) && !(chNum(c.t) === undefined && squash(c.t).length >= 4 && base.startsWith(squash(c.t))));
+  if (r?.sizes?.length) SIZES[file] = r.sizes;
   if (r?.first) FIRSTS[file] = r.first;
   return TOCS[file];
 }
@@ -3437,6 +3441,26 @@ function whereAmI(b: Book, m: Meta, tocs: {[file: string]: Chapter[]}): Where | 
   }
   return {file, vol: n > 1 ? volName(b, file) : '', page: p?.page, pages: p?.pages, frac: (vi + inFile) / n, ch, chText};
 }
+/**
+ * The page a chapter should start on, for a page count: the reader starts every file inside the EPUB on a new page,
+ * so the pages are worked out file by file (the text per page is found from the page count), not as a share of the whole text.
+ */
+function pageGuess(file: string, c: Chapter, pages: number): number {
+  const sz = SIZES[file];
+  if (!sz?.length || c.s === undefined || c.s >= sz.length) return Math.min(pages - 1, Math.round(c.f * pages));
+  const count = (cpp: number) => sz.reduce((a, n) => a + Math.max(1, Math.ceil(n / cpp)), 0);
+  if (count(1e9) > pages) return Math.min(pages - 1, Math.round(c.f * pages));
+  let lo = 20, hi = 1e7;
+  for (let k = 0; k < 50; k++) {
+    const mid = (lo + hi) / 2;
+    if (count(mid) > pages) lo = mid;
+    else hi = mid;
+  }
+  let p = 0;
+  for (let j = 0; j < c.s; j++) p += Math.max(1, Math.ceil(sz[j] / hi));
+  p += Math.floor((c.o || 0) / hi);
+  return Math.max(0, Math.min(pages - 1, p));
+}
 /** the words of a chapter title as they would appear on its page: lowercase letters and digits only */
 const squash = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 /**
@@ -3457,7 +3481,16 @@ async function findChapterPage(c: Chapter, pages: number, guess: number, read: (
       if (reads++ >= maxReads) return -1;
       const top = squash(await read(p)).slice(0, 400); // a chapter's title is at the top of its first page
       // "chapter12" must not match "chapter120": the next character can't be a digit
-      if (keys.some(k => { const i = top.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(top.charAt(i + k.length))); })) return p;
+      const has = (t: string) => keys.some(k => { const i = t.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(t.charAt(i + k.length))); });
+      if (has(top)) {
+        // a page header can repeat the chapter's title on every page: go back to the first page that has it
+        let q = p;
+        for (let back = 0; back < 40 && q > 0; back++) {
+          if (!has(squash(await read(q - 1)).slice(0, 400))) break;
+          q--;
+        }
+        return q;
+      }
     }
   }
   return -1;
