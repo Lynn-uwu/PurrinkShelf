@@ -21,7 +21,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Chapter, Entry, closeView, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, openUnder, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -1705,40 +1705,26 @@ function PurrinkShelfApp(): React.JSX.Element {
     const known = m.pos?.[file]?.pages;
     const map = m.pageMap?.[file];
     const mapped = map && map.pages === known ? map.at[i] ?? -1 : -1;
-    // not the volume under PurrinkShelf: open it underneath (PurrinkShelf stays open), so its pages can be looked at
-    let here = settings.findPages && (await currentFile()) === file;
-    if (!here && c && settings.findPages) {
-      log('open under', file);
-      here = await openUnder(file, mapped >= 0 ? mapped : known ? Math.round(f * known) : 0);
-      if (!here) {
-        log('open under', 'the reader closed PurrinkShelf or kept the old book');
-        closeView();
-        return;
-      }
-    }
-    if (c && here) {
+    // the volume PurrinkShelf is open over: turn to the chapter's page there (a quick look for its title, at most 8 pages)
+    if (settings.findPages && c && (await currentFile()) === file) {
       const pg = await currentPage();
       if (pg) {
         const cur = metaOf(b).pageMap?.[file];
         let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
-        if (p < 0) {
-          p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText);
-          if (p >= 0) {
-            const at = cur && cur.pages === pg.pages ? [...cur.at] : (TOCS[file] || []).map(() => -1);
-            at[i] = p;
-            await updateMeta(b.key, {pageMap: {...(metaOf(b).pageMap || {}), [file]: {pages: pg.pages, at}}, pos: {...(metaOf(b).pos || {}), [file]: {page: p, pages: pg.pages, at: Date.now()}}});
-          }
-        }
+        if (p < 0) p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText, 8);
         if (p < 0) p = Math.round(f * pg.pages);
         log('jump to page', `${p} for ${c.t}`);
         if (await jumpTo(p)) return;
+        log('jump to page', 'the reader did not turn the page; opening the book at it instead');
+        const err = await openAt(file, p);
+        if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+        return;
       }
-      closeView();
-      return;
     }
-    // no chapter list: open it as before
-    if (!known) return read(file);
-    const err = await openAt(file, mapped >= 0 ? mapped : Math.min(known - 1, Math.round(f * known)));
+    // another volume: open it at the page found before, or worked out
+    const page = mapped >= 0 ? mapped : known ? Math.min(known - 1, Math.round(f * known)) : c?.p0 ?? 0;
+    log('open at page', `${page}${mapped >= 0 ? ' (found by title)' : known ? ' (worked out)' : ' (rough, first time)'} ${file.split('/').pop()}`);
+    const err = await openAt(file, page);
     if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
   }
   /** while PurrinkShelf is open over a volume: find the page every chapter starts on, by its title (once per page count) */
@@ -1749,12 +1735,16 @@ function PurrinkShelfApp(): React.JSX.Element {
     const at = m0.pageMap?.[file]?.pages === pages ? [...m0.pageMap[file].at] : toc.map(() => -1);
     if (at.length !== toc.length || at.every(x => x >= 0)) return;
     const cache = new Map<number, string>();
-    let empty = 0;
+    let empty = 0, slow = 0;
+    await new Promise(res => setTimeout(res, 2500)); // let PurrinkShelf finish opening first
     const readPage = async (p: number) => {
       if (!cache.has(p)) {
+        const t0 = Date.now();
         const t = await pageText(p);
+        slow = Date.now() - t0 > 900 ? slow + 1 : 0;
         empty = t.trim() ? 0 : empty + 1;
         cache.set(p, t);
+        await new Promise(res => setTimeout(res, 120)); // small breaks, so taps stay quick
       }
       return cache.get(p) || '';
     };
@@ -1769,6 +1759,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       const p = await findChapterPage(toc[k], pages, Math.max(0, Math.min(pages - 1, est + drift)), readPage);
       if (p >= 0) { at[k] = p; drift = p - est; found++; }
       if (empty >= 8) { log('chapter pages', 'the reader gave no page text; stopped'); break; } // closed, or not supported
+      if (slow >= 3) { log('chapter pages', 'the reader is slow to give page text; stopped to keep things quick'); break; }
       if (found && found % 10 === 0) await save();
     }
     await save();
@@ -3362,11 +3353,13 @@ function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPag
 
 // ---------- chapters (from each EPUB's contents) and where you are in the whole book ----------
 const TOCS: {[file: string]: Chapter[]} = {}; // read once per file while PurrinkShelf is open
+const FRONT = /^(cover|cover page|front ?cover|title|title ?page|information|info|book info(rmation)?|novel info(rmation)?|about (this|the) (book|novel)|copyright|copyright page|contents|table of contents|toc|navigation|nav|front ?matter|dedication|epigraph|credits|colophon|imprint|preface|summary|synopsis|description|tags|metadata|translator'?s? notes?)$/i;
 const FIRSTS: {[file: string]: string} = {};
 async function loadContents(file: string): Promise<Chapter[]> {
   if (TOCS[file]) return TOCS[file];
   const r = /\.epub$/i.test(file) ? await epubContents(file) : null;
-  TOCS[file] = r?.toc || [];
+  // the pages before the story (cover, information, contents…) are left out of the chapter list
+  TOCS[file] = (r?.toc || []).filter(c => !FRONT.test(c.t.trim()));
   if (r?.first) FIRSTS[file] = r.first;
   return TOCS[file];
 }
@@ -3450,7 +3443,8 @@ const squash = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
  * Find the page a chapter starts on in the document PurrinkShelf is open over: start at the page worked out from
  * where the chapter sits in the text, and look at the pages around it for the chapter's title near the top.
  */
-async function findChapterPage(c: Chapter, pages: number, guess: number, read: (p: number) => Promise<string>): Promise<number> {
+async function findChapterPage(c: Chapter, pages: number, guess: number, read: (p: number) => Promise<string>, maxReads = 1e9): Promise<number> {
+  let reads = 0;
   const full = squash(c.t);
   const n = chNum(c.t);
   const name = squash(chName(c.t));
@@ -3460,6 +3454,7 @@ async function findChapterPage(c: Chapter, pages: number, guess: number, read: (
   for (let d = 0; d <= reach; d++) {
     for (const p of d ? [guess + d, guess - d] : [guess]) {
       if (p < 0 || p >= pages) continue;
+      if (reads++ >= maxReads) return -1;
       const top = squash(await read(p)).slice(0, 400); // a chapter's title is at the top of its first page
       // "chapter12" must not match "chapter120": the next character can't be a digit
       if (keys.some(k => { const i = top.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(top.charAt(i + k.length))); })) return p;
@@ -4021,7 +4016,12 @@ function BookPage(props: {
       <Text style={[st.startText, {marginLeft: px(8), color: BLACK, fontSize: px(16)}]}>Missing link</Text>
     </View>
   ) : (
-    <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(lastPath || b.files[0])} accessibilityLabel={lastPath ? 'Continue' : 'Start'}>
+    <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => {
+      // a first start skips the pages before chapter 1 (cover, information…)
+      const first = tocs[b.files[0]]?.[0];
+      if (!lastPath && first && (first.p0 || 0) > 0 && props.onReadAt) props.onReadAt(b.files[0], first.f, 0);
+      else onRead(lastPath || b.files[0]);
+    }} accessibilityLabel={lastPath ? 'Continue' : 'Start'}>
       <Icon name="play-on" size={px(26)} color="#ffffff" />
       <Text style={[st.startText, {marginLeft: px(8)}]} numberOfLines={1}>
         {where && (where.vol || where.ch)

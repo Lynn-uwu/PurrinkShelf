@@ -105,8 +105,9 @@ NativeModules.InkShelf = {
     const vn = Number((name.match(/Vol (\d+)/) || [])[1] || 0);
     const [a, b] = r ? [Number(r[1]), Number(r[2])] : vn ? [(vn - 1) * 40 + 1, vn * 40] : [1, /Moon/.test(name) ? 112 : 36];
     const toc = [];
+    toc.push({t: 'Cover', d: 0, f: 0, p0: 0}, {t: 'Information', d: 0, f: 0.002, p0: 1});
     if (!r && !vn) toc.push({t: 'Preface', d: 0, f: 0});
-    for (let c = a; c <= b; c++) toc.push({t: `Chapter ${c}${c % 7 === 3 ? ': The letter from the inner court' : c % 5 === 1 ? ': A quiet morning' : ''}`, d: 0, f: (c - a + (r || vn ? 0 : 1)) / (b - a + 2)});
+    for (let c = a; c <= b; c++) toc.push({p0: 2 + c - a, t: `Chapter ${c}${c % 7 === 3 ? ': The letter from the inner court' : c % 5 === 1 ? ': A quiet morning' : ''}`, d: 0, f: (c - a + (r || vn ? 0 : 1)) / (b - a + 2)});
     const ao3 = /AO3|Fandom/.test(p);
     const first = ao3 ? `<html><body><div class="meta"><dl class="tags"><dt>Rating:</dt><dd><a>Teen And Up Audiences</a></dd><dt>Archive Warning:</dt><dd><a>No Archive Warnings Apply</a></dd><dt>Category:</dt><dd><a>M/M</a></dd><dt>Fandom:</dt><dd><a>Original Work</a>, <a>Mo Dao Zu Shi - Mo Xiang Tong Xiu</a></dd><dt>Relationship:</dt><dd><a>Lan Zhan | Lan Wangji/Wei Ying | Wei Wuxian</a></dd><dt>Character:</dt><dd><a>Wei Ying | Wei Wuxian</a>, <a>Lan Zhan | Lan Wangji</a>, <a>Jiang Cheng</a></dd><dt>Additional Tags:</dt><dd><a>Fluff</a>, ${/Snow/.test(name) ? '<a>Snowed In</a>, <a>Fake Dating</a>,' : /Long/.test(name) ? '<a>Angst</a>, <a>Road Trip</a>,' : '<a>Coffee Shops</a>,'} <a>Slow Burn</a>, <a>Mutual Pining</a>, <a>Hurt/Comfort</a>, <a>Canon Divergence</a>, <a>Happy Ending</a></dd><dt>Language:</dt><dd>English</dd><dt>Stats:</dt><dd>Published: 2025-03-01 Completed: 2025-11-20 Chapters: 24/24 Words: 98,412</dd></dl><h1>${name.replace(/\.epub$/, '')}</h1><div class="byline">by <a>moonlitpaw</a></div><p>Summary</p><blockquote class="userstuff"><p>Two disciples, one cursed lantern, and a winter that won't end.</p></blockquote></div><p>Posted originally on the <a href="http://archiveofourown.org/">Archive of Our Own</a> at <a href="http://archiveofourown.org/works/12345678">http://archiveofourown.org/works/12345678</a>.</p></body></html>` : '<html><body><p>Chapter 1</p></body></html>';
     return JSON.stringify({toc, first});
@@ -180,8 +181,8 @@ window.__pasted = [];
 export const PluginCommAPI = {
   getCurrentFilePath: async () => ({success: true, result: window.__current ? window.__current : new URLSearchParams(location.search).get('reading') === 'echo' ? `${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub` : new URLSearchParams(location.search).get('reading') ? `${SD}/Novels/Korean Novels/Rain Over Busan.epub` : '/storage/emulated/0/Note/Book reviews.note'}),
   getPageDisplaySize: async () => ({success: true, result: {width: 1404, height: 1872}}),
-  jumpToPage: async p => { (window.__opened = window.__opened || []).push(`jump ${p}`); return {success: true, result: true}; },
-  getCurrentPageNum: async () => ({success: true, result: Number(new URLSearchParams(location.search).get('page') || 140)}),
+  jumpToPage: async p => { (window.__opened = window.__opened || []).push(`jump ${p}`); window.__page = p; return {success: true, result: true}; },
+  getCurrentPageNum: async () => ({success: true, result: window.__page !== undefined ? window.__page : Number(new URLSearchParams(location.search).get('page') || 140)}),
 };
 // the page text: each chapter really starts 3 pages after where its place in the text puts it (pictures, title pages…)
 const fakePages = () => Number(new URLSearchParams(location.search).get('pages') || 412);

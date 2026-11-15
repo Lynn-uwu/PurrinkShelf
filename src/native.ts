@@ -249,7 +249,7 @@ export async function removePaper(path: string): Promise<boolean> {
 }
 
 /** a chapter in an EPUB's contents: its title, how deep it sits, and where it starts (0..1 of the book's text) */
-export type Chapter = {t: string; d: number; f: number};
+export type Chapter = {t: string; d: number; f: number; p0?: number}; // p0: a rough page before the reader has laid the book out
 /** the EPUB's chapters, and the start of its first pages (for AO3's tags) */
 export async function epubContents(path: string): Promise<{toc: Chapter[]; first: string} | null> {
   if (!N?.epubContents) return null;
@@ -280,7 +280,8 @@ export async function currentPage(): Promise<{page: number; pages: number} | nul
 /** open a book at a page (0-based) with the plugin kit; falls back to opening it normally */
 export async function openAt(path: string, page: number): Promise<string | null> {
   try {
-    const r: any = await PluginFileAPI.openFile(path, Math.max(0, Math.floor(page)));
+    // the kit can hang without an answer: after 4 seconds open the book the usual way instead
+    const r: any = await Promise.race([PluginFileAPI.openFile(path, Math.max(0, Math.floor(page))), new Promise(res => setTimeout(() => res({success: false, timeout: true}), 4000))]);
     if (r && r.success === false) return openBook(path);
     setTimeout(() => {
       PluginManager.closePluginView().catch(() => {});
@@ -294,7 +295,7 @@ export async function openAt(path: string, page: number): Promise<string | null>
 /** the text on one page of the document PurrinkShelf was opened over (0-based), or '' */
 export async function pageText(page: number): Promise<string> {
   try {
-    const r: any = await PluginDocAPI.getCurrentDocText(Math.max(0, Math.floor(page)));
+    const r: any = await Promise.race([PluginDocAPI.getCurrentDocText(Math.max(0, Math.floor(page))), new Promise(res => setTimeout(() => res(''), 1500))]);
     const t = r?.result ?? r;
     return typeof t === 'string' ? t : '';
   } catch (e) {
@@ -305,35 +306,17 @@ export async function pageText(page: number): Promise<string> {
 /** turn the open document to a page (0-based) and close PurrinkShelf so you can read */
 export async function jumpTo(page: number): Promise<boolean> {
   try {
-    const r: any = await PluginCommAPI.jumpToPage(Math.max(0, Math.floor(page)));
+    const target = Math.max(0, Math.floor(page));
+    const r: any = await Promise.race([PluginCommAPI.jumpToPage(target), new Promise(res => setTimeout(() => res({success: false}), 3000))]);
     if (r && r.success === false) return false;
-    setTimeout(() => {
-      PluginManager.closePluginView().catch(() => {});
-    }, 300);
+    // make sure the page really turned before closing
+    await new Promise(res => setTimeout(res, 300));
+    const now: any = await PluginCommAPI.getCurrentPageNum().catch(() => null);
+    const at = Number(now?.result ?? now);
+    if (Number.isFinite(at) && at !== target) return false;
+    PluginManager.closePluginView().catch(() => {});
     return true;
   } catch (e) {
     return false;
   }
-}
-
-/**
- * Open a book under PurrinkShelf without closing it, so it can look at the pages and turn to the right one.
- * Resolves true once the reader has that book open; false if it didn't (then the caller closes as usual).
- */
-export async function openUnder(path: string, page: number): Promise<boolean> {
-  try {
-    const r: any = await PluginFileAPI.openFile(path, Math.max(0, Math.floor(page)));
-    if (r && r.success === false) return false;
-  } catch (e) {
-    return false;
-  }
-  for (let i = 0; i < 12; i++) {
-    await new Promise(res => setTimeout(res, 250));
-    if ((await currentFile()) === path) return true;
-  }
-  return false;
-}
-
-export function closeView() {
-  PluginManager.closePluginView().catch(() => {});
 }

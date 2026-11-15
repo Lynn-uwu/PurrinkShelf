@@ -330,15 +330,23 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
                     val sizes = spine.map { n -> val t = read(n) ?: ""; val b = t.indexOf("<body", ignoreCase = true); tag.replace(if (b > 0) t.substring(b) else t, "").trim().length.toLong().coerceAtLeast(1) }
                     val total = sizes.sum().coerceAtLeast(1)
                     val startOf = HashMap<String, Double>()
+                    // a rough page for each file before the reader has laid the book out: every file starts a new page
+                    val pageOf = HashMap<String, Int>()
                     var acc = 0L
-                    spine.forEachIndexed { i, n -> if (!startOf.containsKey(n)) startOf[n] = acc.toDouble() / total; acc += sizes[i] }
+                    var pagesBefore = 0L
+                    spine.forEachIndexed { i, n ->
+                        if (!startOf.containsKey(n)) { startOf[n] = acc.toDouble() / total; pageOf[n] = pagesBefore.toInt() }
+                        acc += sizes[i]
+                        pagesBefore += 1 + sizes[i] / 1500
+                    }
                     val out = org.json.JSONArray()
                     fun clean(t: String) = tag.replace(t, " ").replace("&amp;", "&").replace("&nbsp;", " ").replace("&#160;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace(Regex("\\s+"), " ").trim()
                     fun add(title: String, href: String, base: String, depth: Int) {
                         val t = clean(title)
                         if (t.isEmpty()) return
-                        val f = startOf[resolve(base, href)] ?: return
-                        out.put(org.json.JSONObject().put("t", t).put("d", depth).put("f", f))
+                        val key = resolve(base, href)
+                        val f = startOf[key] ?: return
+                        out.put(org.json.JSONObject().put("t", t).put("d", depth).put("f", f).put("p0", pageOf[key] ?: 0))
                     }
                     val nav = navHref?.let { read(it) }
                     if (nav != null) {
