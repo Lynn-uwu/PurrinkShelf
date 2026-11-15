@@ -75,7 +75,7 @@ export type CalibreState = {
   decided?: {[f in CalField]?: {sn: string; cal: string; use: 'sn' | 'cal'; at: number}}; // your choices, kept until the next sync
 };
 // ---------- reading status (like review states: each change is dated) ----------
-export type ReadState = 'plan' | 'reading' | 'completed' | 'rereading' | 'hold' | 'dropped';
+export type ReadState = 'plan' | 'reading' | 'completed' | 'rereading' | 'hold' | 'dropped' | `c:${string}`; // c:… = a status the person made
 export const READ_STATES: {id: ReadState; label: string}[] = [
   {id: 'plan', label: 'Plan to read'},
   {id: 'reading', label: 'Reading'},
@@ -85,7 +85,14 @@ export const READ_STATES: {id: ReadState; label: string}[] = [
   {id: 'dropped', label: 'Dropped'},
 ];
 export type Reading = {state: ReadState; at: number; history: {state: ReadState; at: number}[]};
-export const readLabel = (s?: ReadState) => READ_STATES.find(x => x.id === s)?.label || 'No status';
+/** statuses the person added (Settings keeps them; a removed one stays here hidden, so books that have it still show its name) */
+export let CUSTOM_STATES: {id: ReadState; label: string; hidden?: boolean}[] = [];
+export function setCustomStates(list?: {id: string; label: string; hidden?: boolean}[]) {
+  CUSTOM_STATES = (list || []).map(x => ({...x, id: x.id as ReadState}));
+}
+/** every status to choose from: the usual ones, then yours */
+export const allStates = (): {id: ReadState; label: string}[] => [...READ_STATES, ...CUSTOM_STATES.filter(x => !x.hidden)];
+export const readLabel = (s?: ReadState) => READ_STATES.find(x => x.id === s)?.label || CUSTOM_STATES.find(x => x.id === s)?.label || (s ? 'Custom status' : 'No status');
 export function setReading(r: Reading | undefined, state: ReadState | null): Reading | undefined {
   if (!state) return undefined;
   const at = Date.now();
@@ -196,6 +203,7 @@ export type Settings = {
   calibreAdd: boolean; // books found here but not in Calibre are sent to Calibre (by the helper on the computer)
   findPages: boolean; // read the pages of the book you're in to find where each chapter starts (off saves battery)
   chapterTipSeen: boolean; // the "opens first, then tap PurrinkShelf" note was shown once
+  customStates: {id: string; label: string; hidden?: boolean}[]; // reading statuses you added
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -234,6 +242,7 @@ export const DEFAULT_SETTINGS: Settings = {
   calibreAdd: true,
   findPages: true,
   chapterTipSeen: false,
+  customStates: [],
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */

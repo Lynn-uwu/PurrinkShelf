@@ -1,0 +1,13 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots34'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const shot = async n => { await p.waitForTimeout(700); await p.screenshot({path: path.join(out, n + '.png')}); console.log(n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1'); await p.waitForTimeout(12000);
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await p.waitForTimeout(600);
+  await p.getByLabel('Reading status').click();
+  await p.getByLabel('Add your own status').click();
+  await p.getByPlaceholder('e.g. Waiting for translation').fill('Waiting for translation'); await shot('1-typing');
+  await p.getByText('Add', {exact: true}).click(); await shot('2-set');
+  await p.getByLabel('Reading status').click(); await shot('3-list');
+  await b.close(); })();

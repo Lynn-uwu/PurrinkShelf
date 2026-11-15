@@ -9,7 +9,7 @@ import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {bareTitle, goodreadsCsv, parseAo3, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
-import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
+import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, allStates, setCustomStates, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
 import {CAL_FIELDS, CalField, calPatch, calSame, calValue} from './src/library';
 import {AppState, Book, ChapterMark, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
@@ -703,6 +703,7 @@ function PurrinkShelfApp(): React.JSX.Element {
   setDashAuthor(settings.dashAuthor !== false);
   CAT = !!settings.cats;
   SKETCH = settings.look === 'drawn';
+  setCustomStates(settings.customStates);
   const titleOf = (b: Book) => shownTitle(b, metaOf(b));
 
   const lastBase = useRef<Screen>({kind: 'home'});
@@ -1305,13 +1306,13 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
         {name: 'Languages', values: langs},
         {name: 'Warnings', values: uniq(index.flatMap(f => f.meta.warnings || []))},
         {name: 'Series', values: uniq(index.map(f => f.meta.seriesName || ''))},
-        {name: 'Reading', values: READ_STATES.map(x => x.label)},
+        {name: 'Reading', values: allStates().map(x => x.label)},
         {name: 'Yes / No', values: ['Yes', 'No']},
         {name: 'Collections', values: collections.map(c => c.name)},
         {name: 'Rule: check', values: RULE_FIELDS.map(x => x.label)},
         {name: 'Rule: is', values: ['is', 'is not']},
         {name: 'Match', values: ['all rules fit', 'any rule fits']},
-        {name: 'Rule values', values: uniq([...READ_STATES.map(x => x.label), 'No status', 'Yes', 'No', ...cats, ...genres, ...tags, ...langs, ...libs.map(l => l.name), ...index.map(f => authorOf(f.book, f.meta) || '')])},
+        {name: 'Rule values', values: uniq([...allStates().map(x => x.label), 'No status', 'Yes', 'No', ...cats, ...genres, ...tags, ...langs, ...libs.map(l => l.name), ...index.map(f => authorOf(f.book, f.meta) || '')])},
       ],
     );
     const ok = await writeZip(sheetPath, files);
@@ -1352,7 +1353,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
     if (v('Completely translated')) p.translated = clear('Completely translated') ? undefined : /^(y|yes|true|1|✓)$/i.test(v('Completely translated')) ? 'Yes' : 'No';
     if (v('Favourite')) p.fav = /^(y|yes|true|1|✓|♥|x)$/i.test(v('Favourite')) ? true : undefined;
     if (v('Reading')) {
-      const want = clear('Reading') ? null : READ_STATES.find(x => x.label.toLowerCase() === v('Reading').toLowerCase() || x.id === v('Reading').toLowerCase())?.id;
+      const want = clear('Reading') ? null : allStates().find(x => x.label.toLowerCase() === v('Reading').toLowerCase() || x.id === v('Reading').toLowerCase())?.id;
       if (want === null) p.reading = undefined;
       else if (want && want !== old.reading?.state) p.reading = setReading(old.reading, want);
     }
@@ -2385,6 +2386,15 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
         nextUp={nextUp && nextUp.lib === lib.path && nextUp.key === b.key ? nextUp : null}
         onNextLater={() => setNextUp(null)}
         onCalibre={() => setCalOpen({kind: 'book', lib: lib.path, key: b.key})}
+        onNewState={label => {
+          const have = settings.customStates.find(x => x.label.toLowerCase() === label.toLowerCase());
+          if (have) { if (have.hidden) changeSettings({customStates: settings.customStates.map(x => (x === have ? {...x, hidden: false} : x))}); return have.id as ReadState; }
+          const id = `c:${Date.now().toString(36)}` as ReadState;
+          changeSettings({customStates: [...settings.customStates, {id, label}]});
+          setCustomStates([...settings.customStates, {id, label}]);
+          return id;
+        }}
+        onHideState={id => changeSettings({customStates: settings.customStates.map(x => (x.id === id ? {...x, hidden: true} : x))})}
         marked={isMarked(b)}
         onNotes={notes => updateMeta(b.key, {notes})}
         onPaste={async what => {
@@ -2767,7 +2777,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       if (f === 'genre') return uniq(index.flatMap(x => x.meta.genres || []));
       if (f === 'tag') return uniq(index.flatMap(x => x.meta.tags || []));
       if (f === 'category') return uniq(index.flatMap(x => catsOf(x.book, x.meta)));
-      if (f === 'status') return [...READ_STATES.map(r => r.label), 'No status'];
+      if (f === 'status') return [...allStates().map(r => r.label), 'No status'];
       if (f === 'language') return uniq(index.map(x => x.meta.language || ''));
       if (f === 'fav') return ['Yes', 'No'];
       if (f === 'library') return libs.map(l => l.name);
@@ -3338,6 +3348,7 @@ function StatusDot({state, light}: {state?: ReadState; light?: boolean}) {
     return <View style={[base, {overflow: 'hidden'}]}><View style={{position: 'absolute', left: 0, top: 0, bottom: 0, width: px(6), backgroundColor: c}} />{state === 'rereading' ? <View style={{position: 'absolute', right: 0, top: 0, bottom: 0, width: px(3), backgroundColor: c}} /> : null}</View>;
   if (state === 'hold') return <View style={[base, {borderRadius: px(3)}]} />;
   if (state === 'dropped') return <View style={[base, {alignItems: 'center', justifyContent: 'center'}]}><View style={{width: px(14), height: 2, backgroundColor: c, transform: [{rotate: '45deg'}]}} /></View>;
+  if (state.startsWith('c:')) return <View style={[base, {alignItems: 'center', justifyContent: 'center'}]}><View style={{width: px(6), height: px(6), borderRadius: px(3), backgroundColor: c}} /></View>;
   return <View style={base} />;
 }
 
@@ -3882,6 +3893,8 @@ function BookPage(props: {
   onNextLater?: () => void;
   preview?: boolean; // a small look at the page (nothing can be tapped)
   onCalibre?: () => void; // the Calibre versions of this book
+  onNewState?: (label: string) => ReadState; // add your own reading status
+  onHideState?: (id: ReadState) => void; // take one of yours off the list (books that have it keep it)
   diff?: CalField; // a Calibre preview: mark this field
 }) {
   const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings, nextUp} = props;
@@ -3895,6 +3908,7 @@ function BookPage(props: {
   const [rTab, setRTab] = useState<'about' | 'ch'>((props.first === 'chapters' || (props.first === 'started' && started)) && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
+  const [newState, setNewState] = useState<string | null>(null); // typing a new status
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -4289,16 +4303,38 @@ function BookPage(props: {
         <View style={StyleSheet.absoluteFill}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => { setStatusOpen(false); setHistOpen(false); }} accessibilityLabel="Close" />
           <View style={[st.dropMenu, {top: px(64) + titleH / 2 + px(26), right: px(16)}]}>
-            {READ_STATES.map((r, k) => {
+            <ScrollView style={{maxHeight: CARD_H - px(330)}}>
+            {allStates().map((r, k) => {
               const on = m.reading?.state === r.id;
+              const mine = r.id.startsWith('c:');
               return (
                 <Pressable key={r.id} onPress={() => { onReading(on ? null : r.id); setStatusOpen(false); }} style={[st.dropRow, k > 0 && st.dropLine, on && {backgroundColor: '#e6e6e6'}]} accessibilityLabel={r.label}>
                   <StatusDot state={r.id} />
-                  <Text style={[st.statusText, {flex: 1, fontSize: px(18), marginLeft: px(10)}, on && {fontWeight: 'bold'}]}>{r.label}</Text>
+                  <Text style={[st.statusText, {flex: 1, fontSize: px(18), marginLeft: px(10)}, on && {fontWeight: 'bold'}]} numberOfLines={1}>{r.label}</Text>
                   {on ? <Icon name="check" size={px(22)} /> : null}
+                  {mine ? <IconBtn bare name="close" label={`Remove the status ${r.label}`} size={px(40)} iconSize={px(18)} onPress={() => props.onHideState?.(r.id)} /> : null}
                 </Pressable>
               );
             })}
+            </ScrollView>
+            {newState === null ? (
+              <Pressable onPress={() => setNewState('')} style={[st.dropRow, st.dropLine]} accessibilityLabel="Add your own status">
+                <Icon name="plus" size={px(20)} />
+                <Text style={[st.statusText, {flex: 1, fontSize: px(17), marginLeft: px(10)}]}>Add your own status</Text>
+              </Pressable>
+            ) : (
+              <View style={[st.dropLine, {padding: px(10)}]}>
+                <TextInput autoFocus value={newState} onChangeText={setNewState} placeholder="e.g. Waiting for translation" maxLength={30} style={[st.input, {width: px(276), marginBottom: px(8), height: px(42), paddingVertical: px(4), fontSize: px(16)}]} />
+                <View style={{flexDirection: 'row'}}>
+                  <Btn small label="Cancel" onPress={() => setNewState(null)} style={{flex: 1, marginRight: px(8)}} />
+                  <Btn small dark label="Add" onPress={() => {
+                    const id = newState.trim() ? props.onNewState?.(newState.trim()) : undefined;
+                    setNewState(null);
+                    if (id) { onReading(id); setStatusOpen(false); }
+                  }} style={{flex: 1}} />
+                </View>
+              </View>
+            )}
             {m.reading ? (
               <Pressable onPress={() => { onReading(null); setStatusOpen(false); }} style={[st.dropRow, st.dropLine]} accessibilityLabel="Clear status">
                 <Icon name="close" size={px(20)} />
