@@ -3491,6 +3491,15 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
   }
   const pageOf = (file: string, i: number) => Math.max(0, pages.findIndex(pg => pg.some(r => r.file === file && r.i === i)));
   const [pg, setPg] = useState(() => (here && sel === here.file ? pageOf(here.file, here.i) : 0));
+  // "open where I am": until you move around yourself, the list follows your chapter (the contents can finish reading after the list opens)
+  const auto = useRef(startAt === 'here');
+  const hereKey = here ? `${here.file}#${here.i}` : '';
+  useEffect(() => {
+    if (!auto.current || !here || here.i < 0) return;
+    if (sel !== here.file && files.includes(here.file)) { setSel(here.file); return; }
+    const t = pageOf(here.file, here.i);
+    if (sel === here.file && t !== pg) setPg(t);
+  }, [hereKey, sel, pages.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const [flash, setFlash] = useState<string | null>(null);
   const p = Math.min(pg, pages.length - 1);
   // the highest chapter number in the book (or the count, when they aren't numbered)
@@ -3500,6 +3509,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
     let hit = lastNum ? allToc.find(x => chNum(x.c.t) === n) : allToc[n - 1];
     if (!hit) return;
     const showIn = sel === 'all' || sel === hit.f ? sel : hit.f;
+    auto.current = false;
     setSel(showIn);
     setPanel(null);
     setFlash(`${hit.f}#${hit.i}`);
@@ -3519,7 +3529,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
       <View style={{height: headH, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end'}}>
         {sel === 'marks' ? <Text style={[st.small, {flex: 1}]} numberOfLines={2}>{'Only bookmarked chapters. Tap one to open near it, or the note to change it.'}</Text> : <View style={{flex: 1}} />}
         <View>
-          <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
+          <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { auto.current = false; setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
           {marks.length ? <View style={st.bubble} pointerEvents="none"><Text style={st.bubbleText}>{String(marks.length)}</Text></View> : null}
         </View>
         {multi && sel !== 'marks' ? (
@@ -3537,7 +3547,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
         ))}
         {sel === 'marks' && !marks.length ? <Text style={[st.small, {marginTop: px(10)}]}>{'No bookmarks yet. Tap the bookmark on a chapter to keep it here, with a note on why.'}</Text> : null}
       </View>
-      <PageStrip page={p} pages={pages.length} onPage={n => { setPg(n); setFlash(null); }} onDots={() => setPanel('pad')} room={width} />
+      <PageStrip page={p} pages={pages.length} onPage={n => { auto.current = false; setPg(n); setFlash(null); }} onDots={() => setPanel('pad')} room={width} />
       {panel === 'vols' ? (
         <View style={st.inPanel}>
           <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
@@ -3546,7 +3556,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
           </View>
           <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
             {['all', ...files].map(f => (
-              <Pressable key={f} onPress={() => { setSel(f); setPanel(null); setPg(f !== 'all' && here?.file === f ? pageOf(f, here.i) : 0); setFlash(null); }} style={[st.rTab, {marginBottom: px(8)}, sel === f && st.btnDark, !!m.done?.[f] && sel !== f && st.chRowRead]}>
+              <Pressable key={f} onPress={() => { auto.current = false; setSel(f); setPanel(null); setPg(f !== 'all' && here?.file === f ? pageOf(f, here.i) : 0); setFlash(null); }} style={[st.rTab, {marginBottom: px(8)}, sel === f && st.btnDark, !!m.done?.[f] && sel !== f && st.chRowRead]}>
                 <Text style={[st.rTabText, sel === f && {color: '#ffffff'}]}>{f === 'all' ? 'All volumes' : volName(b, f)}</Text>
               </Pressable>
             ))}
@@ -3554,7 +3564,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
         </View>
       ) : null}
       {panel === 'pad' ? (
-        <GoToPad chapters={allToc.length > 0} max={{ch: lastNum || allToc.length, page: pages.length}} onClose={() => setPanel(null)} onGo={(k, n) => { if (k === 'page') { setPg(n - 1); setPanel(null); setFlash(null); } else goCh(n); }} />
+        <GoToPad chapters={allToc.length > 0} max={{ch: lastNum || allToc.length, page: pages.length}} onClose={() => setPanel(null)} onGo={(k, n) => { auto.current = false; if (k === 'page') { setPg(n - 1); setPanel(null); setFlash(null); } else goCh(n); }} />
       ) : null}
       {editing && typeof panel === 'object' && panel ? (
         <View style={st.inPanel}>
@@ -3648,10 +3658,10 @@ function BookPage(props: {
   const label = (t: string) => ({h: px(32), sec, node: <Text style={st.infoLabel}>{t}</Text>});
   const maxPill = Math.floor((lIn - px(30)) / (px(14) * 0.58)); // a longer name is shortened (the filter still uses all of it)
   const pills = (list: string[], k: FilterKind) =>
-    pillLines(list.map(t => t), lIn).map(line => ({
-      h: px(33),
+    pillLines(list.map(t => t), lIn - px(4)).map((line, i) => ({
+      h: px(34) + (i === 0 ? px(6) : px(2)), // room above each line so its top edge is never cut off (more under a heading)
       sec,
-      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
+      node: <View style={{flexDirection: 'row', paddingTop: i === 0 ? px(6) : px(2), paddingLeft: px(2)}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
