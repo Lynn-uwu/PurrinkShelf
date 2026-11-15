@@ -320,3 +320,13 @@ export async function jumpTo(page: number): Promise<boolean> {
     return false;
   }
 }
+
+/** turn the open document to a page without closing PurrinkShelf; true when the reader says it did */
+export async function turnTo(page: number): Promise<boolean> {
+  try {
+    const r: any = await Promise.race([PluginCommAPI.jumpToPage(Math.max(0, Math.floor(page))), new Promise(res => setTimeout(() => res({success: false}), 3000))]);
+    return !(r && r.success === false);
+  } catch (e) {
+    return false;
+  }
+}

@@ -1,0 +1,11 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  p.on('console', m => { const t = m.text(); if (/chapter pages|jump to|open at|LOG/.test(t) && !/cover/.test(t)) console.log(t.slice(0, 200)); });
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1&reading=echo&page=200&pages=412&screenonly=1'); await p.waitForTimeout(16000);
+  console.log('page reads during mapping:', (await p.evaluate(() => (window.__read || []).length)));
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await p.waitForTimeout(600);
+  await p.getByLabel('Chapters', {exact: true}).click(); await p.waitForTimeout(500);
+  await p.getByLabel('Open Chapter 141', {exact: false}).first().click(); await p.waitForTimeout(8000);
+  console.log('opened:', await p.evaluate(() => JSON.stringify(window.__opened))); console.log('msg:', (await p.locator('text=What the reader gave').count()));
+  await b.close(); })();

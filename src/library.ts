@@ -194,6 +194,7 @@ export type Settings = {
   compactTags: boolean; // the filter tags as small chips instead of a list
   calibreAdd: boolean; // books found here but not in Calibre are sent to Calibre (by the helper on the computer)
   findPages: boolean; // read the pages of the book you're in to find where each chapter starts (off saves battery)
+  chapterTipSeen: boolean; // the "opens first, then tap PurrinkShelf" note was shown once
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -231,6 +232,7 @@ export const DEFAULT_SETTINGS: Settings = {
   compactTags: false,
   calibreAdd: true,
   findPages: true,
+  chapterTipSeen: false,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */

@@ -21,7 +21,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, pageText, turnTo, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -529,7 +529,8 @@ function PurrinkShelfApp(): React.JSX.Element {
   const coverCache = useRef<{[k: string]: string | null}>({});
   const [message, setMessage] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState<{title: string; text: string; ok: string; go: () => void} | null>(null);
-  const pendingJump = useRef<{key: string; file: string; i: number} | null>(null); // a chapter to turn to once PurrinkShelf is opened inside its volume
+  const pendingJump = useRef<{key: string; file: string; i: number} | null>(null);
+  const lastLook = useRef<{samples: string[]; onScreenOnly: boolean} | null>(null); // what the last page check saw (shown when it finds nothing) // a chapter to turn to once PurrinkShelf is opened inside its volume
   // short notes at the bottom that go away by themselves (never block the page).
   // A new one appears at the bottom and pushes the older ones up; each leaves 4.5 s after it came.
   const [toasts, setToasts] = useState<{id: number; t: string}[]>([]);
@@ -1709,11 +1710,29 @@ function PurrinkShelfApp(): React.JSX.Element {
     const m = metaOf(b);
     const cur = m.pageMap?.[file];
     let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
+    const guess = pageGuess(file, c, pg.pages);
     let texts = 0;
-    const read = async (q: number) => { const t = await pageText(q); if (t.trim()) texts++; return t; };
-    if (p < 0) p = await findChapterPage(c, pg.pages, pageGuess(file, c, pg.pages), read, 40);
+    const samples: string[] = [];
+    // some readers give the text of the page on screen whatever page is asked for: then PurrinkShelf turns the page and looks
+    const a = await pageText(guess);
+    const z = await pageText(Math.min(pg.pages - 1, guess + 1));
+    const onScreenOnly = !!a.trim() && a === z && guess + 1 < pg.pages;
+    if (onScreenOnly) log('jump to page', 'the reader gives only the page on screen: turning pages to look');
+    const read = async (q: number) => {
+      if (onScreenOnly) {
+        await turnTo(q);
+        await new Promise(res => setTimeout(res, 350));
+      }
+      const t = await pageText(q);
+      if (t.trim()) texts++;
+      if (samples.length < 2 && t.trim()) samples.push(`page ${q + 1}: "${t.trim().replace(/\s+/g, ' ').slice(0, 70)}"`);
+      return t;
+    };
+    if (p < 0) p = await findChapterPage(c, pg.pages, guess, read, onScreenOnly ? 16 : 40);
+    lastLook.current = {samples, onScreenOnly};
     if (p < 0) {
-      log('jump to page', texts ? `no page shows ${c.t}` : 'the reader gave no page text');
+      log('jump to page', texts ? `no page shows ${c.t}; ${samples.join(' · ')}` : 'the reader gave no page text');
+      if (onScreenOnly) await turnTo(pg.page); // back to where you were
       return texts ? 'notfound' : 'notext';
     }
     const at = cur && cur.pages === pg.pages ? [...cur.at] : (TOCS[file] || []).map(() => -1);
@@ -1729,7 +1748,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     setMessage(
       r === 'notext'
         ? "Your Supernote doesn't share the text of this book's pages with plugins, so PurrinkShelf can't check where a chapter starts. Use the reader's own table of contents for now."
-        : `PurrinkShelf looked through the pages around ${c ? chShort(c) : 'the chapter'} and none shows it at the top, so it didn't move the page. Use the reader's table of contents for this one.`,
+        : `PurrinkShelf looked through the pages around ${c ? chShort(c) : 'the chapter'} and none shows it at the top, so it didn't move the page.${lastLook.current?.samples.length ? `\n\nWhat the reader gave:\n${lastLook.current.samples.join('\n')}` : ''}`,
     );
   async function readAt(b: Book, file: string, f: number, i: number) {
     const m = metaOf(b);
@@ -1756,16 +1775,19 @@ function PurrinkShelfApp(): React.JSX.Element {
     }
     // not checked yet: open the volume; once PurrinkShelf is opened inside it, it finds the chapter's page and turns to it
     const vol = volName(b, file) || 'the book';
+    const arm = async () => {
+      await opened();
+      pendingJump.current = {key: b.key, file, i};
+      log('open, then find', `${c.t} in ${file.split('/').pop()}`);
+      read(file);
+    };
+    if (settings.chapterTipSeen) return arm(); // explained once; after that it just opens
+    changeSettings({chapterTipSeen: true});
     setAskOpen({
       title: `Open ${vol} at ${chShort(c)}`,
-      text: `${vol} opens first. Then tap PurrinkShelf in the reader's toolbar: it reads the pages, finds the one that shows ${chShort(c)}, and turns to it. After that, this volume's chapters open straight away.`,
+      text: `${vol} opens first. Then tap PurrinkShelf in the reader's toolbar: it reads the pages, finds the one that shows ${chShort(c)}, and turns to it. After that, this volume's chapters open straight away.\n\nThis is shown only once; next time it just opens.`,
       ok: `Open ${vol}`,
-      go: async () => {
-        await opened();
-        pendingJump.current = {key: b.key, file, i};
-        log('open, then find', `${c.t} in ${file.split('/').pop()}`);
-        read(file);
-      },
+      go: arm,
     });
   }
   /** while PurrinkShelf is open over a volume: find the page every chapter starts on, by its title (once per page count) */
@@ -1793,6 +1815,10 @@ function PurrinkShelfApp(): React.JSX.Element {
       const cur = metaFor(l)?.books[key] || {};
       await patchBook(l, key, {pageMap: {...(cur.pageMap || {}), [file]: {pages, at: [...at]}}});
     };
+    // a reader that gives only the page on screen can't be looked through in the background
+    const t1 = await readPage(Math.floor(pages / 3));
+    const t2 = await readPage(Math.floor(pages / 3) + 1);
+    if (t1.trim() && t1 === t2) { log('chapter pages', 'the reader gives only the page on screen; chapters are found when you tap them'); return; }
     let drift = 0, found = 0;
     for (let k = 0; k < toc.length; k++) {
       const est = pageGuess(file, toc[k], pages);
@@ -3526,26 +3552,39 @@ const squash = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
  * Find the page a chapter starts on in the document PurrinkShelf is open over: start at the page worked out from
  * where the chapter sits in the text, and look at the pages around it for the chapter's title near the top.
  */
-async function findChapterPage(c: Chapter, pages: number, guess: number, read: (p: number) => Promise<string>, maxReads = 1e9): Promise<number> {
-  let reads = 0;
-  const full = squash(c.t);
+/** the ways a chapter's heading can be written on its page: "Chapter 12", "Ch 12", "第12章", its full title, its name */
+function chapterKeys(c: Chapter): string[] {
   const n = chNum(c.t);
   const name = squash(chName(c.t));
-  const keys = [full, ...(n !== undefined ? [`chapter${n}`, `ch${n}`, `第${n}章`] : []), ...(name.length >= 6 ? [name] : [])].filter(k => k.length >= 3);
+  return [squash(c.t), ...(n !== undefined ? [`chapter${n}`, `chap${n}`, `ch${n}`, `第${n}章`, `episode${n}`, `ep${n}`] : []), ...(name.length >= 6 ? [name] : [])].filter(k => k.length >= 3);
+}
+/**
+ * Does this page show the chapter's heading? A heading is a line of its own near the top, or sits in the first
+ * few hundred letters. "chapter12" never matches "chapter120": the next character can't be a digit.
+ */
+function showsChapter(text: string, keys: string[]): boolean {
+  const hit = (t: string, k: string, start: boolean) => {
+    const i = t.indexOf(k);
+    return i >= 0 && (!start || i === 0) && !(/\d$/.test(k) && /\d/.test(t.charAt(i + k.length)));
+  };
+  const lines = text.split(/[\r\n]+/).map(squash).filter(Boolean).slice(0, 15);
+  const top = squash(text).slice(0, 600);
+  return keys.some(k => lines.some(l => hit(l, k, true)) || hit(top, k, false));
+}
+async function findChapterPage(c: Chapter, pages: number, guess: number, read: (p: number) => Promise<string>, maxReads = 1e9): Promise<number> {
+  let reads = 0;
+  const keys = chapterKeys(c);
   if (!keys.length) return -1;
   const reach = Math.max(4, Math.ceil(pages * 0.04));
   for (let d = 0; d <= reach; d++) {
     for (const p of d ? [guess + d, guess - d] : [guess]) {
       if (p < 0 || p >= pages) continue;
       if (reads++ >= maxReads) return -1;
-      const top = squash(await read(p)).slice(0, 400); // a chapter's title is at the top of its first page
-      // "chapter12" must not match "chapter120": the next character can't be a digit
-      const has = (t: string) => keys.some(k => { const i = t.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(t.charAt(i + k.length))); });
-      if (has(top)) {
+      if (showsChapter(await read(p), keys)) {
         // a page header can repeat the chapter's title on every page: go back to the first page that has it
         let q = p;
         for (let back = 0; back < 40 && q > 0; back++) {
-          if (!has(squash(await read(q - 1)).slice(0, 400))) break;
+          if (!showsChapter(await read(q - 1), keys)) break;
           q--;
         }
         return q;
