@@ -49,6 +49,7 @@ export type Meta = {
   pageMap?: {[file: string]: {pages: number; at: number[]}}; // the page each chapter starts on (found by its title), for one page count
   ao3?: Ao3; // a work downloaded from Archive of Our Own: its own tags
   ao3Seen?: boolean; // its first page was checked for AO3 tags once
+  descFixed?: boolean; // a description cut at 2,000 letters (before 1.2.5) was read again in full
   calibre?: CalibreState; // what Calibre had at the last sync, and your choices when both sides changed
 };
 export type ChapterMark = {id: string; file: string; ch: number; t: string; note?: string; at: number};

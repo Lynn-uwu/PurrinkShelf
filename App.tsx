@@ -909,7 +909,7 @@ function PurrinkShelfApp(): React.JSX.Element {
         found++;
         p.ao3 = {url: w.url, rating: w.rating, warnings: w.warnings, categories: w.categories, fandoms: w.fandoms, ships: w.ships, characters: w.characters, tags: w.tags, words: w.words, chapters: w.chapters, complete: w.complete, author: w.author};
         if (!m.author && w.author) p.author = w.author;
-        if (!m.description && w.summary) p.description = w.summary.slice(0, 2000);
+        if (!m.description && w.summary) p.description = w.summary.slice(0, 10000);
         if (!m.language && w.language) p.language = w.language;
         if (!m.status && w.chapters) p.status = `${w.chapters} chapters${w.complete ? ' (Completed)' : ''}`;
         if (!m.seriesName && w.series) { p.seriesName = w.series; p.seriesNo = w.seriesNo; }
@@ -927,20 +927,23 @@ function PurrinkShelfApp(): React.JSX.Element {
     log('ao3', todo.length, 'looked at', found, 'found');
     if (found) say(`${l.name}: found ${found} AO3 work${found === 1 ? '' : 's'}, with their fandoms, ships and tags`);
   }
+  /** a description earlier versions cut at 2,000 letters, while the book has the whole of it */
+const cutShort = (have?: string, full?: string) => !!have && have.length === 2000 && !!full && full.length > 2000 && full.replace(/\s+/g, ' ').startsWith(have.replace(/\s+/g, ' ').slice(0, 300));
   /** fill empty details from what is written inside each EPUB (author, description, language); never overwrites yours */
   const probing = useRef(false);
   async function probeEpubs(l: Lib, bs: Book[], m0: MetaStore) {
     if (probing.current) return;
     probing.current = true;
     try {
-      const todo = bs.filter(b => !b.missing && b.ext !== 'paper' && !m0.books[b.key]?.probed).slice(0, 40);
+      // new books, and descriptions earlier versions cut at 2,000 letters (read once more in full)
+      const todo = bs.filter(b => !b.missing && b.ext !== 'paper' && (!m0.books[b.key]?.probed || (m0.books[b.key]?.description?.length === 2000 && !m0.books[b.key]?.descFixed))).slice(0, 40);
       if (!todo.length) return;
       const patches: {[k: string]: Meta} = {};
       const dirs: {[d: string]: string[]} = {};
       let calibre = 0;
       for (const b of todo) {
         const m = m0.books[b.key] || {};
-        const p: Meta = {probed: true};
+        const p: Meta = {probed: true, ...(m.description?.length === 2000 ? {descFixed: true} : {})};
         // Calibre keeps metadata.opf and cover.jpg next to each book: series, tags, rating, cover
         const dir = b.files[0].slice(0, b.files[0].lastIndexOf('/'));
         if (!dirs[dir]) dirs[dir] = (await listDir(dir).catch(() => [] as Entry[])).map(e => e.name.toLowerCase());
@@ -951,7 +954,8 @@ function PurrinkShelfApp(): React.JSX.Element {
             calibre++;
             if (!m.author && c.author && !splitDash(b.fileTitle)) p.author = c.author;
             if (!m.title && c.title && c.title !== shownTitle(b)) p.title = c.title;
-            if (!m.description && c.description && c.description.length > 20) p.description = c.description.slice(0, 2000);
+            if (!m.description && c.description && c.description.length > 20) p.description = c.description.slice(0, 10000);
+            else if (cutShort(m.description, c.description)) p.description = c.description!.slice(0, 10000);
             if (!m.language && c.language) p.language = c.language;
             if (!m.seriesName && c.series) { p.seriesName = c.series; p.seriesNo = c.seriesNo; }
             if (!m.tags?.length && c.subjects.length) p.tags = c.subjects.slice(0, 30);
@@ -964,7 +968,8 @@ function PurrinkShelfApp(): React.JSX.Element {
           if (em) {
             const has = {...m, ...p};
             if (!has.author && em.author && !splitDash(b.fileTitle)) p.author = em.author;
-            if (!has.description && em.description && em.description.length > 20) p.description = em.description.slice(0, 2000);
+            if (!has.description && em.description && em.description.length > 20) p.description = em.description.slice(0, 10000);
+            else if (cutShort(has.description, em.description)) p.description = em.description!.slice(0, 10000);
             if (!has.language && em.language) p.language = em.language;
             if (!has.seriesName && em.series) { p.seriesName = em.series; p.seriesNo = em.seriesNo; }
           }
@@ -3885,6 +3890,8 @@ function BookPage(props: {
   const where = whereAmI(b, m, tocs);
   const hasCh = epubs.length > 0 && !epubs.every(f => tocs[f] && !tocs[f].length);
   const started = !!m.progress?.last && m.reading?.state !== 'completed';
+  const [descLines, setDescLines] = useState<{key: string; lines: string[][]} | null>(null);
+  const measureRef = useRef<{[k: string]: string[]}>({});
   const [rTab, setRTab] = useState<'about' | 'ch'>((props.first === 'chapters' || (props.first === 'started' && started)) && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
@@ -4047,10 +4054,34 @@ function BookPage(props: {
       </View>
     )});
   } else if (!paras.length) right.push({h: px(36), hl: dHl, node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
+  // the description is laid out by the device itself (measured once off-screen), so pages hold exactly what fits
+  const descW = rIn - (dHl ? px(14) : 0);
+  const descKey = `${descW}|${m.description || ''}`;
+  const measured = descLines && descLines.key === descKey ? descLines.lines : null;
   paras.forEach((p, pi) => {
+    if (measured?.[pi]) {
+      const lines = measured[pi];
+      lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), hl: dHl, node: <Text style={st.bodyText} numberOfLines={1}>{ln}</Text>}));
+      return;
+    }
     const lines = wrapWords(p, perLine - (dHl ? 2 : 0));
     lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1, hl: dHl}));
   });
+  const measureDesc = !scroll && paras.length && !measured ? (
+    <RNView pointerEvents="none" style={{position: 'absolute', left: -10000, top: 0, width: descW, opacity: 0}}>
+      {paras.map((p, pi) => (
+        <Text
+          key={descKey + pi}
+          style={st.bodyText}
+          onTextLayout={e => {
+            measureRef.current[descKey + '#' + pi] = e.nativeEvent.lines.map(l => l.text.replace(/\s+$/, ''));
+            if (paras.every((_, k) => measureRef.current[descKey + '#' + k])) setDescLines({key: descKey, lines: paras.map((_, k) => measureRef.current[descKey + '#' + k])});
+          }}>
+          {p}
+        </Text>
+      ))}
+    </RNView>
+  ) : null;
   if (b.vols.length) {
     right.push({h: px(10)});
     right.push({
@@ -4316,6 +4347,7 @@ function BookPage(props: {
           <Btn dark icon="play-on" label={`Start ${volName(b, nextUp.to)}`} onPress={() => onRead(nextUp.to)} />
         </View>
       ) : null}
+      {measureDesc}
       {notesOpen ? <NotesBoard title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
       {pasteOpen ? <PasteSheet cover={cover} title={title} onPick={w => { setPasteOpen(false); onPaste(w); }} onClose={() => setPasteOpen(false)} /> : null}
     </>
