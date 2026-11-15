@@ -191,6 +191,7 @@ export type Settings = {
   ao3: 'together' | 'separate'; // AO3 works: in with your books, or their own library view
   ao3Keep: {fandom: boolean; rating: boolean; tags: boolean; hideSingles: boolean};
   compactTags: boolean; // the filter tags as small chips instead of a list
+  calibreAdd: boolean; // books found here but not in Calibre are sent to Calibre (by the helper on the computer)
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -226,6 +227,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ao3: 'together',
   ao3Keep: {fandom: true, rating: true, tags: true, hideSingles: false},
   compactTags: false,
+  calibreAdd: true,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */

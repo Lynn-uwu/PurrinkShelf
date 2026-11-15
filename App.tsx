@@ -772,7 +772,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     const e = await calibreCsv(l);
     const cur0 = metaFor(l);
     if (!e || !cur0) return 0;
-    if (!force && cur0.calibre?.[e.path] === e.mtime) return 0;
+    if (!force && cur0.calibre?.[e.path] === e.mtime) { await calibreExport(l, cur0, bs, e.path); return 0; } // nothing new from Calibre; still send what changed here
     const rows = parseTable((await readText(e.path)) || '');
     const col = (r: {[h: string]: string}, n: string) => { const k = Object.keys(r).find(h => h.toLowerCase().replace(/\s+/g, '_') === n); return k ? (r[k] || '').trim() : ''; };
     const books2 = {...cur0.books};
@@ -796,6 +796,8 @@ function PurrinkShelfApp(): React.JSX.Element {
         title, author: col(r, 'author') || col(r, 'authors'), description: col(r, 'description') || col(r, 'comments'),
         genres: col(r, 'genres') || col(r, 'genre'), tags: col(r, 'tags'), series: col(r, 'series'), language: col(r, 'language') || col(r, 'languages'),
       };
+      // a book in volumes is a series of the same name in Calibre (one Calibre book per volume): not a series of its own
+      if (theirsOf.series.toLowerCase().startsWith(title.toLowerCase() + ' #') && b.files.length > 1) theirsOf.series = '';
       for (const {id: f} of CAL_FIELDS) {
         const theirs = theirsOf[f];
         const mine = calValue(b, m, f);
@@ -837,6 +839,21 @@ function PurrinkShelfApp(): React.JSX.Element {
         if (c.pending?.[f] !== undefined) continue;
         const mine = calValue(b, m, f);
         if (mine && !calSame(f, mine, c.base?.[f] || '')) lines.push([c.id, shownTitle(b, m), f, mine].map(q).join(','));
+      }
+    }
+    // books that are here but not in Calibre: the helper adds the files (volumes as a series), then their details
+    const root = at.replace(/\/_Library Data\/calibre\.csv$/i, '');
+    if (settings.calibreAdd) for (const b of bs) {
+      const m = ms.books[b.key] || {};
+      if (m.calibre?.id || b.missing || b.ext === 'paper' || m.paper) continue;
+      const files = b.files.filter(f => f.startsWith(root + '/') && CALIBRE_EXT.test(f));
+      if (!files.length) continue;
+      const id = 'new:' + b.key;
+      lines.push([id, shownTitle(b, m), 'add', files.map(f => f.slice(root.length + 1)).join('|')].map(q).join(','));
+      for (const {id: f} of CAL_FIELDS) {
+        if (f === 'series' && files.length > 1) continue; // volumes become a series of their own
+        const v = calValue(b, m, f);
+        if (v) lines.push([id, shownTitle(b, m), f, v].map(q).join(','));
       }
     }
     await writeText(at.replace(/calibre\.csv$/i, 'supernote-changes.csv'), lines.join('\r\n') + '\r\n');
@@ -2000,9 +2017,10 @@ function PurrinkShelfApp(): React.JSX.Element {
           onAll={async use => {
             for (const f of calWaiting) for (const field of Object.keys(f.meta.calibre?.pending || {}) as CalField[]) await calDecide(f.lib, f.book.key, field, use);
           }}
-          preview={(f, m) => (
+          preview={(f, m, diff) => (
             <BookPage
               preview
+              diff={diff}
               book={f.book} meta={m} title={shownTitle(f.book, m)} cats={catsOf(f.book, m)} cover={f.lib.path === lib?.path ? coverUri(f.book) : m.cover || null}
               paging="arrows" volGrid={false} setVolGrid={() => {}} onRead={() => {}} onEdit={() => {}} onBack={() => {}} onFilter={() => {}}
               marked={false} onMark={() => {}} onNotes={() => {}} onPaste={() => {}} onFav={() => {}} onReading={() => {}}
@@ -3176,7 +3194,7 @@ const ago = (t: number) => {
 };
 
 // ---------- book page: two columns, paged with arrows (or scrolling) ----------
-type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean};
+type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean; hl?: boolean};
 
 /** greedy word wrap by character count (a cautious guess of what fits) */
 function wrapWords(text: string, perLine: number): string[] {
@@ -3221,7 +3239,21 @@ function pack(items: Item[], cap: number): Item[][] {
   }
   return pages;
 }
-function renderItems(items: Item[]) {
+function renderItems(items: Item[]): React.ReactNode[] {
+  // a run of marked items (what differs, in a Calibre preview) sits in one dashed, shaded box
+  if (items.some(it => it.hl)) {
+    const out: React.ReactNode[] = [];
+    let i = 0;
+    while (i < items.length) {
+      const on = !!items[i].hl;
+      let j = i;
+      while (j < items.length && !!items[j].hl === on) j++;
+      const run = items.slice(i, j).map(it => ({...it, hl: undefined}));
+      out.push(on ? <View key={'hl' + i} style={st.diffBox}>{renderItems(run)}</View> : <React.Fragment key={'r' + i}>{renderItems(run)}</React.Fragment>);
+      i = j;
+    }
+    return out;
+  }
   const out: React.ReactNode[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
@@ -3620,6 +3652,7 @@ function BookPage(props: {
   onNextLater?: () => void;
   preview?: boolean; // a small look at the page (nothing can be tapped)
   onCalibre?: () => void; // the Calibre versions of this book
+  diff?: CalField; // a Calibre preview: mark this field
 }) {
   const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings, nextUp} = props;
   const epubs = b.missing || b.ext === 'paper' ? [] : b.files.filter(f => /\.epub$/i.test(f));
@@ -3656,12 +3689,14 @@ function BookPage(props: {
   const startH = px(48) + px(10);
   const left: Item[] = [];
   let sec = 'Overview';
-  const label = (t: string) => ({h: px(32), sec, node: <Text style={st.infoLabel}>{t}</Text>});
+  let hl = false; // marks what differs, in a Calibre preview
+  const label = (t: string) => ({h: px(32), sec, hl, node: <Text style={st.infoLabel}>{t}</Text>});
   const maxPill = Math.floor((lIn - px(30)) / (px(14) * 0.58)); // a longer name is shortened (the filter still uses all of it)
   const pills = (list: string[], k: FilterKind) =>
     pillLines(list.map(t => t), lIn - px(4)).map((line, i) => ({
       h: px(34) + (i === 0 ? px(6) : px(2)), // room above each line so its top edge is never cut off (more under a heading)
       sec,
+      hl,
       node: <View style={{flexDirection: 'row', paddingTop: i === 0 ? px(6) : px(2), paddingLeft: px(2)}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
@@ -3671,6 +3706,7 @@ function BookPage(props: {
     left.push({
       h: px(32) + lines * px(24) + px(8),
       sec,
+      hl,
       node: (
         <View>
           <Text style={st.infoLabel}>{name}</Text>
@@ -3681,21 +3717,30 @@ function BookPage(props: {
       ),
     });
   };
+  hl = props.diff === 'genres';
   left.push(label('Genre'));
   if (m.genres?.length) left.push(...pills(m.genres, 'g'));
-  else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
+  else left.push({h: px(28), sec, hl, node: <Text style={st.small}>None yet</Text>});
+  hl = false;
   left.push({h: px(6), sec});
+  hl = props.diff === 'series';
+  if (props.diff === 'series' && !m.seriesName) field('Series', '');
   if (m.seriesName) field('Series', `${m.seriesName}${m.seriesNo ? `  #${String(m.seriesNo).replace(/\.0+$/, '')}` : ''}`);
+  hl = false;
   if (m.paper) field('Format', 'Paper book');
+  hl = props.diff === 'language';
   field('Language', m.language);
+  hl = false;
   field('Status', m.status);
   if (showLength && m.length) field('Length', `About ${hoursText(readMinutes(m))} to read  ·  ${Math.round((m.length.words + m.length.cjk) / 1000)}k ${m.length.cjk > m.length.words ? 'characters' : 'words'}`);
   sec = 'Tags';
   left.push({h: 0, brk: true});
+  hl = props.diff === 'tags';
   left.push(label('Tags'));
   const allTagsHere = Array.from(new Set([...(m.tags || []), ...(m.ao3?.tags || [])]));
   if (allTagsHere.length) left.push(...pills(allTagsHere, 't'));
-  else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
+  else left.push({h: px(28), sec, hl, node: <Text style={st.small}>None yet</Text>});
+  hl = false;
   if (showWarnings && m.warnings?.length) {
     left.push({h: px(8), sec});
     left.push(label('Content warnings'));
@@ -3761,7 +3806,8 @@ function BookPage(props: {
       </View>
     )});
   }
-  right.push({h: px(40), node: <Text style={st.colHead}>Description</Text>});
+  const dHl = props.diff === 'description';
+  right.push({h: px(40), hl: dHl, node: <Text style={st.colHead}>Description</Text>});
   const paras = (m.description || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
   if (!paras.length && CAT) {
     right.push({h: px(200), node: (
@@ -3774,10 +3820,10 @@ function BookPage(props: {
         <CatImg name="sitting" w={px(88)} style={{position: 'absolute', left: px(2), bottom: 0}} />
       </View>
     )});
-  } else if (!paras.length) right.push({h: px(36), node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
+  } else if (!paras.length) right.push({h: px(36), hl: dHl, node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
   paras.forEach((p, pi) => {
-    const lines = wrapWords(p, perLine);
-    lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1}));
+    const lines = wrapWords(p, perLine - (dHl ? 2 : 0));
+    lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1, hl: dHl}));
   });
   if (b.vols.length) {
     right.push({h: px(10)});
@@ -3845,8 +3891,10 @@ function BookPage(props: {
     const n = lPages[i][0]?.sec || '';
     return n === 'Tags' && i > 0 && lPages[i - 1][0]?.sec === 'Tags' ? 'More tags' : n;
   };
-  const lpg = Math.min(lp, lPages.length - 1);
-  const rpg = Math.min(rp, rPages.length - 1);
+  // a Calibre preview shows the page that holds the difference
+  const hlPage = (pgs: Item[][]) => Math.max(0, pgs.findIndex(pg => pg.some(it => it.hl)));
+  const lpg = props.diff ? hlPage(lPages) : Math.min(lp, lPages.length - 1);
+  const rpg = props.diff ? hlPage(rPages) : Math.min(rp, rPages.length - 1);
 
   const top = (
     <View style={{width: coverW + px(14), height: coverH + px(10)}}>
@@ -3909,11 +3957,11 @@ function BookPage(props: {
       <View style={{height: titleH, paddingHorizontal: px(16), flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
         <View style={{flex: 1}}>
           {author ? (
-            <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`}>
+            <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`} style={props.diff === 'author' && st.diffInline}>
               <Text style={st.byLine} numberOfLines={2}>{author}</Text>
             </Pressable>
-          ) : null}
-          <Text style={[st.bookTitle, {fontSize: tFont, lineHeight: tLine}]} numberOfLines={4}>{title}</Text>
+          ) : props.diff === 'author' ? <Text style={[st.byLine, st.diffInline, {color: '#777777'}]}>No author</Text> : null}
+          <Text style={[st.bookTitle, {fontSize: tFont, lineHeight: tLine}, props.diff === 'title' && st.diffInline]} numberOfLines={4}>{title}</Text>
         </View>
         <Pressable onPress={() => setStatusOpen(true)} style={[st.statusChip, {maxWidth: statusW}, m.reading && st.btnDark]} accessibilityLabel="Reading status">
           <StatusDot state={m.reading?.state} light={!!m.reading} />
@@ -4817,8 +4865,15 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Btn dark icon="refresh" label="Check for changes" onPress={calibre.onSync} style={{marginRight: px(8)}} />
             <Btn icon="list" label="Changes from Calibre" onPress={calibre.onOpen} />
           </View>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(14)}}>
+            <View style={{flex: 1, marginRight: px(10)}}>
+              <Text style={st.showTitle}>Send new books to Calibre</Text>
+              <Text style={st.small}>Books here that Calibre doesn't have yet are added to it, with their details. Volumes become a series.</Text>
+            </View>
+            <Pill toggle label={settings.calibreAdd ? 'On' : 'Off'} active={settings.calibreAdd} width={px(84)} onPress={() => change({calibreAdd: !settings.calibreAdd})} />
+          </View>
           {sec('Setting it up (once, on the computer)', px(18))}
-          {['1. Download "purrinkshelf_calibre.py" from the PurrinkShelf GitHub page (tools › calibre).', '2. Run it with your Calibre library and your synced library folder, e.g. python purrinkshelf_calibre.py "C:\\Users\\you\\Calibre Library" "…\\Supernote\\Novels".', '3. It writes _Library Data/calibre.csv for PurrinkShelf, and puts your changes from here into Calibre (through calibredb, never by editing its database).', '4. Close Calibre while it runs. Run it again whenever you want to sync.'].map(t => <Text key={t} style={[st.small, {color: BLACK, marginTop: px(4)}]}>{t}</Text>)}
+          {['1. Download "purrinkshelf_calibre.py" from the PurrinkShelf GitHub page (tools › calibre).', '2. Run it with your Calibre library and your synced library folder, e.g. python purrinkshelf_calibre.py "C:\\Users\\you\\Calibre Library" "…\\Supernote\\Novels".', '3. It writes _Library Data/calibre.csv for PurrinkShelf, and puts your changes from here into Calibre (through calibredb, never by editing its database).', '4. Close Calibre while it runs. Run it again whenever you want to sync (new books from here are added on the run after PurrinkShelf has seen calibre.csv once).'].map(t => <Text key={t} style={[st.small, {color: BLACK, marginTop: px(4)}]}>{t}</Text>)}
           {foot}
         </View>
       </ModalCard>
@@ -6820,13 +6875,14 @@ function ActivityCard({items, onClose, onClear}: {items: {t: string; at: number}
     </ModalCard>
   );
 }
+const CALIBRE_EXT = /\.(epub|pdf|mobi|azw3?|txt|docx|cbz|cbr|fb2|rtf|djvu)$/i;
 // ---------- Calibre: books changed in both places, and your choices (which can be changed until the next sync) ----------
 const CAL_WORD: {[f in CalField]: string} = {title: 'title', author: 'author', description: 'description', genres: 'genres', tags: 'tags', series: 'series', language: 'language'};
 function CalibreCard({items, at, view, setView, onDecide, onAll, preview, onClose}: {
   items: Found[]; at?: number; view: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField};
   setView: (v: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField}) => void;
   onDecide: (f: Found, field: CalField, use: 'sn' | 'cal') => void; onAll: (use: 'sn' | 'cal') => void;
-  preview: (f: Found, m: Meta) => React.ReactNode; onClose: () => void;
+  preview: (f: Found, m: Meta, diff: CalField) => React.ReactNode; onClose: () => void;
 }) {
   const [pg, setPg] = useState(0);
   const [tab, setTab] = useState<'sn' | 'cal'>('sn');
@@ -6865,11 +6921,11 @@ function CalibreCard({items, at, view, setView, onDecide, onAll, preview, onClos
           <View style={{alignItems: 'center', marginTop: px(10)}}>
             <View style={{width: Math.round(CARD_W * sc), height: Math.round(CARD_H * sc), overflow: 'hidden', borderWidth: 2, borderColor: BLACK, borderRadius: px(14)}} pointerEvents="none">
               <View style={{width: CARD_W, height: CARD_H, backgroundColor: '#ffffff', transform: [{translateX: (-CARD_W * (1 - sc)) / 2}, {translateY: (-CARD_H * (1 - sc)) / 2}, {scale: sc}]}}>
-                {preview(f, shown)}
+                {preview(f, shown, field)}
               </View>
             </View>
           </View>
-          <Text style={[st.small, {textAlign: 'center', marginTop: px(14)}]}>{`How the book card will look with this version. Different: ${CAL_WORD[field]}.`}</Text>
+          <Text style={[st.small, {textAlign: 'center', marginTop: px(14)}]}>{`How the book card will look with this version. Different: ${CAL_WORD[field]} (marked).`}</Text>
           <View style={{flex: 1}} />
           <View style={{flexDirection: 'row'}}>
             <Btn label="Back" onPress={() => setView({kind: 'list'})} style={{flex: 1, marginRight: px(8)}} />
@@ -6952,6 +7008,8 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  diffBox: {borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, backgroundColor: '#e9e9e9', borderRadius: px(8), marginHorizontal: -px(3), paddingHorizontal: px(3)},
+  diffInline: {borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, backgroundColor: '#e9e9e9', borderRadius: px(6), alignSelf: 'flex-start', paddingHorizontal: px(4)},
   calRow: {flexDirection: 'row', alignItems: 'center', minHeight: px(62), borderWidth: 2, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(12), paddingVertical: px(6), marginBottom: px(8), backgroundColor: '#ffffff'},
   aboutLink: {flexDirection: 'row', alignItems: 'center', height: px(56), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(16), paddingHorizontal: px(14)},
   showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},

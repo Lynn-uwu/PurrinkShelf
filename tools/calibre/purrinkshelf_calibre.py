@@ -13,6 +13,10 @@ What it does, in order:
      a change made in only one place is taken over by itself; a field changed in
      both places is shown to you to choose.
 
+New books: books PurrinkShelf has that Calibre doesn't are added (the setting "Send new books to
+Calibre" in PurrinkShelf). A book in volumes becomes one Calibre book per volume, in a series named
+after the book. This happens on the run after PurrinkShelf has read calibre.csv once.
+
 Close Calibre before running it (calibredb can't write while Calibre is open).
 Genres come from a Calibre custom column named "genre" or "genres" (#genre), if you have one.
 Options:
@@ -87,7 +91,7 @@ def strip_html(t):
     return html.unescape(t).strip()
 
 
-def apply_changes(lib, changes_path, gcol, dry):
+def apply_changes(lib, sn, changes_path, gcol, books, dry):
     if not os.path.exists(changes_path):
         return 0
     with open(changes_path, encoding='utf-8-sig', newline='') as f:
@@ -98,36 +102,98 @@ def apply_changes(lib, changes_path, gcol, dry):
     if not exe and not dry:
         print('calibredb was not found. Is Calibre installed? Changes from the Supernote were not applied.')
         return 0
-    rev = {'Chinese': 'zho', 'Korean': 'kor', 'Japanese': 'jpn', 'English': 'eng', 'Spanish': 'spa', 'French': 'fra', 'German': 'deu'}
-    done = 0
+    # volumes of one book share its title and a series of the same name: details go to all of them
+    by_id = {b['calibre_id']: b for b in books}
+    def siblings(bid):
+        b = by_id.get(bid)
+        if not b or not b['series'].startswith(b['title'] + ' #'):
+            return [bid]
+        return [x['calibre_id'] for x in books if x['title'] == b['title'] and x['series'].startswith(b['title'] + ' #')]
+    titles = {b['title'].strip().lower() for b in books}
+    groups = {}
     for r in rows:
-        bid, field, value = r.get('calibre_id', ''), r.get('field', ''), r.get('value', '')
-        if not bid or field not in FIELDS:
+        groups.setdefault(r.get('calibre_id', ''), []).append(r)
+    done = 0
+    for bid, rs in groups.items():
+        if not bid:
             continue
-        if field == 'title':
-            arg = f'title:{value}'
-        elif field == 'author':
-            arg = f'authors:{value}'
-        elif field == 'description':
-            arg = f'comments:{value}'
-        elif field == 'tags':
-            arg = 'tags:' + ', '.join(x.strip() for x in value.split(';') if x.strip())
-        elif field == 'language':
-            arg = f'languages:{rev.get(value, value)}'
-        elif field == 'series':
-            name, _, num = value.rpartition(' #') if ' #' in value else (value, '', '')
-            args = [f'series:{name}'] + ([f'series_index:{num}'] if num else [])
-            done += run(exe, lib, bid, args, r.get('title', ''), field, dry)
+        if bid.startswith('new:'):
+            add = next((r for r in rs if r.get('field') == 'add'), None)
+            if not add:
+                continue
+            title = add.get('title', '')
+            if title.strip().lower() in titles:
+                print(f'  "{title}" is already in Calibre: not added again')
+                continue
+            paths = [p for p in add.get('value', '').split('|') if p]
+            ids = []
+            for i, rel in enumerate(paths):
+                full = os.path.join(sn, *rel.split('/'))
+                if not os.path.exists(full):
+                    print(f'  not found on this computer, skipped: {rel}')
+                    continue
+                print(f'  {"would add" if dry else "add"} "{title}"{f" (volume {i + 1})" if len(paths) > 1 else ""}: {rel}')
+                if dry:
+                    ids.append(f'new{i}')
+                    continue
+                r = subprocess.run([exe, 'add', '--library-path', lib, full], capture_output=True, text=True)
+                import re
+                m = re.search(r'ids?:\s*([\d, ]+)', r.stdout or '')
+                if r.returncode != 0 or not m:
+                    print('    failed:', (r.stderr or r.stdout).strip()[:300])
+                    continue
+                ids.append(m.group(1).split(',')[0].strip())
+            if not ids:
+                continue
+            titles.add(title.strip().lower())
+            for k, nid in enumerate(ids):
+                args = [field_arg('title', title, gcol)]
+                for r in rs:
+                    if r.get('field') in FIELDS and r.get('field') != 'title':
+                        a = field_arg(r['field'], r.get('value', ''), gcol)
+                        if a:
+                            args += a if isinstance(a, list) else [a]
+                if len(ids) > 1:
+                    args += [f'series:{title}', f'series_index:{k + 1}']
+                done += run(exe, lib, nid, args, title, 'details', dry)
             continue
-        elif field == 'genres':
-            if not gcol:
+        for r in rs:
+            field, value = r.get('field', ''), r.get('value', '')
+            if field not in FIELDS:
+                continue
+            a = field_arg(field, value, gcol)
+            if not a:
                 print(f'  skipped genres for "{r.get("title", bid)}": make a custom column "genre" in Calibre first')
                 continue
-            arg = f'#{gcol[1]}:' + ', '.join(x.strip() for x in value.split(';') if x.strip())
-        done += run(exe, lib, bid, [arg], r.get('title', ''), field, dry)
+            for target in (siblings(bid) if field not in ('series',) else [bid]):
+                done += run(exe, lib, target, a if isinstance(a, list) else [a], r.get('title', ''), field, dry)
     if not dry:
         os.replace(changes_path, changes_path.replace('.csv', f'.done-{time.strftime("%Y%m%d-%H%M%S")}.csv'))
     return done
+
+
+REV_LANG = {'Chinese': 'zho', 'Korean': 'kor', 'Japanese': 'jpn', 'English': 'eng', 'Spanish': 'spa', 'French': 'fra', 'German': 'deu'}
+
+
+def field_arg(field, value, gcol):
+    """calibredb --field text for one of PurrinkShelf's fields (a list for series)"""
+    split = lambda v: ', '.join(x.strip() for x in v.split(';') if x.strip())
+    if field == 'title':
+        return f'title:{value}'
+    if field == 'author':
+        return f'authors:{value}'
+    if field == 'description':
+        return f'comments:{value}'
+    if field == 'tags':
+        return 'tags:' + split(value)
+    if field == 'language':
+        return f'languages:{REV_LANG.get(value, value)}'
+    if field == 'series':
+        name, _, num = value.rpartition(' #') if ' #' in value else (value, '', '')
+        return [f'series:{name}'] + ([f'series_index:{num}'] if num else [])
+    if field == 'genres':
+        return f'#{gcol[1]}:' + split(value) if gcol else None
+    return None
 
 
 def run(exe, lib, bid, args, title, field, dry):
@@ -155,8 +221,8 @@ def main():
         sys.exit(f'No metadata.db in {lib}: is that the Calibre library folder?')
     data = os.path.join(sn, '_Library Data')
     os.makedirs(data, exist_ok=True)
-    _, gcol = read_calibre(lib)
-    n = apply_changes(lib, os.path.join(data, 'supernote-changes.csv'), gcol, dry)
+    before, gcol = read_calibre(lib)
+    n = apply_changes(lib, sn, os.path.join(data, 'supernote-changes.csv'), gcol, before, dry)
     print(f'{n} change(s) from the Supernote {"would be " if dry else ""}put into Calibre.')
     rows, _ = read_calibre(lib)
     out = os.path.join(data, 'calibre.csv')
