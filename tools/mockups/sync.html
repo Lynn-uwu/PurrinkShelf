@@ -1,0 +1,108 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:Inter;src:url(file:///usr/share/fonts/opentype/inter/Inter-Regular.otf)}
+@font-face{font-family:Inter;font-weight:700;src:url(file:///usr/share/fonts/opentype/inter/Inter-Bold.otf)}
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter;color:#111;background:#bbb}
+.f{width:702px;height:936px;position:relative;display:none;background:#bbb}.f.on{display:block}
+.card{position:absolute;left:26px;right:26px;top:26px;bottom:96px;border:2.5px solid #111;border-radius:22px;background:#fff;overflow:hidden}
+.bar{height:58px;border-bottom:2px solid #111;display:flex;align-items:center;justify-content:space-between;padding:0 12px}
+.ib{width:38px;height:38px;border:2px solid #111;border-radius:19px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.pad{padding:14px 18px}.sub{font-size:13.5px;color:#555}
+.row{display:flex;align-items:center;gap:12px;border:2px solid #111;border-radius:14px;padding:10px 12px;margin:8px 0}
+.cov{width:46px;height:64px;border:2px solid #111;border-radius:5px;background:#efe3c8;flex:none}
+.pill{border:1.5px solid #111;border-radius:12px;padding:2px 8px;font-size:12.5px}
+.seg{display:flex;background:#eee;border-radius:14px;padding:3px;margin:10px 0}.seg div{flex:1;text-align:center;padding:10px 4px;font-size:15px;border-radius:11px}.seg div.on{background:#fff;border:2px solid #111;font-weight:700}
+.field{font-weight:700;font-size:15px;margin:12px 0 4px;display:flex;justify-content:space-between}
+.box{border:2px solid #111;border-radius:12px;padding:10px 12px;font-size:15px;line-height:1.45}
+.diff{background:#e6e6e6;border-radius:4px;padding:0 3px}
+.btn{border:2px solid #111;border-radius:14px;padding:11px 14px;font-weight:700;font-size:15px;text-align:center}.btn.dark{background:#111;color:#fff}
+.foot{position:absolute;left:18px;right:18px;bottom:16px;display:flex;gap:10px}
+.dots{display:flex;gap:6px;justify-content:center;margin-top:6px}.dots i{width:9px;height:9px;border-radius:5px;border:1.5px solid #111}.dots i.on{background:#111}
+.mini{border:2px solid #111;border-radius:14px;overflow:hidden;margin-top:6px;font-size:11px}
+.mini .mt{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #888}
+.mini .mt b{font-size:15px}.mini .st{border:1.5px solid #111;border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700;background:#111;color:#fff}
+.mini .mc{display:flex;height:430px}
+.mini .ml{width:150px;border-right:1px solid #888;padding:8px;position:relative}
+.mini .mr{flex:1;padding:8px 10px}
+.mini .mcov{width:100px;height:140px;border:1.5px solid #111;border-radius:4px;background:#efe3c8;margin:0 auto 6px;text-align:center;padding:16px 6px;font-size:10px}
+.mini .lab{font-weight:700;font-size:11px;margin-top:5px}
+.mini .chip{display:inline-block;border:1px solid #111;border-radius:8px;padding:0 5px;font-size:9.5px;margin:1px 1px 0 0}
+.mini p{font-size:11px;line-height:1.45;margin-bottom:6px}
+.mini .play{position:absolute;left:8px;right:8px;bottom:8px;background:#111;color:#fff;border-radius:8px;text-align:center;font-weight:700;font-size:11px;padding:6px}
+.mini h4{font-size:12px;margin-bottom:4px}
+.diff{background:#d9d9d9;border-radius:3px;padding:0 2px;outline:1.5px dashed #111}
+.mw{width:390px;height:526px;margin:8px auto 0;overflow:hidden;border-radius:12px}
+.mw .full{width:650px;height:876px;transform:scale(0.6);transform-origin:top left;border:3px solid #111;border-radius:20px;background:#fff;position:relative;overflow:hidden;font-size:15px}
+.full .tb{height:58px;border-bottom:2px solid #111;display:flex;align-items:center;justify-content:space-between;padding:0 12px}
+.full .tt{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid #888}
+.full .tt b{font-size:24px}.full .st{border:2px solid #111;border-radius:16px;padding:5px 12px;font-size:14px;font-weight:700;background:#111;color:#fff}
+.full .cols{position:absolute;top:124px;bottom:0;left:0;right:0;display:flex}
+.full .fl{width:240px;border-right:1px solid #888;padding:12px;position:relative}
+.full .fr{flex:1;padding:12px 14px;position:relative}
+.full .fcov{width:150px;height:205px;border:2px solid #111;border-radius:6px;background:#efe3c8;margin:0 auto 10px;text-align:center;padding:30px 10px;font-size:14px}
+.full .lab{font-weight:700;font-size:16px;margin-top:8px}
+.full .chip{display:inline-block;border:1.5px solid #111;border-radius:12px;padding:1px 8px;font-size:13px;margin:2px 2px 0 0}
+.full p{font-size:15.5px;line-height:1.5;margin-bottom:9px}
+.full h4{font-size:17px;margin-bottom:6px}
+.full .play{position:absolute;left:12px;right:12px;bottom:68px;background:#111;color:#fff;border-radius:12px;text-align:center;font-weight:700;font-size:16px;padding:10px}
+.full .pg{position:absolute;left:0;right:0;bottom:0;height:56px;border-top:1px solid #888}
+.full .diff{background:#d9d9d9;outline:2.5px dashed #111;border-radius:3px;padding:0 2px}
+</style></head><body>
+<div class="f" id="a"><div class="card">
+ <div class="bar"><div class="ib">‹</div><b style="font-size:20px">Changes from Calibre</b><div class="ib">✕</div></div>
+ <div class="pad">
+  <div class="sub" style="font-size:15px">Synced 15 Nov, 2:30 pm. 24 books updated by themselves.</div>
+  <div class="field" style="margin-top:12px">Needs a choice <span class="sub" style="font-weight:400">changed in both places</span></div>
+  <div class="row"><div class="cov" style="background:#d9e8d0"></div><div style="flex:1"><b>Echoes of the Ninth Gate</b><div class="sub">Series number</div></div><span class="pill">Choose</span></div>
+  <div class="row"><div class="cov" style="background:#e5d9ef"></div><div style="flex:1"><b>Contract Spring</b><div class="sub">Author</div></div><span class="pill">Choose</span></div>
+  <div class="field" style="margin-top:14px">Decided <span class="sub" style="font-weight:400">tap to change your mind</span></div>
+  <div class="row" style="background:#ececec"><div class="cov"></div><div style="flex:1"><b>Moon Over the Jade Pavilion</b><div class="sub" style="color:#111">Using: Supernote description, Calibre genres</div></div><span class="pill">Change</span></div>
+  <div class="row" style="background:#ececec"><div class="cov" style="background:#f0d7d7"></div><div style="flex:1"><b>River of Small Lights</b><div class="sub" style="color:#111">Using: Calibre description</div></div><span class="pill">Change</span></div>
+  <div class="sub" style="margin-top:10px">Both versions are kept until the next sync, so you can switch back any time. Also on each book card: ⋯ › Calibre versions.</div>
+ </div>
+ <div class="foot"><div class="btn" style="flex:1">Keep all Supernote</div><div class="btn" style="flex:1">Use all Calibre</div></div>
+</div></div>
+<div class="f" id="b"><div class="card">
+ <div class="bar"><div class="ib">‹</div><b style="font-size:20px">Moon Over the Jade Pavilion</b><div class="ib">✕</div></div>
+ <div class="pad">
+  <div class="sub">Changed in both places since the last sync. Tap a tab to compare.</div>
+  <div class="seg"><div class="on">On Supernote · in use</div><div>From Calibre</div></div>
+  <div class="mw"><div class="full">
+ <div class="tb"><div class="ib">‹</div><div style="display:flex;gap:8px"><div class="ib">↻</div><div class="ib">♡</div><div class="ib">✎</div></div><div class="ib">✕</div></div>
+ <div class="tt"><b>Moon Over the Jade Pavilion</b><span class="st">Reading</span></div>
+ <div class="cols"><div class="fl"><div class="fcov">Moon Over the Jade Pavilion</div>
+  <div class="lab">Genre</div><div><span class="chip">Drama</span><span class="chip">Romance</span><span class="chip">Historical</span><span class="chip diff">Slice of Life</span></div>
+  <div class="lab">Language</div><div>Chinese</div><div class="lab">Status</div><div>112 Chapters + 4 Extras</div>
+  <div class="play">&#9654; Ch 54</div><div class="pg"></div></div>
+ <div class="fr"><h4>Description</h4>
+  <p>For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly.</p>
+  <p><span class="diff">Then she opened a letter that had been sealed for twenty years, and the quiet prince began appearing at her desk every evening.</span></p>
+  <p>He said he only wanted the letter back.</p>
+  <p>He did not explain why he kept staying after she returned it, or why the palace guards had started to call her "the prince's scholar".</p>
+  <p>When the old Empress Dowager summoned her to the inner court, Wen Shu realised the letter had never been about love at all.</p><div class="pg"></div></div></div></div></div>
+  <div class="sub" style="margin-top:22px;text-align:center">How the book card will look with this version. Dashed shading marks what differs.</div>
+ </div>
+ <div class="foot"><div class="btn" style="flex:1">Back</div><div class="btn" style="flex:2;color:#555;border-color:#999">In use</div></div>
+</div></div>
+<div class="f" id="c"><div class="card">
+ <div class="bar"><div class="ib">‹</div><b style="font-size:20px">Moon Over the Jade Pavilion</b><div class="ib">✕</div></div>
+ <div class="pad">
+  <div class="sub">Changed in both places since the last sync. Tap a tab to compare.</div>
+  <div class="seg"><div>On Supernote · in use</div><div class="on">From Calibre</div></div>
+  <div class="mw"><div class="full">
+ <div class="tb"><div class="ib">‹</div><div style="display:flex;gap:8px"><div class="ib">↻</div><div class="ib">♡</div><div class="ib">✎</div></div><div class="ib">✕</div></div>
+ <div class="tt"><b>Moon Over the Jade Pavilion</b><span class="st">Reading</span></div>
+ <div class="cols"><div class="fl"><div class="fcov">Moon Over the Jade Pavilion</div>
+  <div class="lab">Genre</div><div><span class="chip">Drama</span><span class="chip">Romance</span><span class="chip">Historical</span><span class="chip diff">Palace Intrigue</span></div>
+  <div class="lab">Language</div><div>Chinese</div><div class="lab">Status</div><div>112 Chapters + 4 Extras</div>
+  <div class="play">&#9654; Ch 54</div><div class="pg"></div></div>
+ <div class="fr"><h4>Description</h4>
+  <p>For three seasons the archivist Wen Shu had catalogued the Jade Pavilion without once being noticed, which suited her perfectly.</p>
+  <p><span class="diff">Then a sealed letter, twenty years old, changed everything, and the quiet prince began appearing at her desk.</span></p>
+  <p>He said he only wanted the letter back.</p>
+  <p>He did not explain why he kept staying after she returned it, or why the palace guards had started to call her "the prince's scholar".</p>
+  <p>When the old Empress Dowager summoned her to the inner court, Wen Shu realised the letter had never been about love at all.</p><div class="pg"></div></div></div></div></div>
+  <div class="sub" style="margin-top:22px;text-align:center">How the book card will look with this version. Dashed shading marks what differs.</div>
+ </div>
+ <div class="foot"><div class="btn" style="flex:1">Back</div><div class="btn dark" style="flex:2">Switch to Calibre version</div></div>
+</div></div>
+</body></html>

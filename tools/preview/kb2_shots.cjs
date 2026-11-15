@@ -1,0 +1,18 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots27'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=2&state=1'); await p.waitForTimeout(14000);
+  await p.getByText('Moon Over the Jade Pavilion').first().click(); await p.waitForTimeout(700);
+  await p.getByLabel(/^3 notes/).first().click(); await p.waitForTimeout(700);
+  await p.getByText('New note', {exact: true}).first().click(); await p.waitForTimeout(700);
+  const ta = p.locator('textarea'); console.log('textareas', await ta.count());
+  const KB = 380;
+  await p.evaluate(h => { const d = document.createElement('div'); d.id = 'kb'; document.body.appendChild(d);
+    Object.assign(d.style, {position: 'fixed', left: 0, right: 0, bottom: 0, height: h + 'px', background: '#d6d6d6', borderTop: '2px solid #111', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', font: '600 22px Inter, sans-serif', color: '#444'}); d.textContent = 'Supernote keyboard'; }, KB);
+  await ta.first().click(); await p.evaluate(h => globalThis.__fakeKeyboard(h), KB); await p.waitForTimeout(400);
+  await p.screenshot({path: path.join(out, '3-note-start.png')});
+  await ta.first().type('The rain scene in chapter 34 is the best part of the book. ' + 'Wen Shu finally says what she means and the prince does not answer straight away. '.repeat(4) + 'Reread before the finale!', {delay: 1});
+  await p.waitForTimeout(500);
+  await p.screenshot({path: path.join(out, '4-note-long.png')});
+  await b.close(); })();

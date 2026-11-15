@@ -1,0 +1,16 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots28'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const shot = async n => { await p.waitForTimeout(700); await p.screenshot({path: path.join(out, n + '.png')}); console.log(n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1' + (process.argv[2] || '')); await p.waitForTimeout(12000);
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await shot('1-book');
+  await p.getByLabel('Chapters', {exact: true}).click(); await shot('2-chapters');
+  await p.getByLabel('Choose a volume').click(); await shot('2b-vols');
+  await p.getByText('All volumes', {exact: true}).click(); await shot('2c-all');
+  await p.getByLabel('Go to a chapter or page').first().click(); await shot('3-pad');
+  for (const k of ['1', '0', '0']) await p.getByLabel(k, {exact: true}).click();
+  await p.getByText('Go', {exact: true}).click(); await shot('4-jumped');
+  await p.getByLabel('Show only bookmarked chapters').click(); await shot('5-marks');
+  await p.getByText('+ Add a note').click(); await shot('6-note');
+  await b.close(); })();

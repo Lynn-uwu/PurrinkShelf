@@ -3,14 +3,15 @@
  * Pick any folder as a library; books are listed by file name; add titles, tags,
  * descriptions and covers on the device; filter by folder and tag; tap to read.
  */
-import React, {useEffect, useMemo, useRef, useState} from 'react';
-import {Dimensions, Image, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {Dimensions, Image, Keyboard, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {bareTitle, goodreadsCsv, parseTable, readSiteExport} from './src/sites';
+import {bareTitle, goodreadsCsv, parseAo3, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
-import {AppState, Book, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {CAL_FIELDS, CalField, calPatch, calSame, calValue} from './src/library';
+import {AppState, Book, ChapterMark, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
 import {SHEET_NAME, list as cells, parseCsv} from './src/sheet';
@@ -20,7 +21,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Entry, copyImage, copyText, currentFile, currentNote, epubMeta, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, openAt, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -171,14 +172,86 @@ function Text(props: React.ComponentProps<typeof RNText>) {
     </RNView>
   );
 }
+// ---------- keyboard: the box being typed in always moves up above the keyboard ----------
+// The whole box goes to the middle of the space above the keyboard, so every new line stays in view. A box taller than the space
+// left is shortened to fit, and then it scrolls inside itself to keep the line being typed in view.
+type Typing = {el: RNTextInput | null; setCap: (h: number | undefined) => void};
+let typingIn: ((t: Typing | null) => void) | null = null;
+let typingChanged: (() => void) | null = null;
+function KeyboardLift({children}: {children: React.ReactNode}) {
+  const [lift, setLift] = useState(0);
+  const liftRef = useRef(0);
+  const kb = useRef(0);
+  const cur = useRef<Typing | null>(null);
+  const update = useCallback(() => {
+    const t = cur.current;
+    const el: any = t?.el;
+    if (!t || !el || !kb.current || !el.measureInWindow) {
+      t?.setCap(undefined);
+      liftRef.current = 0;
+      setLift(0);
+      return;
+    }
+    el.measureInWindow((_x: number, y: number, _w: number, h: number) => {
+      const top = y + liftRef.current; // where the box is without the lift
+      const room = H - kb.current - px(28); // the space above the keyboard, with a gap at each end
+      const tall = h > room;
+      t.setCap(tall ? room : undefined);
+      const boxH = tall ? room : h;
+      // the box sits in the middle of the space above the keyboard (never past the top of the screen)
+      const middle = (H - kb.current) / 2;
+      const up = Math.max(0, Math.min(top - px(12), top + boxH / 2 - middle));
+      liftRef.current = up;
+      setLift(up);
+    });
+  }, []);
+  useEffect(() => {
+    typingIn = t => {
+      if (!t && cur.current) cur.current.setCap(undefined);
+      cur.current = t;
+      setTimeout(update, 60);
+    };
+    typingChanged = () => setTimeout(update, 30); // the box grew a line
+    const show = Keyboard.addListener('keyboardDidShow', e => {
+      kb.current = e.endCoordinates?.height || 0;
+      update();
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      kb.current = 0;
+      update();
+    });
+    if (Platform.OS === 'web') (globalThis as any).__fakeKeyboard = (h: number) => { kb.current = h; update(); }; // the preview has no keyboard
+    return () => {
+      typingIn = null;
+      typingChanged = null;
+      show.remove();
+      hide.remove();
+    };
+  }, [update]);
+  return <RNView style={{flex: 1, transform: [{translateY: -lift}]}}>{children}</RNView>;
+}
 const TextInput = React.forwardRef<RNTextInput, React.ComponentProps<typeof RNTextInput>>((props, ref) => {
+  const local = useRef<RNTextInput | null>(null);
+  const [cap, setCap] = useState<number | undefined>(undefined);
+  const setRef = (r: RNTextInput | null) => {
+    local.current = r;
+    if (typeof ref === 'function') ref(r);
+    else if (ref) (ref as any).current = r;
+  };
+  const p = {
+    ...props,
+    onFocus: (e: any) => { typingIn?.({el: local.current, setCap}); props.onFocus?.(e); },
+    onBlur: (e: any) => { typingIn?.(null); props.onBlur?.(e); },
+    onContentSizeChange: (e: any) => { typingChanged?.(); props.onContentSizeChange?.(e); },
+  };
+  const capStyle = cap ? {maxHeight: cap, height: Math.min(cap, (StyleSheet.flatten(props.style) as any)?.height || cap)} : null;
   const f = SKETCH ? StyleSheet.flatten(props.style) : null;
   const k = f ? inkOf(f) : null;
-  if (!k) return <RNTextInput ref={ref} {...props} />;
+  if (!k) return <RNTextInput ref={setRef} {...p} style={[props.style, capStyle]} />;
   const {box, inner} = split(f, k);
   return (
     <RNView style={box}>
-      <RNTextInput ref={ref} {...props} style={inner} />
+      <RNTextInput ref={setRef} {...p} style={[inner, capStyle]} />
       <SketchLines k={k} />
     </RNView>
   );
@@ -222,7 +295,12 @@ type From = 'home' | 'bookmarks' | 'library' | 'new' | 'profile' | 'quotes' | 'w
 /** one book anywhere in any library */
 type Found = {lib: Lib; book: Book; meta: Meta; isNew?: boolean};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre", "t:Tag", "c:Category" or "f:flag"
-type FilterKind = 'g' | 't' | 'c' | 'a' | 'w';
+type FilterKind = 'g' | 't' | 'c' | 'a' | 'w' | 'R' | 'F' | 'S' | 'H' | 'l' | 's';
+// the Filters panel's tabs: g genre, t tags, a author, w warnings, l language, s reading status, f more; AO3: R rating, F fandom, S ship, H character
+const KIND_NAMES: {[k: string]: string} = {g: 'Genre', t: 'Tags', a: 'Author', w: 'Content warnings', l: 'Language', s: 'Reading status', f: 'More filters', R: 'Rating (AO3)', F: 'Fandom (AO3)', S: 'Ship (AO3)', H: 'Character (AO3)'};
+const KIND_SHORT: {[k: string]: string} = {g: 'Genre', t: 'Tags', a: 'Author', w: 'Warnings', l: 'Language', s: 'Status', f: 'More', R: 'Rating', F: 'Fandom', S: 'Ship', H: 'Chars'};
+const KIND_ONE: {[k: string]: string} = {g: 'genre', t: 'tag', a: 'author', w: 'warning', l: 'language', s: 'status', R: 'rating', F: 'fandom', S: 'ship', H: 'character'};
+const KIND_MANY: {[k: string]: string} = {g: 'genres', t: 'tags', a: 'authors', w: 'warnings', l: 'languages', s: 'statuses', R: 'ratings', F: 'fandoms', S: 'ships', H: 'characters'};
 
 const PERMS: {id: string; icon: IconName; label: string; why: string}[] = [
   {id: READ, icon: 'library', label: 'Read files', why: 'Find the books in your library folders'},
@@ -416,7 +494,9 @@ class Guard extends React.Component<{children: React.ReactNode}, {err: {message:
 export default function App(): React.JSX.Element {
   return (
     <Guard>
-      <PurrinkShelfApp />
+      <KeyboardLift>
+        <PurrinkShelfApp />
+      </KeyboardLift>
     </Guard>
   );
 }
@@ -428,6 +508,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     log('screen', screen.kind, (screen as any).path || (screen as any).key || '');
   }, [screen]);
   const [showSettings, setShowSettings] = useState(false);
+  const [setsAt, setSetsAt] = useState<SetPage | undefined>(undefined); // open Settings straight at one page
   const [showActivity, setShowActivity] = useState(false);
   // a card opened from Settings closes back to Settings (one layer at a time), not to the page underneath
   const backToSettings = useRef(false);
@@ -467,7 +548,10 @@ function PurrinkShelfApp(): React.JSX.Element {
   const [sheet, setSheet] = useState<SheetTab | null>(null); // sort and display
   const [cat, setCat] = useState<string | null>(null); // category picked at the top (null = All)
   const [catOpen, setCatOpen] = useState(false);
-  const [fKind, setFKind] = useState<'g' | 't' | 'a' | 'w' | 'f'>('g'); // filter panel: Genre, Tags, Author, Warnings, More
+  const [fKind, setFKind] = useState<string>('g'); // filter panel tab: Genre, Tags, Author, Warnings, More, AO3's Fandom…
+  const [fFind, setFFind] = useState(''); // "find a tag" in the filter panel
+  const [azOpen, setAzOpen] = useState(false); // the A–Z letter keys
+  const [ao3Only, setAo3Only] = useState(false); // AO3 works as their own library (Settings › AO3: Separate)
   const [tPage, setTPage] = useState(1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const settingsRef = useRef(settings);
@@ -632,9 +716,10 @@ function PurrinkShelfApp(): React.JSX.Element {
     setCat(null);
     setPage(1);
     // show what PurrinkShelf saw last time straight away, then look for changes quietly
-    const have = libData[l.path] || (await loadCache(l.path));
+    const have = libDataRef.current[l.path] || libData[l.path] || (await loadCache(l.path));
     setBooks(have?.books || []);
-    setMeta(have?.meta || {version: 1, books: {}});
+    metaRef.current = have?.meta || {version: 1, books: {}};
+    setMeta(metaRef.current);
     setScreen(then || {kind: 'library'});
     changeApp(a => ({...a, lastLib: l.path}));
     if (Date.now() - (lastScanAt.current[l.path] || 0) > 60000) quietScan(l);
@@ -660,8 +745,167 @@ function PurrinkShelfApp(): React.JSX.Element {
       setMeta(r.meta);
       metaRef.current = r.meta;
     }
-    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => { wishesArrived(l, bs); readBookLists(l, bs).catch(e => log('book list failed', String(e))); }), 300);
+    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => { wishesArrived(l, bs); readBookLists(l, bs).catch(e => log('book list failed', String(e))).finally(() => probeAo3(l, bs).catch(e => log('ao3 failed', String(e))).finally(() => calRef.current(l, bs, false))); }), 300);
     return {...r, books: bs};
+  }
+  // ---------- Calibre: _Library Data/calibre.csv comes from the helper on the computer; supernote-changes.csv goes back ----------
+  const calRef = useRef<(l: Lib, bs: Book[], force: boolean) => Promise<number>>(async () => 0);
+  calRef.current = (l, bs, force) => calibreLib(l, bs, force);
+  /** where a library's calibre.csv is (the library folder, or one of its top folders) */
+  async function calibreCsv(l: Lib): Promise<Entry | null> {
+    const top = await listDir(l.path).catch(() => [] as Entry[]);
+    for (const dir of [l.path, ...top.filter(e => e.isDir && !e.name.startsWith('_') && !e.name.startsWith('.')).map(e => e.path)]) {
+      const e = (await listDir(`${dir}/_Library Data`).catch(() => [] as Entry[])).find(x => x.name.toLowerCase() === 'calibre.csv');
+      if (e) return e;
+    }
+    return null;
+  }
+  const metaFor = (l: Lib) => (l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta);
+  async function putMeta(l: Lib, bs: Book[], next: MetaStore) {
+    await saveMeta(l.path, next, bs);
+    libDataRef.current = {...libDataRef.current, [l.path]: {books: bs, meta: next}};
+    setLibData(d => ({...d, [l.path]: {books: bs, meta: next}}));
+    if (l.path === libRef.current?.path) { metaRef.current = next; setMeta(next); }
+  }
+  /** read Calibre's side; returns how many books need a choice */
+  async function calibreLib(l: Lib, bs: Book[], force: boolean): Promise<number> {
+    const e = await calibreCsv(l);
+    const cur0 = metaFor(l);
+    if (!e || !cur0) return 0;
+    if (!force && cur0.calibre?.[e.path] === e.mtime) return 0;
+    const rows = parseTable((await readText(e.path)) || '');
+    const col = (r: {[h: string]: string}, n: string) => { const k = Object.keys(r).find(h => h.toLowerCase().replace(/\s+/g, '_') === n); return k ? (r[k] || '').trim() : ''; };
+    const books2 = {...cur0.books};
+    let filled = 0, waiting = 0, matched = 0;
+    for (const r of rows) {
+      const id = col(r, 'calibre_id') || col(r, 'id');
+      const title = col(r, 'title');
+      if (!id && !title) continue;
+      const fileNames = col(r, 'files').split(/\s*[;|]\s*/).filter(Boolean).map(f => norm(f.split(/[\\/]/).pop() || ''));
+      let b = bs.find(x => id && books2[x.key]?.calibre?.id === id);
+      if (!b && title) b = bs.find(x => !books2[x.key]?.calibre?.id && (norm(shownTitle(x, books2[x.key])) === norm(title) || norm(x.fileTitle) === norm(title)));
+      if (!b && fileNames.length) b = bs.find(x => !books2[x.key]?.calibre?.id && fileNames.includes(norm(x.fileTitle)));
+      if (!b || b.missing) continue;
+      matched++;
+      let m: Meta = {...books2[b.key]};
+      const c = {...(m.calibre || {})};
+      const base = {...(c.base || {})};
+      const pending = {...(c.pending || {})};
+      const decided = {...(c.decided || {})};
+      const theirsOf: {[f in CalField]: string} = {
+        title, author: col(r, 'author') || col(r, 'authors'), description: col(r, 'description') || col(r, 'comments'),
+        genres: col(r, 'genres') || col(r, 'genre'), tags: col(r, 'tags'), series: col(r, 'series'), language: col(r, 'language') || col(r, 'languages'),
+      };
+      for (const {id: f} of CAL_FIELDS) {
+        const theirs = theirsOf[f];
+        const mine = calValue(b, m, f);
+        const was = base[f];
+        const calChanged = was === undefined ? true : !calSame(f, theirs, was);
+        const snChanged = was === undefined ? true : !calSame(f, mine, was);
+        if (calChanged) delete decided[f]; // a new Calibre version: the old choice is done with
+        if (!calChanged || !theirs) {
+          // nothing new from Calibre (or Calibre has nothing): yours goes back to Calibre if different
+        } else if (!mine || !snChanged) {
+          if (!calSame(f, mine, theirs)) { m = {...m, ...calPatch(f, theirs)}; filled++; }
+          delete pending[f];
+        } else if (!calSame(f, mine, theirs)) pending[f] = theirs; // changed in both places: you choose
+        else delete pending[f];
+        base[f] = theirs;
+      }
+      if (Object.keys(pending).length) waiting++;
+      books2[b.key] = {...m, calibre: {id: id || c.id, base, pending, decided}};
+    }
+    const next: MetaStore = {...cur0, books: books2, calibre: {...(cur0.calibre || {}), [e.path]: e.mtime || Date.now()}};
+    await putMeta(l, bs, next);
+    await calibreExport(l, next, bs, e.path);
+    changeApp(a => ({...a, calibreAt: Date.now()}));
+    log('calibre', rows.length, 'rows', matched, 'matched', filled, 'filled', waiting, 'waiting');
+    if (filled || waiting) say(`${l.name}: ${filled ? `${filled} change${filled === 1 ? '' : 's'} from Calibre` : ''}${filled && waiting ? ', ' : ''}${waiting ? `${waiting} book${waiting === 1 ? '' : 's'} changed in both places: choose in Settings › Calibre` : ''}`);
+    return waiting;
+  }
+  /** what is different here from Calibre (and not waiting for a choice) goes to supernote-changes.csv for the helper */
+  async function calibreExport(l: Lib, ms: MetaStore, bs: Book[], csvPath?: string) {
+    const at = csvPath || (await calibreCsv(l))?.path;
+    if (!at) return;
+    const q = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const lines = ['calibre_id,title,field,value'];
+    for (const b of bs) {
+      const m = ms.books[b.key];
+      const c = m?.calibre;
+      if (!c?.id || b.missing) continue;
+      for (const {id: f} of CAL_FIELDS) {
+        if (c.pending?.[f] !== undefined) continue;
+        const mine = calValue(b, m, f);
+        if (mine && !calSame(f, mine, c.base?.[f] || '')) lines.push([c.id, shownTitle(b, m), f, mine].map(q).join(','));
+      }
+    }
+    await writeText(at.replace(/calibre\.csv$/i, 'supernote-changes.csv'), lines.join('\r\n') + '\r\n');
+  }
+  async function syncCalibre(force: boolean) {
+    let waiting = 0, any = false;
+    for (const l of libs) {
+      const d = l.path === lib?.path ? {books, meta: metaRef.current} : libDataRef.current[l.path];
+      if (!d) continue;
+      if (await calibreCsv(l)) any = true;
+      waiting += await calibreLib(l, d.books, force);
+    }
+    if (!any) say('No calibre.csv yet. Run the helper on your computer first (Settings › Calibre).');
+    else if (!waiting) say('Calibre: everything is in step.');
+  }
+  /** your choice for one field of one book; can be changed again until the next sync */
+  async function calDecide(l: Lib, key: string, f: CalField, use: 'sn' | 'cal') {
+    const d = l.path === lib?.path ? {books, meta: metaRef.current} : libDataRef.current[l.path];
+    if (!d) return;
+    const b = d.books.find(x => x.key === key);
+    const m = d.meta.books[key];
+    if (!b || !m?.calibre) return;
+    const c = m.calibre;
+    const pend = c.pending?.[f];
+    const was = c.decided?.[f];
+    const sn = pend !== undefined ? calValue(b, m, f) : was?.sn ?? calValue(b, m, f);
+    const cal = pend !== undefined ? pend : was?.cal ?? c.base?.[f] ?? '';
+    const pending = {...(c.pending || {})};
+    delete pending[f];
+    const next: Meta = {...m, ...calPatch(f, use === 'cal' ? cal : sn), calibre: {...c, pending, decided: {...(c.decided || {}), [f]: {sn, cal, use, at: Date.now()}}}};
+    const ms: MetaStore = {...d.meta, books: {...d.meta.books, [key]: next}};
+    await putMeta(l, d.books, ms);
+    await calibreExport(l, ms, d.books);
+  }
+  const [calOpen, setCalOpen] = useState<null | {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField}>(null);
+  /** AO3 downloads: read the work's tags from its first page (once per book); fills empty details too, never overwrites yours */
+  async function probeAo3(l: Lib, bs: Book[]) {
+    const cur0 = l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta;
+    if (!cur0) return;
+    const todo = bs.filter(b => !b.missing && /\.epub$/i.test(b.files[0] || '') && !cur0.books[b.key]?.ao3Seen);
+    if (!todo.length) return;
+    const patches: {[k: string]: Meta} = {};
+    let found = 0;
+    for (const b of todo) {
+      await loadContents(b.files[0]);
+      const w = parseAo3(FIRSTS[b.files[0]] || '');
+      const m = cur0.books[b.key] || {};
+      const p: Meta = {ao3Seen: true};
+      if (w) {
+        found++;
+        p.ao3 = {url: w.url, rating: w.rating, warnings: w.warnings, categories: w.categories, fandoms: w.fandoms, ships: w.ships, characters: w.characters, tags: w.tags, words: w.words, chapters: w.chapters, complete: w.complete, author: w.author};
+        if (!m.author && w.author) p.author = w.author;
+        if (!m.description && w.summary) p.description = w.summary.slice(0, 2000);
+        if (!m.language && w.language) p.language = w.language;
+        if (!m.status && w.chapters) p.status = `${w.chapters} chapters${w.complete ? ' (Completed)' : ''}`;
+        if (!m.seriesName && w.series) { p.seriesName = w.series; p.seriesNo = w.seriesNo; }
+        if (!m.length && w.words) p.length = {words: w.words, cjk: 0};
+      }
+      patches[b.key] = p;
+    }
+    const cur = l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta || cur0;
+    const next: MetaStore = {...cur, books: {...cur.books}};
+    Object.entries(patches).forEach(([k, p]) => (next.books[k] = {...next.books[k], ...p}));
+    await saveMeta(l.path, next, bs);
+    libDataRef.current = {...libDataRef.current, [l.path]: {books: bs, meta: next}};
+    setLibData(d => ({...d, [l.path]: {books: bs, meta: next}}));
+    if (l.path === libRef.current?.path) { metaRef.current = next; setMeta(next); }
+    log('ao3', todo.length, 'looked at', found, 'found');
+    if (found) say(`${l.name}: found ${found} AO3 work${found === 1 ? '' : 's'}, with their fandoms, ships and tags`);
   }
   /** fill empty details from what is written inside each EPUB (author, description, language); never overwrites yours */
   const probing = useRef(false);
@@ -958,6 +1202,10 @@ function PurrinkShelfApp(): React.JSX.Element {
       }),
     [libs, lib, books, meta, libData],
   );
+  const calItems = index.filter(f => f.meta.calibre && (Object.keys(f.meta.calibre.pending || {}).length || Object.keys(f.meta.calibre.decided || {}).length));
+  const calWaiting = calItems.filter(f => Object.keys(f.meta.calibre!.pending || {}).length);
+  const calDecided = calItems.filter(f => !Object.keys(f.meta.calibre!.pending || {}).length);
+
   // ---------- the book details sheet (Document/PurrinkShelf/PurrinkShelf books.xlsx), filled in on a computer ----------
   const sheetPath = `${DEFAULT_BACKUP_DIR}/${XLSX_NAME}`;
   const csvPath = `${DEFAULT_BACKUP_DIR}/${SHEET_NAME}`;
@@ -1303,6 +1551,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     const d = libDataRef.current[l.path];
     if (!d) return;
     const m: MetaStore = {...d.meta, books: {...d.meta.books, [key]: {...d.meta.books[key], ...patch}}};
+    libDataRef.current = {...libDataRef.current, [l.path]: {books: d.books, meta: m}}; // at once: opening the library next must see it
     setLibData(x => ({...x, [l.path]: {books: d.books, meta: m}}));
     await saveMeta(l.path, m, d.books);
   }
@@ -1426,6 +1675,21 @@ function PurrinkShelfApp(): React.JSX.Element {
     if (l.path === lib?.path) setScreen({kind: 'edit', key: b.key, viaBook: true});
     else openLibrary(l, {kind: 'edit', key: b.key, viaBook: true});
   }
+  /** open a chapter: at its page when PurrinkShelf knows how many pages the file has, else at the start */
+  async function readAt(b: Book, file: string, f: number) {
+    const pages = metaOf(b).pos?.[file]?.pages;
+    markSeen(b);
+    await updateMeta(b.key, openedPatch(metaOf(b), file));
+    markDay();
+    if (!pages) {
+      say("Opened the volume. To jump straight to chapters, open PurrinkShelf once from inside this volume so it learns its page count.");
+      return read(file);
+    }
+    const page = Math.min(pages - 1, Math.round(f * pages));
+    log('open at page', `${page} ${file}`);
+    const err = await openAt(file, page);
+    if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+  }
   async function removePaperBook(b: Book) {
     if (!lib || b.ext !== 'paper') return;
     const ok = await removePaper(b.files[0]);
@@ -1437,13 +1701,28 @@ function PurrinkShelfApp(): React.JSX.Element {
   }
   /** PurrinkShelf is opened from Supernote's toolbar inside a document: if that document is one of your books, note it */
   const detectRef = useRef<() => void>(() => {});
+  const [nextUp, setNextUp] = useState<{lib: string; key: string; from: string; to: string} | null>(null);
   detectRef.current = async () => {
     const path = await currentFile();
     if (!path) return;
     const f = index.find(x => x.book.files.includes(path));
     if (!f) return;
     const again = f.meta.progress?.last === path && Date.now() - (f.meta.progress?.at || 0) < 30 * 60000;
-    await patchBook(f.lib, f.book.key, openedPatch(f.meta, path));
+    // the page you are on (and the file's page count, so chapters can be opened at their page)
+    const pg = await currentPage();
+    const finished = !!pg && pg.page >= pg.pages - 2;
+    await patchBook(f.lib, f.book.key, {
+      ...openedPatch(f.meta, path),
+      ...(pg ? {pos: {...(f.meta.pos || {}), [path]: {...pg, at: Date.now()}}} : {}),
+      ...(finished && !f.meta.done?.[path] ? {done: {...(f.meta.done || {}), [path]: Date.now()}} : {}),
+    });
+    const k = f.book.files.indexOf(path);
+    const next = f.book.files[k + 1];
+    if (finished && next && !f.meta.done?.[next]) {
+      setNextUp({lib: f.lib.path, key: f.book.key, from: path, to: next});
+      if (f.lib.path === libRef.current?.path) setScreen({kind: 'book', key: f.book.key, from: 'home'});
+      else openLibrary(f.lib, {kind: 'book', key: f.book.key, from: 'home'});
+    }
     markDay();
     const v = f.book.vols.find(x => x.path === path);
     const s1 = snapOf(f, {vol: v?.n, at: Date.now()});
@@ -1569,7 +1848,19 @@ function PurrinkShelfApp(): React.JSX.Element {
   const keysOf = (b: Book) => {
     const m = meta.books[b.key] || {};
     const au = authorOf(b, m);
-    return [...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t), ...catsOf(b, m).map(c => 'c:' + c), ...(au ? ['a:' + au] : []), ...(settings.warnings ? (m.warnings || []).map(w => 'w:' + w) : []), ...flagsOf(b)];
+    const o = m.ao3;
+    const ao3 = o ? [
+      ...(settings.ao3Keep.rating && o.rating ? ['R:' + o.rating] : []),
+      ...(settings.ao3Keep.fandom ? [...o.fandoms.map(x => 'F:' + x), ...o.ships.map(x => 'S:' + x), ...o.characters.map(x => 'H:' + x)] : []),
+      ...(settings.ao3Keep.tags ? o.tags.filter(t => !(m.tags || []).includes(t)).map(t => 't:' + t) : []),
+      ...(settings.ao3Keep.rating && settings.warnings ? o.warnings.filter(w => !(m.warnings || []).includes(w)).map(w => 'w:' + w) : []),
+      'f:ao3',
+    ] : [];
+    return [
+      ...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t), ...catsOf(b, m).map(c => 'c:' + c), ...(au ? ['a:' + au] : []),
+      ...(settings.warnings ? (m.warnings || []).map(w => 'w:' + w) : []), ...(m.language ? ['l:' + m.language] : []), 's:' + readLabel(m.reading?.state),
+      ...ao3, ...flagsOf(b),
+    ];
   };
   const matches = (b: Book, ts: TagState, skip?: string) => {
     const bt = keysOf(b);
@@ -1594,7 +1885,8 @@ function PurrinkShelfApp(): React.JSX.Element {
   };
   const results = useMemo(() => {
     const {by, asc} = settings.sort;
-    const list = shelf.filter(b => inCat(b) && matches(b, tags));
+    const sep = settings.ao3 === 'separate' && shelf.some(b => meta.books[b.key]?.ao3);
+    const list = shelf.filter(b => inCat(b) && matches(b, tags) && (!sep || !!meta.books[b.key]?.ao3 === ao3Only));
     const k = new Map(list.map(b => [b.key, sortKey(b, by)]));
     list.sort((a, b) => {
       const x = k.get(a.key)!, y = k.get(b.key)!;
@@ -1602,7 +1894,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       return asc ? c : -c;
     });
     return list;
-  }, [shelf, tags, mode, cat, settings.sort, meta, readKeys, app.bookmarks]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shelf, tags, mode, cat, settings.sort, settings.ao3, ao3Only, meta, readKeys, app.bookmarks]); // eslint-disable-line react-hooks/exhaustive-deps
   // categories as a tree (Category › Sub-category) for the picker at the top
   const catTree = useMemo(() => {
     const parentOf: {[c: string]: string} = {};
@@ -1697,11 +1989,37 @@ function PurrinkShelfApp(): React.JSX.Element {
     <View style={st.screen}>
       {body}
       {card}
+      {calOpen ? (
+        <CalibreCard
+          items={calItems}
+          at={app.calibreAt}
+          view={calOpen}
+          setView={setCalOpen}
+          onClose={() => setCalOpen(null)}
+          onDecide={(f, field, use) => calDecide(f.lib, f.book.key, field, use)}
+          onAll={async use => {
+            for (const f of calWaiting) for (const field of Object.keys(f.meta.calibre?.pending || {}) as CalField[]) await calDecide(f.lib, f.book.key, field, use);
+          }}
+          preview={(f, m) => (
+            <BookPage
+              preview
+              book={f.book} meta={m} title={shownTitle(f.book, m)} cats={catsOf(f.book, m)} cover={f.lib.path === lib?.path ? coverUri(f.book) : m.cover || null}
+              paging="arrows" volGrid={false} setVolGrid={() => {}} onRead={() => {}} onEdit={() => {}} onBack={() => {}} onFilter={() => {}}
+              marked={false} onMark={() => {}} onNotes={() => {}} onPaste={() => {}} onFav={() => {}} onReading={() => {}}
+              collections={[]} onCollection={() => {}} onNewCollection={() => {}} onReload={() => {}} reloading={false}
+              author={authorOf(f.book, m)} dup={null} showLength={settings.length} showWarnings={settings.warnings}
+            />
+          )}
+        />
+      ) : null}
       {showSettings && (
         <SettingsSheet
+          start={setsAt}
+          ao3Count={index.filter(f => f.meta.ao3).length}
+          calibre={{waiting: calWaiting.length, decided: calDecided.length, last: app.calibreAt, onOpen: () => fromSettings(() => setCalOpen({kind: 'list'})), onSync: () => syncCalibre(true)}}
           settings={settings}
           change={changeSettings}
-          onClose={() => setShowSettings(false)}
+          onClose={() => { setShowSettings(false); setSetsAt(undefined); }}
           onLibraries={() => fromSettings(() => setScreen({kind: 'libraries'}))}
           missing={settings.missing}
           onHelp={() => fromSettings(() => setScreen({kind: 'help'}))}
@@ -1883,7 +2201,14 @@ function PurrinkShelfApp(): React.JSX.Element {
         showWarnings={settings.warnings}
         volGrid={volGrid}
         setVolGrid={setVolGrid}
-        onRead={path => readBook(b, path)}
+        onRead={path => { setNextUp(null); readBook(b, path); }}
+        onReadAt={(file, f) => readAt(b, file, f)}
+        onMarks={marks => updateMeta(b.key, {marks})}
+        first={settings.bookFirst}
+        chaptersAt={settings.chaptersAt}
+        nextUp={nextUp && nextUp.lib === lib.path && nextUp.key === b.key ? nextUp : null}
+        onNextLater={() => setNextUp(null)}
+        onCalibre={() => setCalOpen({kind: 'book', lib: lib.path, key: b.key})}
         marked={isMarked(b)}
         onNotes={notes => updateMeta(b.key, {notes})}
         onPaste={async what => {
@@ -2409,7 +2734,9 @@ function PurrinkShelfApp(): React.JSX.Element {
   const chunk = results.slice((pg - 1) * per, pg * per);
   if (!settings.libFolders) scheduleCovers(chunk.filter(b => !b.missing));
   const resW = W - sideW;
-  const avail = H - px(64) - px(58) - px(64) - TASK_H;
+  const sepAo3 = settings.ao3 === 'separate' && shelf.some(b => meta.books[b.key]?.ao3);
+  const quickH = settings.quick.length || sepAo3 ? px(48) : 0;
+  const avail = H - px(64) - px(58) - px(64) - TASK_H - quickH;
   const active = Object.keys(tags).length;
   const badgeOf = (b: Book) => (b.missing ? 'MISSING LINK' : undefined);
   const isNewB = (b: Book) => settings.badges.newBadge && !!meta.newKeys?.includes(b.key);
@@ -2423,13 +2750,65 @@ function PurrinkShelfApp(): React.JSX.Element {
   const hasLoan = shelf.some(b => meta.books[b.key]?.loan);
   // Paper / E-book only when there are paper books; Lent or borrowed only when something is
   const shownFlags = FLAGS.filter(f => (f.k !== 'f:missing' || missingHere.length || tags[f.k]) && (!['f:paper', 'f:ebook'].includes(f.k) || hasPaper) && (f.k !== 'f:loan' || hasLoan));
-  const kinds = (['g', 't', 'a', 'w', 'f'] as const).filter(k => k !== 'w' || allWarnings.length);
-  const fNames = fKind === 'g' ? allGenres : fKind === 't' ? allTags : fKind === 'a' ? allAuthors : fKind === 'w' ? allWarnings : shownFlags.map(f => f.k);
-  const fixedTop = px(10) + px(36) + px(46) + (kinds.length > 4 ? px(38) : 0) + (fKind === 'f' ? px(24) : px(40) + px(24));
-  const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64) - TASK_H - px(10)) / px(40)));
-  const tPages = Math.max(1, Math.ceil(fNames.length / perT));
+  // the Filters panel: the tabs you chose (Settings › Filters), AO3's own tabs when there are AO3 works
+  const keyMap = new Map<string, string[]>();
+  const kOf = (b: Book) => { let k = keyMap.get(b.key); if (!k) { k = keysOf(b); keyMap.set(b.key, k); } return k; };
+  const namesFor = (k: string): string[] => {
+    if (k === 'f') return shownFlags.map(f => f.k);
+    const set = new Set<string>();
+    shelf.forEach(b => kOf(b).forEach(x => { if (x.startsWith(k + ':')) set.add(x.slice(k.length + 1)); }));
+    let list = Array.from(set);
+    if (k.length === 1 && 'RFSH'.includes(k) && settings.ao3Keep.hideSingles) list = list.filter(n => shelf.filter(b => kOf(b).includes(`${k}:${n}`)).length > 1);
+    return list;
+  };
+  const hasAo3 = shelf.some(b => meta.books[b.key]?.ao3);
+  const ao3View = settings.ao3 === 'separate' && hasAo3 && ao3Only;
+  const kinds = (ao3View ? ['R', 'F', 'S', 'H', 't', 'w', 'f'] : settings.filterTabs.filter(k => !'RFSH'.includes(k) || hasAo3))
+    .filter(k => k !== 'w' || allWarnings.length || hasAo3)
+    .filter(k => k === 'f' || namesFor(k).length || ['g', 't'].includes(k));
+  const kindNow = kinds.includes(fKind) ? fKind : kinds[0] || 'g';
+  const order = settings.filterOrder;
+  const sortNames = (k: string, list: string[]) => {
+    if (k === 'f') return list;
+    const key = (n: string) => `${k}:${n}`;
+    const alpha = (x: string, y: string) => x.localeCompare(y, undefined, {sensitivity: 'base'});
+    if (order === 'count') return [...list].sort((x, y) => tagCount(key(y)) - tagCount(key(x)) || alpha(x, y));
+    if (order === 'tapped') return [...list].sort((x, y) => (settings.tapped[key(y)] || 0) - (settings.tapped[key(x)] || 0) || alpha(x, y));
+    return [...list].sort(alpha);
+  };
+  const findQ = fFind.trim().toLowerCase();
+  const fNames = sortNames(kindNow, namesFor(kindNow)).filter(n => !findQ || (kindNow === 'f' ? flagLabel(n) : n).toLowerCase().includes(findQ));
+  const compact = ao3View || settings.compactTags;
+  const letterOf = (n: string) => { const c = n.trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+  const withHeads = kindNow !== 'f' && order === 'alpha' && !compact && fNames.length > 8;
+  // laid out by height: names (40), letter headings (30); chips wrap in lines
+  type FItem = {h: number; head?: string; names?: string[]};
+  const items: FItem[] = [];
+  const innerW = sideW - px(20);
+  if (compact) {
+    const chipW = (n: string) => (n.length + String(tagCount(`${kindNow}:${n}`)).length + 1) * px(13) * 0.56 + px(22);
+    let line: string[] = [], used = 0;
+    fNames.forEach(n => {
+      const w = chipW(n);
+      if (used + w > innerW && line.length) { items.push({h: px(34), names: line}); line = []; used = 0; }
+      line.push(n); used += w;
+    });
+    if (line.length) items.push({h: px(34), names: line});
+  } else {
+    let last = '';
+    fNames.forEach(n => {
+      if (withHeads && letterOf(n) !== last) { last = letterOf(n); items.push({h: px(30), head: last}); }
+      items.push({h: px(40), names: [n]});
+    });
+  }
+  const fixedTop = px(10) + px(36) + px(46) + (kinds.length > 4 ? px(38) * (Math.ceil(kinds.length / 3) - 1) : 0) + px(48) + (kindNow === 'f' ? px(24) : px(40) + px(24));
+  const listH = H - px(64) - fixedTop - px(64) - TASK_H - px(10);
+  const fPages: FItem[][] = [[]];
+  { let u = 0; items.forEach(it => { if (u + it.h > listH && fPages[fPages.length - 1].length) { fPages.push([]); u = 0; } fPages[fPages.length - 1].push(it); u += it.h; }); }
+  const tPages = fPages.length;
   const tp = Math.min(tPage, tPages);
-  const tagChunk = fNames.slice((tp - 1) * perT, tp * perT);
+  const letters = new Set(fNames.map(letterOf));
+  const pageOfLetter = (L: string) => fPages.findIndex(pg => pg.some(it => it.head === L || (!withHeads && it.names?.some(n => letterOf(n) === L)))) + 1;
   const cycleTag = (t: string) => {
     const n = {...tags};
     if (!n[t]) n[t] = 1;
@@ -2437,6 +2816,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     else delete n[t];
     setTags(n);
     setPage(1);
+    if (!t.startsWith('f:')) changeSettings({tapped: {...settings.tapped, [t]: (settings.tapped[t] || 0) + 1}});
   };
   const flagLabel = (k: string) => FLAGS.find(f => f.k === k)?.label || k;
   const kindOn = (k: string) => Object.keys(tags).filter(t => t.startsWith(k + ':')).length;
@@ -2578,35 +2958,60 @@ function PurrinkShelfApp(): React.JSX.Element {
             <View style={{flex: 1, padding: px(10)}}>
               <View style={st.sideHead}>
                 <Text style={st.sideTitle}>Filters</Text>
+                <View style={{flex: 1}} />
                 {active > 0 && (
-                  <Pressable onPress={clearAll} hitSlop={px(8)}>
+                  <Pressable onPress={clearAll} hitSlop={px(8)} style={{marginRight: px(10)}}>
                     <Text style={st.clear}>Clear</Text>
                   </Pressable>
                 )}
+                <IconBtn name="gear" label="Filter settings" onPress={() => { setSetsAt('filters'); setShowSettings(true); }} size={px(40)} iconSize={px(22)} />
               </View>
               <View style={st.kindTabs}>
                 {kinds.map((k, i) => (
-                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); }} style={[st.kindTab, {paddingHorizontal: 0}, kinds.length > 4 && {flexBasis: i < 3 ? '30%' : '46%', marginBottom: px(6)}, fKind === k && st.btnDark]} accessibilityLabel={k === 'g' ? 'Genre' : k === 't' ? 'Tags' : k === 'a' ? 'Author' : k === 'w' ? 'Content warnings' : 'More filters'}>
-                    <Text style={[st.kindTabText, {fontSize: px(14)}, fKind === k && {color: '#ffffff'}]} numberOfLines={1}>{(k === 'g' ? 'Genre' : k === 't' ? 'Tags' : k === 'a' ? 'Author' : k === 'w' ? 'Warnings' : 'More') + (kindOn(k) && fKind !== k ? '•' : '')}</Text>
+                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); setFFind(''); }} style={[st.kindTab, {paddingHorizontal: 0}, kinds.length > 4 && {flexBasis: '30%', flexGrow: 0, marginBottom: px(6)}, kindNow === k && st.btnDark]} accessibilityLabel={KIND_NAMES[k] || k}>
+                    <Text style={[st.kindTabText, {fontSize: kinds.length > 4 ? px(13) : px(14)}, kindNow === k && {color: '#ffffff'}]} numberOfLines={1}>{(KIND_SHORT[k] || k) + (kindOn(k) && kindNow !== k ? '•' : '')}</Text>
                   </Pressable>
                 ))}
               </View>
+              <View style={{flexDirection: 'row', alignItems: 'center', height: px(48)}}>
+                <TextInput value={fFind} onChangeText={t => { setFFind(t); setTPage(1); }} placeholder={`Find ${kindNow === 'f' ? 'a filter' : 'a ' + (KIND_ONE[kindNow] || 'tag')}`} style={[st.input, {width: innerW - (kindNow !== 'f' ? px(54) : 0), marginBottom: 0, fontSize: px(15), paddingVertical: px(4), height: px(40)}]} />
+                {kindNow !== 'f' ? (
+                  <Pressable onPress={() => setAzOpen(true)} style={[st.pageBox, {marginLeft: px(6), marginRight: 0, minWidth: px(46)}]} accessibilityLabel="Jump to a letter">
+                    <Text style={[st.pageBoxText, {fontSize: px(14)}]}>A–Z</Text>
+                  </Pressable>
+                ) : null}
+              </View>
               {fNames.length === 0 ? (
-                <Text style={st.hint}>{`No ${fKind === 'g' ? 'genres' : fKind === 'a' ? 'authors' : fKind === 'w' ? 'warnings' : 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
+                <Text style={st.hint}>{findQ ? 'Nothing matches.' : `No ${KIND_MANY[kindNow] || 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
               ) : (
                 <>
-                  {fKind !== 'f' && fKind !== 'a' ? (
+                  {kindNow !== 'f' && kindNow !== 'a' ? (
                     <View style={st.modeRow}>
                       <Text style={st.small}>Match </Text>
                       <Pill toggle label="All" active={mode === 'all'} onPress={() => { setMode('all'); setPage(1); }} />
                       <Pill toggle label="Any" active={mode === 'any'} onPress={() => { setMode('any'); setPage(1); }} />
                     </View>
                   ) : null}
-                  <Text style={st.hint}>Tap once to include, again to exclude.</Text>
+                  <Text style={st.hint}>{`Tap once to include, again to exclude.${order === 'count' ? '  By most books.' : order === 'tapped' ? '  Most tapped first.' : ''}`}</Text>
                   <View style={{flex: 1}}>
-                    {tagChunk.map(t => {
-                      const k = fKind === 'f' ? t : `${fKind}:${t}`;
-                      return <FilterRow key={k} label={fKind === 'f' ? flagLabel(t) : t} count={tagCount(k)} state={tags[k] || 0} onPress={() => cycleTag(k)} />;
+                    {(fPages[tp - 1] || []).map((it, i) => {
+                      if (it.head) return <View key={'h' + it.head} style={{height: it.h, justifyContent: 'center'}}><View style={st.letterHead}><Text style={st.letterHeadText}>{it.head}</Text></View></View>;
+                      if (compact) return (
+                        <View key={'c' + i} style={{height: it.h, flexDirection: 'row', alignItems: 'center'}}>
+                          {it.names!.map(n => {
+                            const k = `${kindNow}:${n}`;
+                            const stt = tags[k] || 0;
+                            return (
+                              <Pressable key={k} onPress={() => cycleTag(k)} style={[st.fChip, stt === 1 && st.btnDark, stt === -1 && {borderStyle: 'dashed'}]} accessibilityLabel={n}>
+                                <Text style={[st.fChipText, stt === 1 && {color: '#ffffff'}, stt === -1 && {textDecorationLine: 'line-through'}]} numberOfLines={1}>{n}<Text style={[st.fChipCount, stt === 1 && {color: '#dddddd'}]}>{` ${tagCount(k)}`}</Text></Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      );
+                      const t = it.names![0];
+                      const k = kindNow === 'f' ? t : `${kindNow}:${t}`;
+                      return <FilterRow key={k} label={kindNow === 'f' ? flagLabel(t) : t} count={tagCount(k)} state={tags[k] || 0} onPress={() => cycleTag(k)} />;
                     })}
                   </View>
                   <View style={st.gPager}>
@@ -2617,6 +3022,25 @@ function PurrinkShelfApp(): React.JSX.Element {
                 </>
               )}
             </View>
+            {azOpen ? (
+              <View style={[st.inPanel, {top: px(120), bottom: undefined, left: px(6), right: px(6)}]}>
+                <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+                  <Text style={[st.rowTitle, {flex: 1}]}>Jump to</Text>
+                  <IconBtn name="close" label="Close" onPress={() => setAzOpen(false)} size={px(40)} />
+                </View>
+                <View style={{flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'}}>
+                  {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map(L => {
+                    const has = letters.has(L);
+                    return (
+                      <Pressable key={L} disabled={!has} onPress={() => { setFFind(''); setTPage(Math.max(1, pageOfLetter(L))); setAzOpen(false); }} style={[st.azKey, !has && {borderColor: '#bbbbbb'}]} accessibilityLabel={`Letter ${L}`}>
+                        <Text style={[st.azKeyText, !has && {color: '#bbbbbb'}]}>{L}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Text style={[st.hint, {marginTop: px(6), marginBottom: 0}]}>Grey letters have nothing under them.</Text>
+              </View>
+            ) : null}
           </View>
         )}
         <View style={{flex: 1}}>
@@ -2635,6 +3059,20 @@ function PurrinkShelfApp(): React.JSX.Element {
           <IconBtn name="folder" label="Folder view" dark={settings.libFolders} onPress={() => changeSettings({libFolders: !settings.libFolders})} size={px(42)} style={{marginLeft: px(8), borderRadius: px(10)}} />
         </View>
       </View>
+      {quickH ? (
+        <View style={st.quickRow}>
+          {sepAo3 ? (
+            <View style={{flexDirection: 'row', marginRight: px(10)}}>
+              <Pill toggle small label="Books" active={!ao3Only} onPress={() => { setAo3Only(false); setTags({}); setPage(1); setFKind('g'); }} />
+              <Pill toggle small label="AO3" active={ao3Only} onPress={() => { setAo3Only(true); setTags({}); setPage(1); setFKind('F'); }} />
+            </View>
+          ) : null}
+          {settings.quick.length ? <Text style={[st.small, {marginRight: px(6)}]}>Quick:</Text> : null}
+          {settings.quick.map(k => (
+            <Pill toggle small key={k} label={k.startsWith('f:') ? FLAGS.find(f => f.k === k)?.label || k : k.slice(k.indexOf(':') + 1)} active={tags[k] === 1} onPress={() => { const n = {...tags}; if (n[k] === 1) delete n[k]; else n[k] = 1; setTags(n); setPage(1); }} />
+          ))}
+        </View>
+      ) : null}
       {settings.libFolders && lib ? (
         <FolderView
           key={lib.path}
@@ -2814,6 +3252,328 @@ function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPag
   );
 }
 
+// ---------- chapters (from each EPUB's contents) and where you are in the whole book ----------
+const TOCS: {[file: string]: Chapter[]} = {}; // read once per file while PurrinkShelf is open
+const FIRSTS: {[file: string]: string} = {};
+async function loadContents(file: string): Promise<Chapter[]> {
+  if (TOCS[file]) return TOCS[file];
+  const r = /\.epub$/i.test(file) ? await epubContents(file) : null;
+  TOCS[file] = r?.toc || [];
+  if (r?.first) FIRSTS[file] = r.first;
+  return TOCS[file];
+}
+/** the chapters of every file of a book, filled in as they are read */
+function useChapters(files: string[]): {[file: string]: Chapter[]} {
+  const [got, setGot] = useState<{[file: string]: Chapter[]}>(() => {
+    const o: {[file: string]: Chapter[]} = {};
+    files.forEach(f => { if (TOCS[f]) o[f] = TOCS[f]; });
+    return o;
+  });
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      for (const f of files) {
+        if (got[f]) continue;
+        const toc = await loadContents(f);
+        if (!live) return;
+        setGot(g => ({...g, [f]: toc}));
+      }
+    })();
+    return () => { live = false; };
+  }, [files.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  return got;
+}
+/** "Chapter 158: Two Exorcists" -> 158 */
+const chNum = (t: string): number | undefined => {
+  const m = t.match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|第)\s*(\d+)/i) || t.match(/^\s*(\d+)(?:\s*[.:)\-–—]|\s|$)/);
+  return m ? Number(m[1]) : undefined;
+};
+/** a chapter's name without its number: "Chapter 158: Two Exorcists" -> "Two Exorcists" */
+const chName = (t: string) => t.replace(/^\s*(?:chapter|chap\.?|ch\.?|episode|ep\.?)\s*\d+\s*[.:\-–—]?\s*/i, '').replace(/^\s*第\s*\d+\s*[章话話回节節]\s*/, '').replace(/^\s*\d+\s*[.:)\-–—]\s*/, '').trim();
+const chLabel = (c: Chapter) => {
+  const n = chNum(c.t);
+  const name = chName(c.t);
+  return n !== undefined ? `Ch ${n}${name && name !== c.t ? ` · ${name}` : ''}` : c.t;
+};
+const chShort = (c: Chapter) => {
+  const n = chNum(c.t);
+  return n !== undefined ? `Ch ${n}` : c.t.length > 22 ? c.t.slice(0, 21) + '…' : c.t;
+};
+/** the chapter a place in the file (0..1) falls in */
+const chapterAt = (toc: Chapter[], frac: number) => {
+  let i = -1;
+  for (let k = 0; k < toc.length; k++) if (toc[k].f <= frac + 1e-6) i = k;
+  return Math.max(0, i);
+};
+const volName = (b: Book, file: string) => {
+  const v = b.vols.find(x => x.path === file);
+  return v ? `${v.kind || 'Vol'} ${v.n}` : '';
+};
+type Where = {file: string; vol: string; page?: number; pages?: number; frac: number; ch?: Chapter; chText?: string};
+/** where you are in the whole book: the last file you opened, its page, and the chapter on that page */
+function whereAmI(b: Book, m: Meta, tocs: {[file: string]: Chapter[]}): Where | null {
+  const file = m.progress?.last && b.files.includes(m.progress.last) ? m.progress.last : undefined;
+  if (!file) return null;
+  const n = b.files.length;
+  const vi = b.files.indexOf(file);
+  const p = m.pos?.[file];
+  const inFile = m.done?.[file] ? 1 : p ? Math.min(1, (p.page + 1) / p.pages) : 0;
+  const toc = tocs[file];
+  const ch = toc?.length && p ? toc[chapterAt(toc, p.page / p.pages)] : undefined;
+  // "Ch 158 of 480": the chapter numbers when the files have them, else counted through the files
+  let chText: string | undefined;
+  if (ch) {
+    const known = b.files.every(f => tocs[f]);
+    const num = chNum(ch.t);
+    const lastToc = tocs[b.files[n - 1]];
+    const lastNum = lastToc?.length ? chNum(lastToc[lastToc.length - 1].t) : undefined;
+    if (num !== undefined && known && lastNum) chText = `Ch ${num} of ${lastNum.toLocaleString()}`;
+    else if (known) {
+      const before = b.files.slice(0, vi).reduce((a, f) => a + (tocs[f]?.length || 0), 0);
+      const total = b.files.reduce((a, f) => a + (tocs[f]?.length || 0), 0);
+      chText = `Chapter ${(before + toc!.indexOf(ch) + 1).toLocaleString()} of ${total.toLocaleString()}`;
+    } else chText = chShort(ch);
+  }
+  return {file, vol: n > 1 ? volName(b, file) : '', page: p?.page, pages: p?.pages, frac: (vi + inFile) / n, ch, chText};
+}
+/** page numbers between the arrows: 1 … 15 16 17 … 121 (the dots open a number pad) */
+function PageStrip({page, pages, onPage, onDots, room}: {page: number; pages: number; onPage: (p: number) => void; onDots: () => void; room: number}) {
+  const box = px(40);
+  const fit = Math.max(3, Math.floor((room - 2 * px(50)) / (box + px(4))));
+  let items: (number | 'dots')[] = [];
+  if (pages <= fit) items = Array.from({length: pages}, (_, i) => i);
+  else {
+    const mid = Math.max(1, fit - 4); // around the page you are on
+    let a = Math.max(1, page - Math.floor((mid - 1) / 2));
+    let z = Math.min(pages - 2, a + mid - 1);
+    a = Math.max(1, z - mid + 1);
+    items = [0, a > 1 ? 'dots' : 1, ...Array.from({length: z - a + 1}, (_, i) => a + i).filter(x => x !== 1 || a <= 1), z < pages - 2 ? 'dots' : pages - 2, pages - 1];
+    items = items.filter((x, i) => i === 0 || x !== items[i - 1]);
+  }
+  return (
+    <View style={[st.gPager, {justifyContent: 'space-between'}]}>
+      <IconBtn name="back" label="Previous" disabled={page <= 0} onPress={() => onPage(page - 1)} />
+      <View style={{flexDirection: 'row', alignItems: 'center'}}>
+        {items.map((x, i) =>
+          x === 'dots' ? (
+            <Pressable key={'d' + i} onPress={onDots} style={[st.pageBox, {borderStyle: 'dashed', minWidth: px(30)}]} accessibilityLabel="Go to a chapter or page">
+              <Text style={st.pageBoxText}>…</Text>
+            </Pressable>
+          ) : (
+            <Pressable key={x} onPress={() => onPage(x)} style={[st.pageBox, x === page && st.btnDark]} accessibilityLabel={`Page ${x + 1}`}>
+              <Text style={[st.pageBoxText, x === page && {color: '#ffffff'}]}>{String(x + 1)}</Text>
+            </Pressable>
+          ),
+        )}
+      </View>
+      <IconBtn name="forward" label="Next" disabled={page >= pages - 1} onPress={() => onPage(page + 1)} />
+    </View>
+  );
+}
+/** a number pad: jump to a chapter or a page of the list */
+function GoToPad({max, chapters, onGo, onClose}: {max: {ch: number; page: number}; chapters: boolean; onGo: (kind: 'ch' | 'page', n: number) => void; onClose: () => void}) {
+  const [kind, setKind] = useState<'ch' | 'page'>(chapters ? 'ch' : 'page');
+  const [v, setV] = useState('');
+  const top = kind === 'ch' ? max.ch : max.page;
+  const key = (d: string) => (
+    <Pressable key={d} onPress={() => setV(x => (x + d).replace(/^0+/, '').slice(0, 5))} style={st.padKey} accessibilityLabel={d}>
+      <Text style={st.padKeyText}>{d}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={st.inPanel}>
+      <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(10)}}>
+        <Text style={[st.rowTitle, {flex: 1}]}>Go to</Text>
+        <IconBtn name="close" label="Close" onPress={onClose} size={px(42)} />
+      </View>
+      {chapters ? (
+        <Seg options={[{label: 'Chapter', on: kind === 'ch', onPress: () => { setKind('ch'); setV(''); }}, {label: 'Page', on: kind === 'page', onPress: () => { setKind('page'); setV(''); }}]} />
+      ) : null}
+      <View style={st.padShow}>
+        <Text style={st.padNum}>{v || ' '}</Text>
+        <Text style={[st.small, {marginLeft: px(8)}]}>{`of ${top.toLocaleString()}`}</Text>
+      </View>
+      <View style={st.padRow}>{['1', '2', '3', '4', '5'].map(key)}</View>
+      <View style={st.padRow}>{['6', '7', '8', '9', '0'].map(key)}</View>
+      <View style={[st.padRow, {marginBottom: 0}]}>
+        <Btn label="Delete" onPress={() => setV(x => x.slice(0, -1))} style={{flex: 1}} />
+        <Btn dark label="Go" onPress={() => { const n = Number(v); if (n >= 1 && n <= top) onGo(kind, n); }} style={{flex: 2, marginLeft: px(8)}} />
+      </View>
+    </View>
+  );
+}
+
+/** the Chapters side of a book page: one volume (or all), bookmarks with notes, page numbers, and a number pad */
+function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMarks}: {
+  b: Book; m: Meta; tocs: {[file: string]: Chapter[]}; where: Where | null; width: number; height: number; startAt: 'here' | 'start';
+  onOpen: (file: string, f: number) => void; onMarks: (marks: ChapterMark[]) => void;
+}) {
+  const files = b.files.filter(f => /\.epub$/i.test(f));
+  const multi = files.length > 1;
+  const [sel, setSel] = useState<string>(() => (startAt === 'here' && where && files.includes(where.file) ? where.file : files[0]));
+  const [panel, setPanel] = useState<null | 'vols' | 'pad' | {file: string; ch: number}>(null);
+  const [draft, setDraft] = useState('');
+  const marks = m.marks || [];
+  const markOf = (file: string, ch: number) => marks.find(x => x.file === file && x.ch === ch);
+  const here = where?.ch && where.file ? {file: where.file, i: tocs[where.file]?.indexOf(where.ch) ?? -1} : null;
+  const fileIdx = (f: string) => b.files.indexOf(f);
+  const isRead = (file: string, i: number) => {
+    if (m.done?.[file]) return true;
+    if (!here) return false;
+    if (fileIdx(file) < fileIdx(here.file)) return true;
+    return file === here.file && i < here.i;
+  };
+  // a chapter split over two volumes: the last one of a volume has the same number as the first of the next
+  const carries = (file: string) => {
+    const k = files.indexOf(file);
+    const a = tocs[file], z = tocs[files[k + 1]];
+    if (!a?.length || !z?.length) return false;
+    const n = chNum(a[a.length - 1].t);
+    return n !== undefined && n === chNum(z[0].t);
+  };
+  type R = {h: number; key: string; node: React.ReactNode; file?: string; i?: number};
+  const rows: R[] = [];
+  const chRow = (file: string, i: number, c: Chapter, label?: string) => {
+    const mk = markOf(file, i);
+    const isHere = here && here.file === file && here.i === i;
+    const toc = tocs[file] || [];
+    const k = files.indexOf(file);
+    const side = i === toc.length - 1 && carries(file) ? `continues in ${volName(b, files[k + 1])}` : i === 0 && k > 0 && carries(files[k - 1]) ? `from ${volName(b, files[k - 1])}` : isRead(file, i) ? 'read' : '';
+    rows.push({h: px(52), key: `${file}#${i}`, file, i, node: (
+      <Pressable onPress={() => onOpen(file, c.f)} style={[st.chRow, isRead(file, i) && st.chRowRead, isHere && st.chRowHere, c.d > 0 && {marginLeft: px(14) * Math.min(2, c.d)}]} accessibilityLabel={`Open ${c.t}`}>
+        <Text style={[st.chText, isHere && {fontWeight: 'bold'}]} numberOfLines={1}>{label || chLabel(c)}</Text>
+        {isHere ? <View style={st.chHere}><Text style={{color: '#ffffff', fontSize: px(13), fontWeight: 'bold'}}>{"You're here"}</Text></View> : side ? <Text style={st.chSide} numberOfLines={1}>{side}</Text> : null}
+        <IconBtn bare name={mk ? 'bookmark-on' : 'bookmark'} label={mk ? 'Bookmark and note' : 'Bookmark this chapter'} iconSize={px(24)} size={px(40)} onPress={() => {
+          if (mk) { setDraft(mk.note || ''); setPanel({file, ch: i}); }
+          else onMarks([...marks, {id: Date.now().toString(36), file, ch: i, t: c.t, at: Date.now()}]);
+        }} />
+      </Pressable>
+    )});
+    if (mk && (mk.note || sel === 'marks')) {
+      rows.push({h: px(40), key: `${file}#${i}n`, node: (
+        <Pressable onPress={() => { setDraft(mk.note || ''); setPanel({file, ch: i}); }} style={[st.chNote, {height: px(34)}]} accessibilityLabel="Change the note">
+          <Text style={[st.small, {color: mk.note ? BLACK : '#555555'}]} numberOfLines={1}>{mk.note || '+ Add a note'}</Text>
+        </Pressable>
+      )});
+    }
+  };
+  if (sel === 'marks') {
+    const list = [...marks].sort((x, y) => fileIdx(x.file) - fileIdx(y.file) || x.ch - y.ch);
+    list.forEach(x => {
+      const c = tocs[x.file]?.[x.ch] || {t: x.t, d: 0, f: 0};
+      chRow(x.file, x.ch, c, `${multi ? volName(b, x.file) + ' · ' : ''}${chLabel({...c, d: 0})}`);
+    });
+  } else {
+    (sel === 'all' ? files : [sel]).forEach(f => {
+      const toc = tocs[f];
+      if (sel === 'all' && multi) {
+        const nums = (toc || []).map(c => chNum(c.t)).filter(n => n !== undefined) as number[];
+        rows.push({h: px(40), key: f + '#v', node: (
+          <View style={st.volDiv}>
+            <Text style={[st.rowTitle, {fontSize: px(16)}]}>{`${volName(b, f)}${nums.length ? ` · Ch ${nums[0]}–${nums[nums.length - 1]}` : ''}`}</Text>
+            <View style={{flex: 1, height: 2, backgroundColor: BLACK, marginLeft: px(10)}} />
+          </View>
+        )});
+      }
+      if (!toc) rows.push({h: px(40), key: f + '#l', node: <Text style={st.small}>Reading the contents…</Text>});
+      else if (!toc.length) rows.push({h: px(52), key: f + '#e', node: <Text style={st.small}>{"This file has no list of chapters inside it."}</Text>});
+      else toc.forEach((c, i) => chRow(f, i, c));
+    });
+  }
+  const headH = px(56);
+  const cap = height - headH - px(60);
+  const pages: R[][] = [[]];
+  let used = 0;
+  for (const r of rows) {
+    if (used + r.h > cap && pages[pages.length - 1].length) { pages.push([]); used = 0; }
+    pages[pages.length - 1].push(r);
+    used += r.h;
+  }
+  const pageOf = (file: string, i: number) => Math.max(0, pages.findIndex(pg => pg.some(r => r.file === file && r.i === i)));
+  const [pg, setPg] = useState(() => (here && sel === here.file ? pageOf(here.file, here.i) : 0));
+  const [flash, setFlash] = useState<string | null>(null);
+  const p = Math.min(pg, pages.length - 1);
+  // the highest chapter number in the book (or the count, when they aren't numbered)
+  const allToc = files.flatMap(f => (tocs[f] || []).map((c, i) => ({f, i, c})));
+  const lastNum = allToc.reduce((a, x) => Math.max(a, chNum(x.c.t) || 0), 0);
+  const goCh = (n: number) => {
+    let hit = lastNum ? allToc.find(x => chNum(x.c.t) === n) : allToc[n - 1];
+    if (!hit) return;
+    const showIn = sel === 'all' || sel === hit.f ? sel : hit.f;
+    setSel(showIn);
+    setPanel(null);
+    setFlash(`${hit.f}#${hit.i}`);
+    // the page is worked out again once the list for that volume is laid out
+    setTimeout(() => setPg(-1 - allToc.indexOf(hit!)), 0);
+  };
+  // a jump waits for its volume's rows: find the page that holds that chapter
+  useEffect(() => {
+    if (pg >= 0) return;
+    const x = allToc[-1 - pg];
+    if (x) setPg(pageOf(x.f, x.i));
+  });
+  const volLabel = sel === 'all' ? 'All volumes' : sel === 'marks' ? 'Bookmarks' : volName(b, sel);
+  const editing = panel && typeof panel === 'object' ? markOf(panel.file, panel.ch) : undefined;
+  return (
+    <View style={{flex: 1}}>
+      <View style={{height: headH, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end'}}>
+        {sel === 'marks' ? <Text style={[st.small, {flex: 1}]} numberOfLines={2}>{'Only bookmarked chapters. Tap one to open near it, or the note to change it.'}</Text> : <View style={{flex: 1}} />}
+        <View>
+          <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
+          {marks.length ? <View style={st.bubble} pointerEvents="none"><Text style={st.bubbleText}>{String(marks.length)}</Text></View> : null}
+        </View>
+        {multi && sel !== 'marks' ? (
+          <Pressable onPress={() => setPanel('vols')} style={[st.rTab, {marginLeft: px(10), marginRight: 0, flexDirection: 'row'}]} accessibilityLabel="Choose a volume">
+            <Text style={st.rTabText}>{volLabel}</Text>
+            <Icon name="down" size={px(20)} />
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={{flex: 1, overflow: 'hidden'}}>
+        {(pages[p] || []).map(r => (
+          <View key={r.key} style={{height: r.h, paddingBottom: px(6)}}>
+            {flash === r.key ? <View style={{flex: 1, borderWidth: 3, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(12), margin: -px(3)}}>{r.node}</View> : r.node}
+          </View>
+        ))}
+        {sel === 'marks' && !marks.length ? <Text style={[st.small, {marginTop: px(10)}]}>{'No bookmarks yet. Tap the bookmark on a chapter to keep it here, with a note on why.'}</Text> : null}
+      </View>
+      <PageStrip page={p} pages={pages.length} onPage={n => { setPg(n); setFlash(null); }} onDots={() => setPanel('pad')} room={width} />
+      {panel === 'vols' ? (
+        <View style={st.inPanel}>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+            <Text style={[st.rowTitle, {flex: 1}]}>Show chapters of</Text>
+            <IconBtn name="close" label="Close" onPress={() => setPanel(null)} size={px(42)} />
+          </View>
+          <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
+            {['all', ...files].map(f => (
+              <Pressable key={f} onPress={() => { setSel(f); setPanel(null); setPg(f !== 'all' && here?.file === f ? pageOf(f, here.i) : 0); setFlash(null); }} style={[st.rTab, {marginBottom: px(8)}, sel === f && st.btnDark, !!m.done?.[f] && sel !== f && st.chRowRead]}>
+                <Text style={[st.rTabText, sel === f && {color: '#ffffff'}]}>{f === 'all' ? 'All volumes' : volName(b, f)}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {panel === 'pad' ? (
+        <GoToPad chapters={allToc.length > 0} max={{ch: lastNum || allToc.length, page: pages.length}} onClose={() => setPanel(null)} onGo={(k, n) => { if (k === 'page') { setPg(n - 1); setPanel(null); setFlash(null); } else goCh(n); }} />
+      ) : null}
+      {editing && typeof panel === 'object' && panel ? (
+        <View style={st.inPanel}>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+            <Text style={[st.rowTitle, {flex: 1}]} numberOfLines={1}>{`Note for ${chShort(tocs[editing.file]?.[editing.ch] || {t: editing.t, d: 0, f: 0})}`}</Text>
+            <IconBtn name="close" label="Close" onPress={() => setPanel(null)} size={px(42)} />
+          </View>
+          <TextInput value={draft} onChangeText={setDraft} multiline placeholder="Why you want to come back to it" style={[st.input, {height: px(110), textAlignVertical: 'top'}]} />
+          <View style={{flexDirection: 'row', marginTop: px(10)}}>
+            <Btn label="Remove bookmark" onPress={() => { onMarks(marks.filter(x => x !== editing)); setPanel(null); }} />
+            <View style={{flex: 1}} />
+            <Btn dark label="Save" onPress={() => { onMarks(marks.map(x => (x === editing ? {...x, note: draft.trim() || undefined} : x))); setPanel(null); }} />
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function BookPage(props: {
   book: Book;
   meta: Meta;
@@ -2842,8 +3602,21 @@ function BookPage(props: {
   showLength?: boolean;
   showWarnings?: boolean;
   dup: {others: {title: string; where: string; onOpen: () => void}[]; ignored: boolean; onIgnore: () => void; onFiles: () => void} | null;
+  onReadAt?: (file: string, f: number) => void; // open a chapter (a place in the file, 0..1)
+  onMarks?: (marks: ChapterMark[]) => void;
+  first?: 'about' | 'chapters';
+  chaptersAt?: 'here' | 'start';
+  nextUp?: {from: string; to: string} | null; // you just finished a volume: start the next one?
+  onNextLater?: () => void;
+  preview?: boolean; // a small look at the page (nothing can be tapped)
+  onCalibre?: () => void; // the Calibre versions of this book
 }) {
-  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings} = props;
+  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings, nextUp} = props;
+  const epubs = b.missing || b.ext === 'paper' ? [] : b.files.filter(f => /\.epub$/i.test(f));
+  const tocs = useChapters(epubs);
+  const where = whereAmI(b, m, tocs);
+  const hasCh = epubs.length > 0 && !epubs.every(f => tocs[f] && !tocs[f].length);
+  const [rTab, setRTab] = useState<'about' | 'ch'>(props.first === 'chapters' && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -2857,8 +3630,12 @@ function BookPage(props: {
   const lIn = LW - px(28);
   const rIn = RW - px(32);
   const statusW = px(190);
-  const titleLines = Math.min(2, wrapWords(title, Math.floor((CARD_W - px(32) - statusW) / (px(26) * 0.56))).length);
-  const titleH = px(14) + titleLines * px(34) + px(10);
+  // the whole title always shows: long titles get a step smaller, and the title area grows (up to 4 lines)
+  const tFont = title.length <= 34 ? px(26) : title.length <= 64 ? px(22) : px(19);
+  const tLine = Math.round(tFont * 1.3);
+  const titleLines = Math.min(4, wrapWords(title, Math.floor((CARD_W - px(32) - statusW - px(12)) / (tFont * 0.56))).length);
+  const authorLines = author ? Math.min(2, wrapWords(author, Math.floor((CARD_W - px(32) - statusW - px(12)) / (px(15) * 0.56))).length) : 0;
+  const titleH = px(14) + titleLines * tLine + authorLines * px(20) + px(10);
   const colH = CARD_H - px(64) - titleH;
   const pagerH = px(56);
 
@@ -2869,15 +3646,16 @@ function BookPage(props: {
   const left: Item[] = [];
   let sec = 'Overview';
   const label = (t: string) => ({h: px(32), sec, node: <Text style={st.infoLabel}>{t}</Text>});
+  const maxPill = Math.floor((lIn - px(30)) / (px(14) * 0.58)); // a longer name is shortened (the filter still uses all of it)
   const pills = (list: string[], k: FilterKind) =>
-    pillLines(list, lIn).map(line => ({
+    pillLines(list.map(t => t), lIn).map(line => ({
       h: px(33),
       sec,
-      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t} onPress={() => onFilter(k, t)} />)}</View>,
+      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
-    const lines = Math.min(3, wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length);
+    const lines = wrapWords(v, Math.floor(lIn / (px(17) * 0.56))).length;
     // the name and its value stay together (never split across two pages)
     left.push({
       h: px(32) + lines * px(24) + px(8),
@@ -2885,7 +3663,7 @@ function BookPage(props: {
       node: (
         <View>
           <Text style={st.infoLabel}>{name}</Text>
-          <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]} numberOfLines={3}>
+          <Text onPress={onPress} style={[st.infoValue, !value && {color: '#777777'}, onPress && {textDecorationLine: 'underline'}]}>
             {v}
           </Text>
         </View>
@@ -2904,12 +3682,26 @@ function BookPage(props: {
   sec = 'Tags';
   left.push({h: 0, brk: true});
   left.push(label('Tags'));
-  if (m.tags?.length) left.push(...pills(m.tags, 't'));
+  const allTagsHere = Array.from(new Set([...(m.tags || []), ...(m.ao3?.tags || [])]));
+  if (allTagsHere.length) left.push(...pills(allTagsHere, 't'));
   else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
   if (showWarnings && m.warnings?.length) {
     left.push({h: px(8), sec});
     left.push(label('Content warnings'));
     left.push(...pills(m.warnings, 'w'));
+  }
+  if (m.ao3) {
+    const o = m.ao3;
+    sec = 'AO3';
+    left.push({h: 0, brk: true});
+    if (o.rating) field('Rating', o.rating, () => onFilter('R', o.rating!));
+    if (o.fandoms.length) { left.push(label(o.fandoms.length > 1 ? 'Fandoms' : 'Fandom')); left.push(...pills(o.fandoms, 'F')); }
+    if (o.ships.length) { left.push(label(o.ships.length > 1 ? 'Ships' : 'Ship')); left.push(...pills(o.ships, 'S')); }
+    if (o.characters.length) { left.push(label('Characters')); left.push(...pills(o.characters, 'H')); }
+    if (o.warnings.length) { left.push(label('Archive warnings')); left.push(...pills(o.warnings, 'w')); }
+    const facts = [o.words ? `${o.words.toLocaleString()} words` : '', o.chapters ? `${o.chapters} chapters` : '', o.complete ? 'Complete' : o.chapters ? 'Work in progress' : ''].filter(Boolean).join(' · ');
+    if (facts) field('Length', facts);
+    if (o.url) field('Link', o.url.replace(/^https?:\/\/(www\.)?/, ''));
   }
   sec = 'Details';
   left.push({h: 0, brk: true});
@@ -2924,6 +3716,8 @@ function BookPage(props: {
     field('Reading', `${readLabel(m.reading.state)} since ${day(m.reading.at)}` + (done && m.reading.state !== 'completed' ? `. Finished ${day(done.at)}` : '') + (n > 1 ? `. Read ${n} times` : ''));
   }
   if (m.source) field('Got it from', m.source);
+  if (m.calibre?.pending && Object.keys(m.calibre.pending).length) field('Calibre', `${Object.keys(m.calibre.pending).length} to choose: tap to compare`, props.onCalibre);
+  else if (m.calibre?.decided && Object.keys(m.calibre.decided).length) field('Calibre', 'Your choices: tap to see or change', props.onCalibre);
   if (m.loan) field(m.loan.dir === 'lent' ? 'Lent to' : 'Borrowed from', `${m.loan.who}, since ${day(m.loan.at)}`);
   if (b.vols.length > 1) field('Files', `${b.vols.length} parts${b.series === 'group' ? ' (combined by you)' : b.series ? ' (one folder)' : ''}`);
 
@@ -2992,13 +3786,14 @@ function BookPage(props: {
     if (!volGrid) {
       b.vols.forEach(v =>
         right.push({
-          h: px(50),
+          h: vlabel(v) && vlabel(v).length > 22 ? px(70) : px(50),
           vol: true,
           node: (
-            <Pressable style={st.volRow} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
-              <Icon name={opened.has(v.path) ? 'check' : 'play'} size={px(22)} />
+            <Pressable style={[st.volRow, !!m.done?.[v.path] && st.chRowRead, nextUp?.to === v.path && {borderWidth: 3}]} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
+              <Icon name={m.done?.[v.path] || opened.has(v.path) ? 'check' : 'play'} size={px(22)} />
               <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
-              <Text style={st.volName} numberOfLines={1}>{vlabel(v)}</Text>
+              <Text style={st.volName} numberOfLines={2}>{vlabel(v)}</Text>
+              {m.done?.[v.path] ? <Text style={st.chSide}>{`read ${new Date(m.done[v.path]).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}`}</Text> : nextUp?.to === v.path ? <Text style={[st.chSide, {color: BLACK, fontWeight: 'bold'}]}>next up</Text> : null}
             </Pressable>
           ),
         }),
@@ -3013,7 +3808,7 @@ function BookPage(props: {
           node: (
             <View style={{flexDirection: 'row'}}>
               {b.vols.slice(i, i + per).map((v, j) => (
-                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}, opened.has(v.path) && {borderWidth: 3}]} onPress={() => onRead(v.path)}>
+                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}, opened.has(v.path) && {borderWidth: 3}, !!m.done?.[v.path] && st.chRowRead]} onPress={() => onRead(v.path)}>
                   {opened.has(v.path) ? <View style={{position: 'absolute', top: px(3), right: px(3)}}><Icon name="check" size={px(16)} /></View> : null}
                   <Text style={st.volCellText}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
                   {vlabel(v) ? <Text style={st.volCellSub} numberOfLines={2}>{vlabel(v)}</Text> : null}
@@ -3028,8 +3823,10 @@ function BookPage(props: {
 
   const rated = ratingOf(m);
   const starsH = rated ? px(30) : 0; // your rating, under the cover
-  const lPages = scroll ? [left] : pack(left, colH - coverH - starsH - px(28) - startH - pagerH - px(4));
-  const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36)); // room for a "continued" line
+  const progH = where ? px(80) : 0;
+  const lPages = scroll ? [left] : pack(left, colH - coverH - starsH - px(28) - startH - progH - pagerH - px(4));
+  const tabsH = epubs.length ? px(52) : 0;
+  const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36) - tabsH); // room for a "continued" line
   rPages.forEach((pg, i) => {
     if (i > 0 && pg[0]?.vol) pg.unshift({h: px(36), node: <Text style={[st.colHead, {fontSize: px(18)}]}>Volumes, continued</Text>});
   });
@@ -3069,10 +3866,22 @@ function BookPage(props: {
     <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(lastPath || b.files[0])} accessibilityLabel={lastPath ? 'Continue' : 'Start'}>
       <Icon name="play-on" size={px(26)} color="#ffffff" />
       <Text style={[st.startText, {marginLeft: px(8)}]} numberOfLines={1}>
-        {(lastPath ? 'Continue' : 'Start') + (lastVol ? ` · ${lastVol.kind || 'Vol'} ${lastVol.n}` : b.vols.length && !lastPath ? ` · ${b.vols[0].kind || 'Vol'} ${b.vols[0].n}` : '')}
+        {where && (where.vol || where.ch)
+          ? [where.vol, where.ch ? chShort(where.ch) : ''].filter(Boolean).join(' · ')
+          : (lastPath ? 'Continue' : 'Start') + (lastVol ? ` · ${lastVol.kind || 'Vol'} ${lastVol.n}` : b.vols.length && !lastPath ? ` · ${b.vols[0].kind || 'Vol'} ${b.vols[0].n}` : '')}
       </Text>
     </Pressable>
   );
+  const pct = where ? Math.round(where.frac * 100) : 0;
+  const progress = where ? (
+    <View style={{height: progH, justifyContent: 'flex-end', paddingBottom: px(8)}}>
+      <Text style={[st.infoLabel, {marginBottom: 0}]}>{b.files.length > 1 ? 'Progress · whole book' : 'Progress'}</Text>
+      <View style={st.progBar}><View style={{width: `${Math.max(2, pct)}%`, height: '100%', backgroundColor: BLACK}} /></View>
+      <Text style={[st.small, {marginTop: px(4)}]} numberOfLines={1}>
+        {[where.chText || (where.pages ? `Page ${(where.page || 0) + 1} of ${where.pages}${where.vol ? ` in ${where.vol}` : ''}` : where.vol ? `At ${where.vol}` : ''), `${pct}%`].filter(Boolean).join(' · ')}
+      </Text>
+    </View>
+  ) : null;
   return (
     <>
       <View style={st.header}>
@@ -3090,10 +3899,10 @@ function BookPage(props: {
         <View style={{flex: 1}}>
           {author ? (
             <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`}>
-              <Text style={st.byLine} numberOfLines={1}>{author}</Text>
+              <Text style={st.byLine} numberOfLines={2}>{author}</Text>
             </Pressable>
           ) : null}
-          <Text style={st.bookTitle} numberOfLines={author ? 1 : 2}>{title}</Text>
+          <Text style={[st.bookTitle, {fontSize: tFont, lineHeight: tLine}]} numberOfLines={4}>{title}</Text>
         </View>
         <Pressable onPress={() => setStatusOpen(true)} style={[st.statusChip, {maxWidth: statusW}, m.reading && st.btnDark]} accessibilityLabel="Reading status">
           <StatusDot state={m.reading?.state} light={!!m.reading} />
@@ -3109,6 +3918,7 @@ function BookPage(props: {
               {ratingRow}
               <View style={{height: px(14)}} />
               {renderItems(left)}
+              {progress}
               {start}
             </ScrollView>
           ) : (
@@ -3119,7 +3929,7 @@ function BookPage(props: {
                 <View style={{height: px(14)}} />
                 {renderItems(lPages[lpg])}
               </View>
-              <View style={{paddingHorizontal: px(14), paddingBottom: px(10)}}>{start}</View>
+              <View style={{paddingHorizontal: px(14), paddingBottom: px(10)}}>{progress}{start}</View>
               <View style={{paddingHorizontal: px(10)}}>
                 <Arrows page={lpg} pages={lPages.length} onPage={setLp} name={lName(lpg)} />
               </View>
@@ -3127,7 +3937,21 @@ function BookPage(props: {
           )}
         </View>
         <View style={{flex: 1}}>
-          {scroll ? (
+          {epubs.length ? (
+            <View style={[st.rTabs, {paddingHorizontal: px(16), marginTop: px(8)}]}>
+              {([['about', 'Description'], ['ch', 'Chapters']] as const).map(([k, t]) => (
+                <Pressable key={k} onPress={() => setRTab(k)} style={[st.rTab, rTab === k && st.btnDark]} accessibilityLabel={t}>
+                  <Text style={[st.rTabText, rTab === k && {color: '#ffffff'}]}>{t}</Text>
+                </Pressable>
+              ))}
+              {!hasCh && epubs.every(f => tocs[f]) ? <Text style={st.small}>none inside</Text> : null}
+            </View>
+          ) : null}
+          {rTab === 'ch' && epubs.length ? (
+            <View style={{flex: 1, paddingHorizontal: px(12)}}>
+              <ChaptersPane b={b} m={m} tocs={tocs} where={where} width={RW - px(24)} height={colH - tabsH - px(8)} startAt={props.chaptersAt || 'here'} onOpen={(f, x) => props.onReadAt?.(f, x)} onMarks={mk => props.onMarks?.(mk)} />
+            </View>
+          ) : scroll ? (
             <ScrollView contentContainerStyle={{padding: px(16)}}>{renderItems(right)}</ScrollView>
           ) : (
             <>
@@ -3188,6 +4012,16 @@ function BookPage(props: {
             ))}
             <Btn small icon="plus" label="New collection" onPress={() => { setColOpen(false); onNewCollection(); }} style={{marginTop: px(12)}} />
           </View>
+        </View>
+      ) : null}
+      {nextUp ? (
+        <View style={[st.inPanel, {flexDirection: 'row', alignItems: 'center', left: px(12), right: px(12), bottom: px(12)}]}>
+          <View style={{flex: 1}}>
+            <Text style={st.rowTitle}>{`You finished ${volName(b, nextUp.from) || 'this part'}`}</Text>
+            <Text style={st.small} numberOfLines={1}>{`${title} · ${b.files.length - b.files.indexOf(nextUp.to)} ${partsWord(b.vols)} left`}</Text>
+          </View>
+          <Btn label="Later" onPress={() => props.onNextLater?.()} style={{marginRight: px(8)}} />
+          <Btn dark icon="play-on" label={`Start ${volName(b, nextUp.to)}`} onPress={() => onRead(nextUp.to)} />
         </View>
       ) : null}
       {notesOpen ? <NotesBoard title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
@@ -3827,7 +4661,11 @@ function RoundBtn({label, note, onPress, children, dim}: {label: string; note?: 
 function MiniIcon({kind, on}: {kind: 'list' | 'grid'; on: boolean}) {
   return <View style={{opacity: on ? 1 : 0.5}}><Icon name={kind} size={px(28)} /></View>;
 }
-function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote, libs, lib, onLib, onActivity, activityCount}: {
+type SetPage = 'main' | 'look' | 'show' | 'about' | 'license' | 'book' | 'filters' | 'ao3' | 'calibre';
+function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote, libs, lib, onLib, onActivity, activityCount, start, calibre, ao3Count}: {
+  start?: SetPage;
+  calibre: {waiting: number; decided: number; last?: number; onOpen: () => void; onSync: () => void};
+  ao3Count: number;
   onActivity: () => void;
   activityCount: number;
   libs: Lib[];
@@ -3853,9 +4691,124 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
       ]}
     />
   );
-  const [page, setPage] = useState<'main' | 'look' | 'show' | 'about' | 'license'>('main');
+  const [page, setPage] = useState<SetPage>(start || 'main');
   const [licPg, setLicPg] = useState(0);
-  const back = () => setPage(page === 'license' ? 'about' : 'main');
+  const back = () => (start && page === start ? onClose() : setPage(page === 'license' ? 'about' : 'main'));
+  const sec = (t: string, top = px(18)) => <Text style={[st.section, st.showSection, {marginTop: top}]}>{t}</Text>;
+  const foot = (
+    <>
+      <View style={{flex: 1}} />
+      <Text style={[st.small, {marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
+    </>
+  );
+  if (page === 'book') {
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Book pages" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          {sec('Show first on the right side', px(4))}
+          <Seg options={[{label: 'Description', on: settings.bookFirst !== 'chapters', onPress: () => change({bookFirst: 'about'})}, {label: 'Chapters', on: settings.bookFirst === 'chapters', onPress: () => change({bookFirst: 'chapters'})}]} />
+          <Text style={[st.small, {marginTop: px(6)}]}>The other one is a tap away on the tab next to it. Chapters show for EPUB books.</Text>
+          {sec('Description')}
+          <Seg options={[{label: 'Turn pages with arrows', on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})}, {label: 'Scroll', on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})}]} />
+          {sec('Chapters list')}
+          <Seg options={[{label: 'Open at where I am', on: settings.chaptersAt !== 'start', onPress: () => change({chaptersAt: 'here'})}, {label: 'Start from Ch 1', on: settings.chaptersAt === 'start', onPress: () => change({chaptersAt: 'start'})}]} />
+          <Text style={[st.small, {marginTop: px(6)}]}>{'"Where I am" comes from the last time you opened PurrinkShelf from inside the book (the toolbar in the reader).'}</Text>
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'filters') {
+    const ALL = ['g', 't', 'a', 'w', 's', 'l', 'F', 'S', 'H', 'R', 'f'];
+    const tabs = settings.filterTabs;
+    const rest = ALL.filter(k => !tabs.includes(k));
+    const flip = (k: string) => change({filterTabs: tabs.includes(k) ? tabs.filter(x => x !== k) : [...tabs, k]});
+    const up = (k: string) => { const i = tabs.indexOf(k); if (i > 0) { const n = [...tabs]; n.splice(i, 1); n.splice(i - 1, 0, k); change({filterTabs: n}); } };
+    const keyLabel = (k: string) => (k.startsWith('f:') ? FLAGS.find(f => f.k === k)?.label || k : k.slice(k.indexOf(':') + 1));
+    const often = Object.entries(settings.tapped).sort((a, b) => b[1] - a[1]).map(([k]) => k).filter(k => !settings.quick.includes(k)).slice(0, 8);
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Filters" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          {sec('Order of genres and tags', px(4))}
+          <Seg options={[{label: 'Most books', on: settings.filterOrder === 'count', onPress: () => change({filterOrder: 'count'})}, {label: 'A–Z', on: settings.filterOrder === 'alpha', onPress: () => change({filterOrder: 'alpha'})}, {label: 'Most tapped', on: settings.filterOrder === 'tapped', onPress: () => change({filterOrder: 'tapped'})}]} />
+          {sec('Tags look', px(14))}
+          <Seg options={[{label: 'List with ticks', on: !settings.compactTags, onPress: () => change({compactTags: false})}, {label: 'Compact chips', on: settings.compactTags, onPress: () => change({compactTags: true})}]} />
+          {sec('Tabs in the Filters panel', px(14))}
+          <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
+            {tabs.map((k, i) => (
+              <View key={k} style={{flexDirection: 'row', alignItems: 'center', marginRight: px(6), marginBottom: px(6)}}>
+                {i > 0 ? <Pressable onPress={() => up(k)} hitSlop={px(6)} accessibilityLabel={`Move ${KIND_NAMES[k]} earlier`}><Icon name="back" size={px(18)} /></Pressable> : null}
+                <Pill toggle small active label={KIND_SHORT[k]} onPress={() => flip(k)} />
+              </View>
+            ))}
+            {rest.map(k => <Pill toggle small key={k} label={KIND_SHORT[k]} onPress={() => flip(k)} />)}
+          </View>
+          <Text style={[st.small, {marginTop: px(2)}]}>Tap to show or hide a tab; the arrow moves it earlier. Fandom, Ship, Character and Rating come from AO3 works.</Text>
+          {sec('Quick filters on the Library page', px(14))}
+          <Text style={st.small}>One tap away, above your books. Tap one to remove it; add from the ones you filter by most.</Text>
+          <View style={[st.pillWrap, {marginTop: px(6)}]}>
+            {settings.quick.map(k => <Pill toggle small active key={k} label={keyLabel(k)} onPress={() => change({quick: settings.quick.filter(x => x !== k)})} />)}
+            {!settings.quick.length ? <Text style={st.small}>None yet.</Text> : null}
+          </View>
+          {often.length ? (
+            <View style={[st.pillWrap, {marginTop: px(4)}]}>
+              {often.map(k => <Pill small key={k} label={`+ ${keyLabel(k)}`} onPress={() => change({quick: [...settings.quick, k].slice(0, 6)})} />)}
+            </View>
+          ) : <Text style={[st.small, {marginTop: px(4)}]}>Filters you tap in the Filters panel show up here to add.</Text>}
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'ao3') {
+    const keep = settings.ao3Keep;
+    const k = (id: keyof Settings['ao3Keep'], label: string) => <TriRow label={label} state={keep[id] ? 1 : 0} onPress={() => change({ao3Keep: {...keep, [id]: !keep[id]}})} />;
+    const choice = (on: boolean, title: string, text: string, pick: () => void) => (
+      <Pressable onPress={pick} style={[st.dChoice, on && st.dChoiceOn]} accessibilityRole="button" accessibilityLabel={title}>
+        <View style={[st.dRadio, on && st.dRadioOn]} />
+        <View style={{flex: 1}}><Text style={st.rowTitle}>{title}</Text><Text style={[st.small, {marginTop: px(2)}]}>{text}</Text></View>
+      </Pressable>
+    );
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Fanfiction (AO3)" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={st.small}>{ao3Count ? `PurrinkShelf found ${ao3Count} AO3 download${ao3Count === 1 ? '' : 's'}: it reads their fandom, ships, characters, rating, warnings, tags, words and chapters by itself.` : 'EPUBs downloaded from Archive of Our Own are found by themselves: their fandom, ships, characters, rating, warnings and tags are read from the first page.'}</Text>
+          {sec('How should they sit with your books?', px(14))}
+          {choice(settings.ao3 !== 'separate', 'Together', 'One library. AO3 tags join your genres and tags.', () => change({ao3: 'together'}))}
+          {choice(settings.ao3 === 'separate', 'Separate AO3 library', "Books and AO3 switch above the list, with AO3-style filters, so the many tags don't crowd your novels.", () => change({ao3: 'separate'}))}
+          {sec('Which AO3 tags to keep', px(14))}
+          {k('fandom', 'Fandom, ship and character')}
+          {k('rating', 'Rating and warnings')}
+          {k('tags', 'Additional tags')}
+          {k('hideSingles', 'Hide fandoms, ships and characters with only 1 work')}
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'calibre') {
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Calibre" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={st.small}>Keep titles, authors, descriptions, genres, tags, series and languages the same in Calibre and here. Calibre is on your computer, so a small helper there passes the details back and forth through your synced library folder.</Text>
+          {sec('Sync', px(14))}
+          <Text style={[st.rowTitle, {fontSize: px(17)}]}>{calibre.last ? `Last sync ${new Date(calibre.last).toLocaleString(undefined, {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit'})}` : 'Not synced yet'}</Text>
+          <Text style={st.small}>{`${calibre.waiting} waiting for your choice  ·  ${calibre.decided} decided (can still be changed)`}</Text>
+          <View style={{flexDirection: 'row', marginTop: px(10)}}>
+            <Btn dark icon="refresh" label="Check for changes" onPress={calibre.onSync} style={{marginRight: px(8)}} />
+            <Btn icon="list" label="Changes from Calibre" onPress={calibre.onOpen} />
+          </View>
+          {sec('Setting it up (once, on the computer)', px(18))}
+          {['1. Download "purrinkshelf_calibre.py" from the PurrinkShelf GitHub page (tools › calibre).', '2. Run it with your Calibre library and your synced library folder, e.g. python purrinkshelf_calibre.py "C:\\Users\\you\\Calibre Library" "…\\Supernote\\Novels".', '3. It writes _Library Data/calibre.csv for PurrinkShelf, and puts your changes from here into Calibre (through calibredb, never by editing its database).', '4. Close Calibre while it runs. Run it again whenever you want to sync.'].map(t => <Text key={t} style={[st.small, {color: BLACK, marginTop: px(4)}]}>{t}</Text>)}
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
   if (page === 'about') {
     const sec = (t: string) => <Text style={[st.section, st.showSection, {fontSize: px(19), marginTop: px(16)}]}>{t}</Text>;
     const line = (t: string) => <Text style={[st.small, {color: BLACK, fontSize: px(15), lineHeight: px(21), marginTop: px(4)}]}>{t}</Text>;
@@ -4033,6 +4986,20 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           </RoundBtn>
           <RoundBtn label="How to use" onPress={onHelp}>
             <Icon name="help" size={px(30)} />
+          </RoundBtn>
+        </View>
+        <View style={{flexDirection: 'row', marginTop: px(12)}}>
+          <RoundBtn label="Book pages" note={settings.bookFirst === 'chapters' ? 'Chapters first' : 'Description first'} onPress={() => setPage('book')}>
+            <Icon name="pages" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Filters" note={settings.filterOrder === 'count' ? 'Most books' : settings.filterOrder === 'tapped' ? 'Most tapped' : 'A–Z'} onPress={() => setPage('filters')}>
+            <Icon name="filter" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Fanfiction (AO3)" note={settings.ao3 === 'separate' ? 'Separate' : 'Together'} onPress={() => setPage('ao3')}>
+            <Icon name="layers" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Calibre" note={calibre.waiting ? `${calibre.waiting} to choose` : calibre.last ? 'Synced' : 'Not set up'} onPress={() => setPage('calibre')}>
+            <Icon name="refresh" size={px(30)} />
           </RoundBtn>
         </View>
         <View style={{flex: 1}} />
@@ -5838,6 +6805,117 @@ function ActivityCard({items, onClose, onClear}: {items: {t: string; at: number}
     </ModalCard>
   );
 }
+// ---------- Calibre: books changed in both places, and your choices (which can be changed until the next sync) ----------
+const CAL_WORD: {[f in CalField]: string} = {title: 'title', author: 'author', description: 'description', genres: 'genres', tags: 'tags', series: 'series', language: 'language'};
+function CalibreCard({items, at, view, setView, onDecide, onAll, preview, onClose}: {
+  items: Found[]; at?: number; view: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField};
+  setView: (v: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField}) => void;
+  onDecide: (f: Found, field: CalField, use: 'sn' | 'cal') => void; onAll: (use: 'sn' | 'cal') => void;
+  preview: (f: Found, m: Meta) => React.ReactNode; onClose: () => void;
+}) {
+  const [pg, setPg] = useState(0);
+  const [tab, setTab] = useState<'sn' | 'cal'>('sn');
+  const waiting = items.filter(f => Object.keys(f.meta.calibre?.pending || {}).length);
+  const decided = items.filter(f => !Object.keys(f.meta.calibre?.pending || {}).length && Object.keys(f.meta.calibre?.decided || {}).length);
+  if (view.kind === 'book') {
+    const f = items.find(x => x.lib.path === view.lib && x.book.key === view.key);
+    if (!f) return null;
+    const c = f.meta.calibre || {};
+    const fields = CAL_FIELDS.map(x => x.id).filter(x => c.pending?.[x] !== undefined || c.decided?.[x]);
+    const field = view.f && fields.includes(view.f) ? view.f : fields[0];
+    const pend = c.pending?.[field];
+    const dec = c.decided?.[field];
+    const inUse: 'sn' | 'cal' | null = pend !== undefined ? null : dec?.use || null;
+    const sn = pend !== undefined ? calValue(f.book, f.meta, field) : dec?.sn ?? '';
+    const cal = pend !== undefined ? pend : dec?.cal ?? '';
+    const shown: Meta = {...f.meta, ...calPatch(field, tab === 'cal' ? cal : sn)};
+    const sc = Math.min((CARD_W - px(40)) / CARD_W, (CARD_H - px(64) - px(36) - (fields.length > 1 ? px(48) : 0) - px(60) - px(44) - px(130)) / CARD_H);
+    const title = shownTitle(f.book, f.meta);
+    return (
+      <ModalCard onOutside={() => setView({kind: 'list'})}>
+        <CardHeader title={title} onBack={() => setView({kind: 'list'})} onClose={onClose} />
+        <View style={[st.pad, {flex: 1, paddingTop: px(8)}]}>
+          <Text style={st.small}>{pend !== undefined ? 'Changed in both places since the last sync. Tap a tab to compare.' : 'You chose this one. Tap the other tab to look at it, and switch if you like.'}</Text>
+          {fields.length > 1 ? (
+            <View style={[st.pillWrap, {marginTop: px(8), height: px(40)}]}>
+              {fields.map(x => <Pill toggle small key={x} label={CAL_FIELDS.find(y => y.id === x)!.label + (c.pending?.[x] !== undefined ? ' · choose' : '')} active={x === field} onPress={() => { setTab('sn'); setView({...view, f: x}); }} />)}
+            </View>
+          ) : null}
+          <View style={{marginTop: px(8)}}>
+            <Seg options={[
+              {label: `On Supernote${inUse === 'sn' ? ' · in use' : ''}`, on: tab === 'sn', onPress: () => setTab('sn')},
+              {label: `From Calibre${inUse === 'cal' ? ' · in use' : ''}`, on: tab === 'cal', onPress: () => setTab('cal')},
+            ]} />
+          </View>
+          <View style={{alignItems: 'center', marginTop: px(10)}}>
+            <View style={{width: Math.round(CARD_W * sc), height: Math.round(CARD_H * sc), overflow: 'hidden', borderWidth: 2, borderColor: BLACK, borderRadius: px(14)}} pointerEvents="none">
+              <View style={{width: CARD_W, height: CARD_H, backgroundColor: '#ffffff', transform: [{translateX: (-CARD_W * (1 - sc)) / 2}, {translateY: (-CARD_H * (1 - sc)) / 2}, {scale: sc}]}}>
+                {preview(f, shown)}
+              </View>
+            </View>
+          </View>
+          <Text style={[st.small, {textAlign: 'center', marginTop: px(14)}]}>{`How the book card will look with this version. Different: ${CAL_WORD[field]}.`}</Text>
+          <View style={{flex: 1}} />
+          <View style={{flexDirection: 'row'}}>
+            <Btn label="Back" onPress={() => setView({kind: 'list'})} style={{flex: 1, marginRight: px(8)}} />
+            {inUse === tab ? (
+              <View style={[st.btn, {flex: 2, borderColor: '#999999'}]}><Text style={[st.btnText, {color: '#777777'}]}>In use</Text></View>
+            ) : (
+              <Btn dark label={`${inUse ? 'Switch to' : 'Use'} ${tab === 'sn' ? 'Supernote' : 'Calibre'} version`} onPress={() => onDecide(f, field, tab)} style={{flex: 2}} />
+            )}
+          </View>
+        </View>
+      </ModalCard>
+    );
+  }
+  type Row = {f: Found; done: boolean};
+  const rows: Row[] = [...waiting.map(f => ({f, done: false})), ...decided.map(f => ({f, done: true}))];
+  const per = 7;
+  const pages = Math.max(1, Math.ceil(rows.length / per));
+  const p = Math.min(pg, pages - 1);
+  const chunk = rows.slice(p * per, (p + 1) * per);
+  const using = (f: Found) => Object.entries(f.meta.calibre?.decided || {}).map(([k, d]) => `${d!.use === 'sn' ? 'Supernote' : 'Calibre'} ${CAL_WORD[k as CalField]}`).join(', ');
+  return (
+    <ModalCard onOutside={onClose}>
+      <CardHeader title="Changes from Calibre" onBack={onClose} onClose={onClose} />
+      <View style={[st.pad, {flex: 1, paddingTop: px(8)}]}>
+        <Text style={st.small}>{at ? `Synced ${new Date(at).toLocaleString(undefined, {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit'})}. Changes made in only one place were taken over by themselves.` : 'Not synced yet.'}</Text>
+        {!rows.length ? <Text style={[st.para, {marginTop: px(16)}]}>Nothing to choose: Calibre and PurrinkShelf agree.</Text> : null}
+        {chunk.map((r, i) => {
+          const first = i === 0 || chunk[i - 1].done !== r.done;
+          const fields = Object.keys(r.done ? r.f.meta.calibre?.decided || {} : r.f.meta.calibre?.pending || {}) as CalField[];
+          return (
+            <View key={r.f.lib.path + r.f.book.key}>
+              {first ? (
+                <View style={{flexDirection: 'row', alignItems: 'baseline', marginTop: px(14), marginBottom: px(6)}}>
+                  <Text style={[st.rowTitle, {fontSize: px(17), flex: 1}]}>{r.done ? 'Decided' : 'Needs a choice'}</Text>
+                  <Text style={st.small}>{r.done ? 'tap to change your mind' : 'changed in both places'}</Text>
+                </View>
+              ) : null}
+              <Pressable onPress={() => { setTab('sn'); setView({kind: 'book', lib: r.f.lib.path, key: r.f.book.key}); }} style={[st.calRow, r.done && st.chRowRead]} accessibilityLabel={`${r.done ? 'Change' : 'Choose'}: ${shownTitle(r.f.book, r.f.meta)}`}>
+                <View style={{flex: 1}}>
+                  <Text style={st.rowTitle} numberOfLines={1}>{shownTitle(r.f.book, r.f.meta)}</Text>
+                  <Text style={[st.small, {color: r.done ? BLACK : '#555555'}]} numberOfLines={1}>{r.done ? `Using: ${using(r.f)}` : fields.map(x => CAL_FIELDS.find(y => y.id === x)!.label).join(', ')}</Text>
+                </View>
+                <Pill small label={r.done ? 'Change' : 'Choose'} />
+              </Pressable>
+            </View>
+          );
+        })}
+        {rows.length ? <Text style={[st.small, {marginTop: px(12)}]}>Both versions are kept until the next sync, so you can switch back any time. Also on each book page: Details › Calibre.</Text> : null}
+        <View style={{flex: 1}} />
+        {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
+        {waiting.length ? (
+          <View style={{flexDirection: 'row', marginTop: px(8)}}>
+            <Btn label="Keep all Supernote" onPress={() => onAll('sn')} style={{flex: 1, marginRight: px(8)}} />
+            <Btn label="Use all Calibre" onPress={() => onAll('cal')} style={{flex: 1}} />
+          </View>
+        ) : null}
+      </View>
+    </ModalCard>
+  );
+}
+
 function ModalCard({onOutside, children}: {onOutside: () => void; children: React.ReactNode}) {
   return (
     <View style={st.cardWrap}>
@@ -5859,6 +6937,7 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  calRow: {flexDirection: 'row', alignItems: 'center', minHeight: px(62), borderWidth: 2, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(12), paddingVertical: px(6), marginBottom: px(8), backgroundColor: '#ffffff'},
   aboutLink: {flexDirection: 'row', alignItems: 'center', height: px(56), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(16), paddingHorizontal: px(14)},
   showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},
   showSection: {fontSize: px(22), marginBottom: px(2), paddingBottom: px(5), borderColor: BLACK},
@@ -6085,15 +7164,45 @@ const st = StyleSheet.create({
   toolbar: {height: px(60), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(16)},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
+  pageBox: {minWidth: px(38), height: px(42), paddingHorizontal: px(5), marginHorizontal: px(2), borderWidth: 2, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff'},
+  pageBoxText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
+  inPanel: {position: 'absolute', left: px(8), right: px(8), bottom: px(8), backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: BLACK, borderRadius: px(16), padding: px(14)},
+  padKey: {flex: 1, height: px(52), marginHorizontal: px(4), borderWidth: 2, borderColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  padKeyText: {fontSize: px(24), fontWeight: 'bold', color: BLACK},
+  padShow: {flexDirection: 'row', alignItems: 'baseline', borderWidth: 2, borderColor: BLACK, borderRadius: px(10), paddingHorizontal: px(14), paddingVertical: px(6), marginVertical: px(10)},
+  padNum: {fontSize: px(30), fontWeight: 'bold', color: BLACK, minWidth: px(20)},
+  padRow: {flexDirection: 'row', marginHorizontal: -px(4), marginBottom: px(8)},
+  rTabs: {flexDirection: 'row', alignItems: 'center', height: px(52)},
+  rTab: {height: px(40), paddingHorizontal: px(16), borderWidth: 2, borderColor: BLACK, borderRadius: px(20), alignItems: 'center', justifyContent: 'center', marginRight: px(8)},
+  rTabText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
+  chRow: {height: px(46), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), paddingLeft: px(12), paddingRight: px(4), backgroundColor: '#ffffff'},
+  chRowRead: {backgroundColor: '#dddddd'},
+  chRowHere: {borderWidth: 3},
+  chText: {flex: 1, fontSize: px(16), color: BLACK},
+  chSide: {fontSize: px(13), color: '#555555', marginLeft: px(6)},
+  chHere: {backgroundColor: BLACK, borderRadius: px(10), paddingHorizontal: px(8), paddingVertical: px(2), marginLeft: px(6)},
+  chNote: {marginLeft: px(14), borderLeftWidth: 3, borderColor: BLACK, backgroundColor: '#f2f2f2', paddingHorizontal: px(10), justifyContent: 'center', borderTopRightRadius: px(8), borderBottomRightRadius: px(8)},
+  volDiv: {flexDirection: 'row', alignItems: 'center', height: px(36)},
+  progBar: {height: px(12), borderWidth: 2, borderColor: BLACK, borderRadius: px(6), overflow: 'hidden', marginTop: px(6)},
+  bubble: {position: 'absolute', top: -px(6), right: -px(6), minWidth: px(22), height: px(22), borderRadius: px(11), backgroundColor: BLACK, borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  bubbleText: {color: '#ffffff', fontSize: px(12), fontWeight: 'bold'},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},
   volHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(56)},
-  volRow: {height: px(42), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},
+  volRow: {minHeight: px(42), paddingVertical: px(6), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},
   volRowText: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginRight: px(10)},
   volName: {flex: 1, fontSize: px(17), color: BLACK},
   volCell: {height: px(74), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
   volCellText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
   volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2), textAlign: 'center'},
   kindTabs: {flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10), marginBottom: px(6)},
+  quickRow: {height: px(48), flexDirection: 'row', alignItems: 'center', paddingHorizontal: px(12), borderBottomWidth: 1, borderColor: '#888888', overflow: 'hidden'},
+  letterHead: {alignSelf: 'flex-start', backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(7), paddingVertical: px(1)},
+  letterHeadText: {color: '#ffffff', fontSize: px(14), fontWeight: 'bold'},
+  fChip: {height: px(28), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), paddingHorizontal: px(8), marginRight: px(4), justifyContent: 'center', backgroundColor: '#ffffff', flexShrink: 1},
+  fChipText: {fontSize: px(13), color: BLACK},
+  fChipCount: {fontSize: px(11), color: '#555555'},
+  azKey: {width: '22%', height: px(52), marginBottom: px(8), borderWidth: 2, borderColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  azKeyText: {fontSize: px(22), fontWeight: 'bold', color: BLACK},
   kindTab: {flex: 1, borderWidth: 1.5, borderColor: BLACK, paddingVertical: px(5), alignItems: 'center', marginRight: px(4), borderRadius: px(6)},
   kindTabText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
   choice: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), padding: px(14), marginBottom: px(12)},

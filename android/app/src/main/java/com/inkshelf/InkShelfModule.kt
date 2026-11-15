@@ -289,6 +289,91 @@ class InkShelfModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * An EPUB's chapters, in reading order: [{t: title, d: depth, f: where it starts (0..1 of the text)}],
+     * plus the start of its first text file (AO3 puts the work's tags there). Returned as JSON text.
+     */
+    @ReactMethod
+    fun epubContents(path: String, promise: Promise) {
+        Thread {
+            try {
+                ZipFile(path).use { zf ->
+                    fun read(n: String): String? = zf.getEntry(n)?.let { zf.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                    fun dirOf(n: String) = if (n.contains('/')) n.substring(0, n.lastIndexOf('/') + 1) else ""
+                    fun resolve(base: String, href: String): String {
+                        val h = try { URLDecoder.decode(href.substringBefore('#'), "UTF-8") } catch (e: Throwable) { href.substringBefore('#') }
+                        val parts = ArrayList<String>()
+                        for (seg in (dirOf(base) + h).split('/')) {
+                            if (seg == "..") { if (parts.isNotEmpty()) parts.removeAt(parts.size - 1) } else if (seg != "." && seg.isNotEmpty()) parts.add(seg)
+                        }
+                        return parts.joinToString("/")
+                    }
+                    val container = read("META-INF/container.xml") ?: ""
+                    val opfPath = Regex("full-path=\"([^\"]+)\"").find(container)?.groupValues?.get(1)
+                        ?: zf.entries().asSequence().firstOrNull { it.name.endsWith(".opf") }?.name
+                    val opf = (if (opfPath != null) read(opfPath) else null) ?: ""
+                    fun attr(tag: String, name: String) = Regex("\\b$name\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1)
+                    val items = HashMap<String, String>()
+                    var navHref: String? = null
+                    var ncxHref: String? = null
+                    for (m in Regex("<item\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(opf)) {
+                        val id = attr(m.value, "id") ?: continue
+                        val href = attr(m.value, "href") ?: continue
+                        val full = resolve(opfPath ?: "", href)
+                        items[id] = full
+                        if ((attr(m.value, "properties") ?: "").contains("nav")) navHref = full
+                        if ((attr(m.value, "media-type") ?: "").contains("dtbncx")) ncxHref = full
+                    }
+                    val spine = Regex("<itemref\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(opf).mapNotNull { attr(it.value, "idref")?.let { r -> items[r] } }.toList()
+                    // how much text each file holds, so a chapter's place in the book can be worked out
+                    val tag = Regex("<[^>]*>")
+                    val sizes = spine.map { n -> val t = read(n) ?: ""; val b = t.indexOf("<body", ignoreCase = true); tag.replace(if (b > 0) t.substring(b) else t, "").trim().length.toLong().coerceAtLeast(1) }
+                    val total = sizes.sum().coerceAtLeast(1)
+                    val startOf = HashMap<String, Double>()
+                    var acc = 0L
+                    spine.forEachIndexed { i, n -> if (!startOf.containsKey(n)) startOf[n] = acc.toDouble() / total; acc += sizes[i] }
+                    val out = org.json.JSONArray()
+                    fun clean(t: String) = tag.replace(t, " ").replace("&amp;", "&").replace("&nbsp;", " ").replace("&#160;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace(Regex("\\s+"), " ").trim()
+                    fun add(title: String, href: String, base: String, depth: Int) {
+                        val t = clean(title)
+                        if (t.isEmpty()) return
+                        val f = startOf[resolve(base, href)] ?: return
+                        out.put(org.json.JSONObject().put("t", t).put("d", depth).put("f", f))
+                    }
+                    val nav = navHref?.let { read(it) }
+                    if (nav != null) {
+                        val tocNav = Regex("<nav\\b[^>]*(epub:type|role)\\s*=\\s*[\"'](toc|doc-toc)[\"'][\\s\\S]*?</nav>", RegexOption.IGNORE_CASE).find(nav)?.value ?: nav
+                        var depth = 0
+                        for (m in Regex("<(/?)ol\\b[^>]*>|<a\\b[^>]*href\\s*=\\s*[\"']([^\"']*)[\"'][^>]*>([\\s\\S]*?)</a>", RegexOption.IGNORE_CASE).findAll(tocNav)) {
+                            if (m.value.startsWith("<ol", true)) depth++
+                            else if (m.value.startsWith("</ol", true)) depth--
+                            else add(m.groupValues[3], m.groupValues[2], navHref!!, (depth - 1).coerceAtLeast(0))
+                        }
+                    }
+                    if (out.length() == 0) {
+                        val ncx = ncxHref?.let { read(it) }
+                        if (ncx != null) {
+                            var depth = 0
+                            for (m in Regex("<navPoint\\b|</navPoint>|<navLabel>[\\s\\S]*?<text>([\\s\\S]*?)</text>[\\s\\S]*?</navLabel>[\\s\\S]*?<content\\b[^>]*src\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE).findAll(ncx)) {
+                                when {
+                                    m.value.startsWith("<navPoint", true) -> depth++
+                                    m.value.startsWith("</navPoint", true) -> depth--
+                                    else -> add(m.groupValues[1], m.groupValues[2], ncxHref!!, (depth - 1).coerceAtLeast(0))
+                                }
+                            }
+                        }
+                    }
+                    val first = StringBuilder()
+                    for (n in spine.take(3)) { first.append(read(n) ?: ""); if (first.length > 60000) break }
+                    val r = org.json.JSONObject().put("toc", out).put("first", if (first.length > 60000) first.substring(0, 60000) else first.toString())
+                    promise.resolve(r.toString())
+                }
+            } catch (e: Throwable) {
+                promise.resolve(null)
+            }
+        }.start()
+    }
+
     /** How long a book is: words in its text, and CJK characters (counted apart, they read at a different speed). */
     @ReactMethod
     fun epubWords(path: String, promise: Promise) {
