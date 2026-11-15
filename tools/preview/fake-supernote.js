@@ -190,9 +190,10 @@ export const PluginDocAPI = {
   getCurrentTotalPages: async () => ({success: true, result: fakePages()}),
   getCurrentDocText: async page => {
     (window.__read = window.__read || []).push(page);
+    if (new URLSearchParams(location.search).get('screenonly')) page = window.__page !== undefined ? window.__page : Number(new URLSearchParams(location.search).get('page') || 140);
     const vn = Number(((window.__current || 'Vol 4').match(/Vol (\d+)/) || [])[1] || 4);
     for (let k = 0; k < 40; k++) if (Math.round((k / 41) * fakePages()) + 3 === page) return {success: true, result: `Chapter ${(vn - 1) * 40 + 1 + k}${k % 7 === 2 ? ': The letter from the inner court' : ''}\n\nThe rain had not stopped since morning…`};
-    return {success: true, result: 'He turned the lantern down and listened. Somewhere below, chapter 12 of the old ledger lay open.'};
+    return {success: true, result: `He turned the lantern down and listened (${page}). Somewhere below, chapter 12 of the old ledger lay open.`};
   },
 };
 export const PluginNoteAPI = {
