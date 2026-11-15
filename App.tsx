@@ -1706,8 +1706,8 @@ function PurrinkShelfApp(): React.JSX.Element {
     const map = m.pageMap?.[file];
     const mapped = map && map.pages === known ? map.at[i] ?? -1 : -1;
     // not the volume under PurrinkShelf: open it underneath (PurrinkShelf stays open), so its pages can be looked at
-    let here = (await currentFile()) === file;
-    if (!here && c) {
+    let here = settings.findPages && (await currentFile()) === file;
+    if (!here && c && settings.findPages) {
       log('open under', file);
       here = await openUnder(file, mapped >= 0 ? mapped : known ? Math.round(f * known) : 0);
       if (!here) {
@@ -1800,7 +1800,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       ...(pg ? {pos: {...(f.meta.pos || {}), [path]: {...pg, at: Date.now()}}} : {}),
       ...(finished && !f.meta.done?.[path] ? {done: {...(f.meta.done || {}), [path]: Date.now()}} : {}),
     });
-    if (pg && /\.epub$/i.test(path)) mapChapters(f.lib, f.book.key, path, pg.pages).catch(e => log('chapter pages failed', String(e)));
+    if (pg && settings.findPages && /\.epub$/i.test(path)) mapChapters(f.lib, f.book.key, path, pg.pages).catch(e => log('chapter pages failed', String(e)));
     const k = f.book.files.indexOf(path);
     const next = f.book.files[k + 1];
     if (finished && next && !f.meta.done?.[next]) {
@@ -2156,6 +2156,14 @@ function PurrinkShelfApp(): React.JSX.Element {
                 </View>
               );
             })}
+            <View style={[st.permRow, {borderTopWidth: 1, borderColor: '#888888', paddingTop: px(12), marginTop: px(4)}]}>
+              <Icon name="bookmark" size={px(30)} />
+              <View style={{flex: 1, marginLeft: px(12), marginRight: px(10)}}>
+                <Text style={st.choiceTitle}>Find chapter pages</Text>
+                <Text style={st.small}>{"Reads the pages of the book you're in (on the device only) to find where each chapter starts, so a chapter opens on its first page. Turn off to save battery: chapters then open close to their page."}</Text>
+              </View>
+              <Pill toggle label={settings.findPages ? 'On' : 'Off'} active={settings.findPages} width={px(84)} onPress={() => changeSettings({findPages: !settings.findPages})} />
+            </View>
             {Object.keys(perm).length && PERMS.every(p => (perm[p.id] || 0) >= 1 && permChoice[p.id] !== 1) ? (
               <Btn dark icon="check" label="All allowed" onPress={() => { setPermOpen(false); closedLayer(); }} style={{marginTop: px(14)}} />
             ) : (

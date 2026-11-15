@@ -193,6 +193,7 @@ export type Settings = {
   ao3Keep: {fandom: boolean; rating: boolean; tags: boolean; hideSingles: boolean};
   compactTags: boolean; // the filter tags as small chips instead of a list
   calibreAdd: boolean; // books found here but not in Calibre are sent to Calibre (by the helper on the computer)
+  findPages: boolean; // read the pages of the book you're in to find where each chapter starts (off saves battery)
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -229,6 +230,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ao3Keep: {fandom: true, rating: true, tags: true, hideSingles: false},
   compactTags: false,
   calibreAdd: true,
+  findPages: true,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
