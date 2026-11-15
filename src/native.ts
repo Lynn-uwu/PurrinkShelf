@@ -315,3 +315,25 @@ export async function jumpTo(page: number): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Open a book under PurrinkShelf without closing it, so it can look at the pages and turn to the right one.
+ * Resolves true once the reader has that book open; false if it didn't (then the caller closes as usual).
+ */
+export async function openUnder(path: string, page: number): Promise<boolean> {
+  try {
+    const r: any = await PluginFileAPI.openFile(path, Math.max(0, Math.floor(page)));
+    if (r && r.success === false) return false;
+  } catch (e) {
+    return false;
+  }
+  for (let i = 0; i < 12; i++) {
+    await new Promise(res => setTimeout(res, 250));
+    if ((await currentFile()) === path) return true;
+  }
+  return false;
+}
+
+export function closeView() {
+  PluginManager.closePluginView().catch(() => {});
+}

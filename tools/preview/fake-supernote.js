@@ -178,7 +178,7 @@ if (new URLSearchParams(location.search).get('backup')) {
 }
 window.__pasted = [];
 export const PluginCommAPI = {
-  getCurrentFilePath: async () => ({success: true, result: new URLSearchParams(location.search).get('reading') === 'echo' ? `${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub` : new URLSearchParams(location.search).get('reading') ? `${SD}/Novels/Korean Novels/Rain Over Busan.epub` : '/storage/emulated/0/Note/Book reviews.note'}),
+  getCurrentFilePath: async () => ({success: true, result: window.__current ? window.__current : new URLSearchParams(location.search).get('reading') === 'echo' ? `${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub` : new URLSearchParams(location.search).get('reading') ? `${SD}/Novels/Korean Novels/Rain Over Busan.epub` : '/storage/emulated/0/Note/Book reviews.note'}),
   getPageDisplaySize: async () => ({success: true, result: {width: 1404, height: 1872}}),
   jumpToPage: async p => { (window.__opened = window.__opened || []).push(`jump ${p}`); return {success: true, result: true}; },
   getCurrentPageNum: async () => ({success: true, result: Number(new URLSearchParams(location.search).get('page') || 140)}),
@@ -189,7 +189,8 @@ export const PluginDocAPI = {
   getCurrentTotalPages: async () => ({success: true, result: fakePages()}),
   getCurrentDocText: async page => {
     (window.__read = window.__read || []).push(page);
-    for (let k = 0; k < 40; k++) if (Math.round((k / 41) * fakePages()) + 3 === page) return {success: true, result: `Chapter ${121 + k}${k % 7 === 2 ? ': The letter from the inner court' : ''}\n\nThe rain had not stopped since morning…`};
+    const vn = Number(((window.__current || 'Vol 4').match(/Vol (\d+)/) || [])[1] || 4);
+    for (let k = 0; k < 40; k++) if (Math.round((k / 41) * fakePages()) + 3 === page) return {success: true, result: `Chapter ${(vn - 1) * 40 + 1 + k}${k % 7 === 2 ? ': The letter from the inner court' : ''}\n\nThe rain had not stopped since morning…`};
     return {success: true, result: 'He turned the lantern down and listened. Somewhere below, chapter 12 of the old ledger lay open.'};
   },
 };
@@ -197,7 +198,7 @@ export const PluginNoteAPI = {
   insertImage: async p => (window.__pasted.push('image:' + p), {success: true, result: true}),
   insertText: async t => (window.__pasted.push('text:' + t.textContentFull.split('\n')[0]), {success: true, result: true}),
 };
-export const PluginFileAPI = {openFile: async (p, page) => { (window.__opened = window.__opened || []).push(`at ${page}:${p}`); return {success: true, result: true}; }};
+export const PluginFileAPI = {openFile: async (p, page) => { (window.__opened = window.__opened || []).push(`at ${page}:${p.split('/').pop()}`); window.__current = p; return {success: true, result: true}; }};
 export const RattaFileSelector = {
   selectImage: async () => null,
   // Supernote's own file picker: pretend the reader picked a book inside Novels/Chinese Novels

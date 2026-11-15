@@ -21,7 +21,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, closeView, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, openUnder, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -1702,34 +1702,43 @@ function PurrinkShelfApp(): React.JSX.Element {
     markSeen(b);
     await updateMeta(b.key, openedPatch(m, file));
     markDay();
-    if (c && (await currentFile()) === file) {
+    const known = m.pos?.[file]?.pages;
+    const map = m.pageMap?.[file];
+    const mapped = map && map.pages === known ? map.at[i] ?? -1 : -1;
+    // not the volume under PurrinkShelf: open it underneath (PurrinkShelf stays open), so its pages can be looked at
+    let here = (await currentFile()) === file;
+    if (!here && c) {
+      log('open under', file);
+      here = await openUnder(file, mapped >= 0 ? mapped : known ? Math.round(f * known) : 0);
+      if (!here) {
+        log('open under', 'the reader closed PurrinkShelf or kept the old book');
+        closeView();
+        return;
+      }
+    }
+    if (c && here) {
       const pg = await currentPage();
       if (pg) {
-        const map = m.pageMap?.[file];
-        let p = map && map.pages === pg.pages ? map.at[i] ?? -1 : -1;
+        const cur = metaOf(b).pageMap?.[file];
+        let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
         if (p < 0) {
           p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText);
           if (p >= 0) {
-            const at = map && map.pages === pg.pages ? [...map.at] : (TOCS[file] || []).map(() => -1);
+            const at = cur && cur.pages === pg.pages ? [...cur.at] : (TOCS[file] || []).map(() => -1);
             at[i] = p;
-            await updateMeta(b.key, {pageMap: {...(m.pageMap || {}), [file]: {pages: pg.pages, at}}});
+            await updateMeta(b.key, {pageMap: {...(metaOf(b).pageMap || {}), [file]: {pages: pg.pages, at}}, pos: {...(metaOf(b).pos || {}), [file]: {page: p, pages: pg.pages, at: Date.now()}}});
           }
         }
         if (p < 0) p = Math.round(f * pg.pages);
         log('jump to page', `${p} for ${c.t}`);
         if (await jumpTo(p)) return;
       }
+      closeView();
+      return;
     }
-    const pages = m.pos?.[file]?.pages;
-    if (!pages) {
-      say("Opened the volume. To jump straight to chapters, open PurrinkShelf once from inside this volume so it learns its pages.");
-      return read(file);
-    }
-    const map = m.pageMap?.[file];
-    const known = map && map.pages === pages ? map.at[i] ?? -1 : -1;
-    const page = known >= 0 ? known : Math.min(pages - 1, Math.round(f * pages));
-    log('open at page', `${page}${known >= 0 ? ' (found by title)' : ' (worked out)'} ${file}`);
-    const err = await openAt(file, page);
+    // no chapter list: open it as before
+    if (!known) return read(file);
+    const err = await openAt(file, mapped >= 0 ? mapped : Math.min(known - 1, Math.round(f * known)));
     if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
   }
   /** while PurrinkShelf is open over a volume: find the page every chapter starts on, by its title (once per page count) */
