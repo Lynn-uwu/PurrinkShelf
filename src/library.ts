@@ -47,6 +47,7 @@ export type Meta = {
   done?: {[file: string]: number}; // volumes you finished, and when
   marks?: ChapterMark[]; // bookmarked chapters, each with an optional note
   ao3?: Ao3; // a work downloaded from Archive of Our Own: its own tags
+  ao3Seen?: boolean; // its first page was checked for AO3 tags once
   calibre?: CalibreState; // what Calibre had at the last sync, and your choices when both sides changed
 };
 export type ChapterMark = {id: string; file: string; ch: number; t: string; note?: string; at: number};
@@ -66,6 +67,7 @@ export const CAL_FIELDS: {id: CalField; label: string}[] = [
   {id: 'language', label: 'Language'},
 ];
 export type CalibreState = {
+  id?: string; // the book's id in Calibre
   base?: {[f in CalField]?: string}; // Calibre's values at the last sync (to tell who changed what)
   pending?: {[f in CalField]?: string}; // changed in both places: Calibre's version, waiting for your choice
   decided?: {[f in CalField]?: {sn: string; cal: string; use: 'sn' | 'cal'; at: number}}; // your choices, kept until the next sync
@@ -253,7 +255,7 @@ export function ratingOf(m?: Meta): number | undefined {
 }
 
 export type Snap = {lib: string; libName: string; key: string; title: string; cover?: string | null; folder?: string; genres?: string[]; vol?: number; at: number};
-export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number; wishlist?: Wish[]; dupIgnore?: string[]; days?: string[]; activity?: {t: string; at: number}[]};
+export type AppState = {recent: Snap[]; bookmarks: Snap[]; searches: string[]; lastLib?: string; knownRoots?: string[]; collections?: Collection[]; sheetAt?: number; wishlist?: Wish[]; dupIgnore?: string[]; days?: string[]; activity?: {t: string; at: number}[]; calibreAt?: number};
 export const EMPTY_STATE: AppState = {recent: [], bookmarks: [], searches: []};
 export type MetaStore = {
   version: 1;
@@ -265,6 +267,7 @@ export type MetaStore = {
   groups?: {[id: string]: {title: string; files: string[]}}; // books combined by hand
   missing?: {[key: string]: number}; // books whose file disappeared (since when)
   lists?: {[csvPath: string]: number}; // book lists (_Library Data/library.csv) already read, by their file date
+  calibre?: {[csvPath: string]: number}; // calibre.csv already read, by its file date
   savedAt?: number;
 };
 
@@ -436,7 +439,7 @@ export async function loadSettings(): Promise<Settings> {
     const v = t ? JSON.parse(t) : {};
     if (v.look === 'cat') { v.look = 'drawn'; v.cats = true; } // the first Cat look had both
     if (!v.backupDir || v.backupDir === OLD_BACKUP_DIR) v.backupDir = DEFAULT_BACKUP_DIR; // the folder took the new name
-    return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}, profile: {...DEFAULT_SETTINGS.profile, ...(v.profile || {})}};
+    return {...DEFAULT_SETTINGS, ...v, views: {...DEFAULT_SETTINGS.views, ...(v.views || {})}, profile: {...DEFAULT_SETTINGS.profile, ...(v.profile || {})}, ao3Keep: {...DEFAULT_SETTINGS.ao3Keep, ...(v.ao3Keep || {})}};
   } catch (e) {
     return DEFAULT_SETTINGS;
   }
@@ -660,3 +663,35 @@ export async function coverFor(root: string, b: Book, meta: Meta | undefined, ca
 
 /** where paper books listed by hand are kept inside a library (their own folder, so they show as a category) */
 export const PAPER_DIR = 'Paper books';
+
+// ---------- Calibre: the same fields as text, to compare ----------
+const splitList = (v: string) => v.split(/\s*[;|]\s*/).map(x => x.trim()).filter(Boolean);
+const joinList = (l?: string[]) => (l || []).join('; ');
+/** a book's value for a Calibre field, as text */
+export function calValue(b: Book, m: Meta, f: CalField): string {
+  if (f === 'title') return shownTitle(b, m);
+  if (f === 'author') return authorOf(b, m) || '';
+  if (f === 'description') return (m.description || '').trim();
+  if (f === 'genres') return joinList(m.genres);
+  if (f === 'tags') return joinList(m.tags);
+  if (f === 'series') return m.seriesName ? `${m.seriesName}${m.seriesNo ? ` #${String(m.seriesNo).replace(/\.0+$/, '')}` : ''}` : '';
+  return m.language || '';
+}
+/** the change to a book's details that makes a field read v */
+export function calPatch(f: CalField, v: string): Meta {
+  if (f === 'title') return {title: v || undefined};
+  if (f === 'author') return {author: v || undefined};
+  if (f === 'description') return {description: v || undefined};
+  if (f === 'genres') return {genres: splitList(v)};
+  if (f === 'tags') return {tags: splitList(v)};
+  if (f === 'series') {
+    const m = v.match(/^(.*?)\s*#\s*([\d.]+)$/);
+    return m ? {seriesName: m[1] || undefined, seriesNo: Number(m[2])} : {seriesName: v || undefined, seriesNo: undefined};
+  }
+  return {language: v || undefined};
+}
+/** compare loosely: lists in any order, spaces and case ignored */
+export function calSame(f: CalField, a: string, b: string): boolean {
+  const n = (x: string) => (f === 'genres' || f === 'tags' ? splitList(x).map(y => y.toLowerCase()).sort().join(';') : x.replace(/\s+/g, ' ').trim().toLowerCase());
+  return n(a) === n(b);
+}

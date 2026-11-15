@@ -115,3 +115,40 @@ export function goodreadsCsv(books: {title: string; author?: string; rating?: nu
   );
   return '﻿' + [head.join(','), ...lines].join('\r\n') + '\r\n';
 }
+
+/** a work downloaded from Archive of Our Own: its first page lists the tags (Rating, Fandom, Relationship…) */
+export type Ao3Work = {
+  url?: string; rating?: string; warnings: string[]; categories: string[]; fandoms: string[]; ships: string[]; characters: string[]; tags: string[];
+  words?: number; chapters?: string; complete?: boolean; author?: string; summary?: string; language?: string; series?: string; seriesNo?: number;
+};
+export function parseAo3(html: string): Ao3Work | null {
+  if (!/archiveofourown\.org|Archive of Our Own/i.test(html)) return null;
+  const un = (t: string) => t.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim();
+  const dd: {[k: string]: string} = {};
+  for (const m of html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) dd[un(m[1]).replace(/:$/, '').toLowerCase()] = m[2];
+  // each tag is a link; without links, split on commas
+  const list = (k: string) => {
+    const v = dd[k] || dd[k + 's'];
+    if (!v) return [];
+    const links = Array.from(v.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)).map(m => un(m[1])).filter(Boolean);
+    return links.length ? links : un(v).split(/\s*,\s*/).filter(Boolean);
+  };
+  const stats = un(dd.stats || '');
+  const num = (k: string) => { const m = stats.match(new RegExp(`${k}:\\s*([\\d,]+)`, 'i')); return m ? Number(m[1].replace(/,/g, '')) : undefined; };
+  const ch = stats.match(/Chapters:\s*(\d+\s*\/\s*(?:\d+|\?))/i)?.[1]?.replace(/\s/g, '');
+  const url = html.match(/https?:\/\/(?:www\.)?archiveofourown\.org\/works\/\d+/i)?.[0];
+  const author = html.match(/class="byline"[^>]*>([\s\S]*?)<\/div>/i)?.[1];
+  const summary = html.match(/<p[^>]*>\s*Summary\s*<\/p>\s*<blockquote[^>]*>([\s\S]*?)<\/blockquote>/i)?.[1];
+  const series = un(dd.series || '').match(/Part\s+(\d+)\s+of\s+(.+)$/i);
+  const w: Ao3Work = {
+    url, rating: list('rating')[0], warnings: list('archive warning'), categories: list('category'), fandoms: list('fandom'),
+    ships: list('relationship'), characters: list('character'), tags: list('additional tags'),
+    words: num('words'), chapters: ch, complete: ch ? /^(\d+)\/\1$/.test(ch) : undefined,
+    author: author ? un(author).replace(/^by\s+/i, '') : undefined,
+    summary: summary ? summary.replace(/<\/p>\s*<p[^>]*>/gi, '\n').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;|&#160;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim() : undefined,
+    language: un(dd.language || '') || undefined,
+    series: series ? series[2].trim() : undefined, seriesNo: series ? Number(series[1]) : undefined,
+  };
+  if (!w.fandoms.length && !w.rating && !w.url) return null;
+  return w;
+}

@@ -6,10 +6,11 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Keyboard, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {bareTitle, goodreadsCsv, parseTable, readSiteExport} from './src/sites';
+import {bareTitle, goodreadsCsv, parseAo3, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
+import {CAL_FIELDS, CalField, calPatch, calSame, calValue} from './src/library';
 import {AppState, Book, ChapterMark, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
@@ -294,7 +295,12 @@ type From = 'home' | 'bookmarks' | 'library' | 'new' | 'profile' | 'quotes' | 'w
 /** one book anywhere in any library */
 type Found = {lib: Lib; book: Book; meta: Meta; isNew?: boolean};
 type TagState = {[t: string]: 1 | -1}; // keys are "g:Genre", "t:Tag", "c:Category" or "f:flag"
-type FilterKind = 'g' | 't' | 'c' | 'a' | 'w';
+type FilterKind = 'g' | 't' | 'c' | 'a' | 'w' | 'R' | 'F' | 'S' | 'H' | 'l' | 's';
+// the Filters panel's tabs: g genre, t tags, a author, w warnings, l language, s reading status, f more; AO3: R rating, F fandom, S ship, H character
+const KIND_NAMES: {[k: string]: string} = {g: 'Genre', t: 'Tags', a: 'Author', w: 'Content warnings', l: 'Language', s: 'Reading status', f: 'More filters', R: 'Rating (AO3)', F: 'Fandom (AO3)', S: 'Ship (AO3)', H: 'Character (AO3)'};
+const KIND_SHORT: {[k: string]: string} = {g: 'Genre', t: 'Tags', a: 'Author', w: 'Warnings', l: 'Language', s: 'Status', f: 'More', R: 'Rating', F: 'Fandom', S: 'Ship', H: 'Chars'};
+const KIND_ONE: {[k: string]: string} = {g: 'genre', t: 'tag', a: 'author', w: 'warning', l: 'language', s: 'status', R: 'rating', F: 'fandom', S: 'ship', H: 'character'};
+const KIND_MANY: {[k: string]: string} = {g: 'genres', t: 'tags', a: 'authors', w: 'warnings', l: 'languages', s: 'statuses', R: 'ratings', F: 'fandoms', S: 'ships', H: 'characters'};
 
 const PERMS: {id: string; icon: IconName; label: string; why: string}[] = [
   {id: READ, icon: 'library', label: 'Read files', why: 'Find the books in your library folders'},
@@ -502,6 +508,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     log('screen', screen.kind, (screen as any).path || (screen as any).key || '');
   }, [screen]);
   const [showSettings, setShowSettings] = useState(false);
+  const [setsAt, setSetsAt] = useState<SetPage | undefined>(undefined); // open Settings straight at one page
   const [showActivity, setShowActivity] = useState(false);
   // a card opened from Settings closes back to Settings (one layer at a time), not to the page underneath
   const backToSettings = useRef(false);
@@ -541,7 +548,10 @@ function PurrinkShelfApp(): React.JSX.Element {
   const [sheet, setSheet] = useState<SheetTab | null>(null); // sort and display
   const [cat, setCat] = useState<string | null>(null); // category picked at the top (null = All)
   const [catOpen, setCatOpen] = useState(false);
-  const [fKind, setFKind] = useState<'g' | 't' | 'a' | 'w' | 'f'>('g'); // filter panel: Genre, Tags, Author, Warnings, More
+  const [fKind, setFKind] = useState<string>('g'); // filter panel tab: Genre, Tags, Author, Warnings, More, AO3's Fandom…
+  const [fFind, setFFind] = useState(''); // "find a tag" in the filter panel
+  const [azOpen, setAzOpen] = useState(false); // the A–Z letter keys
+  const [ao3Only, setAo3Only] = useState(false); // AO3 works as their own library (Settings › AO3: Separate)
   const [tPage, setTPage] = useState(1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const settingsRef = useRef(settings);
@@ -735,8 +745,167 @@ function PurrinkShelfApp(): React.JSX.Element {
       setMeta(r.meta);
       metaRef.current = r.meta;
     }
-    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => { wishesArrived(l, bs); readBookLists(l, bs).catch(e => log('book list failed', String(e))); }), 300);
+    setTimeout(() => probeEpubs(l, bs, r.meta).catch(e => log('epub details failed', String(e))).finally(() => { wishesArrived(l, bs); readBookLists(l, bs).catch(e => log('book list failed', String(e))).finally(() => probeAo3(l, bs).catch(e => log('ao3 failed', String(e))).finally(() => calRef.current(l, bs, false))); }), 300);
     return {...r, books: bs};
+  }
+  // ---------- Calibre: _Library Data/calibre.csv comes from the helper on the computer; supernote-changes.csv goes back ----------
+  const calRef = useRef<(l: Lib, bs: Book[], force: boolean) => Promise<number>>(async () => 0);
+  calRef.current = (l, bs, force) => calibreLib(l, bs, force);
+  /** where a library's calibre.csv is (the library folder, or one of its top folders) */
+  async function calibreCsv(l: Lib): Promise<Entry | null> {
+    const top = await listDir(l.path).catch(() => [] as Entry[]);
+    for (const dir of [l.path, ...top.filter(e => e.isDir && !e.name.startsWith('_') && !e.name.startsWith('.')).map(e => e.path)]) {
+      const e = (await listDir(`${dir}/_Library Data`).catch(() => [] as Entry[])).find(x => x.name.toLowerCase() === 'calibre.csv');
+      if (e) return e;
+    }
+    return null;
+  }
+  const metaFor = (l: Lib) => (l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta);
+  async function putMeta(l: Lib, bs: Book[], next: MetaStore) {
+    await saveMeta(l.path, next, bs);
+    libDataRef.current = {...libDataRef.current, [l.path]: {books: bs, meta: next}};
+    setLibData(d => ({...d, [l.path]: {books: bs, meta: next}}));
+    if (l.path === libRef.current?.path) { metaRef.current = next; setMeta(next); }
+  }
+  /** read Calibre's side; returns how many books need a choice */
+  async function calibreLib(l: Lib, bs: Book[], force: boolean): Promise<number> {
+    const e = await calibreCsv(l);
+    const cur0 = metaFor(l);
+    if (!e || !cur0) return 0;
+    if (!force && cur0.calibre?.[e.path] === e.mtime) return 0;
+    const rows = parseTable((await readText(e.path)) || '');
+    const col = (r: {[h: string]: string}, n: string) => { const k = Object.keys(r).find(h => h.toLowerCase().replace(/\s+/g, '_') === n); return k ? (r[k] || '').trim() : ''; };
+    const books2 = {...cur0.books};
+    let filled = 0, waiting = 0, matched = 0;
+    for (const r of rows) {
+      const id = col(r, 'calibre_id') || col(r, 'id');
+      const title = col(r, 'title');
+      if (!id && !title) continue;
+      const fileNames = col(r, 'files').split(/\s*[;|]\s*/).filter(Boolean).map(f => norm(f.split(/[\\/]/).pop() || ''));
+      let b = bs.find(x => id && books2[x.key]?.calibre?.id === id);
+      if (!b && title) b = bs.find(x => !books2[x.key]?.calibre?.id && (norm(shownTitle(x, books2[x.key])) === norm(title) || norm(x.fileTitle) === norm(title)));
+      if (!b && fileNames.length) b = bs.find(x => !books2[x.key]?.calibre?.id && fileNames.includes(norm(x.fileTitle)));
+      if (!b || b.missing) continue;
+      matched++;
+      let m: Meta = {...books2[b.key]};
+      const c = {...(m.calibre || {})};
+      const base = {...(c.base || {})};
+      const pending = {...(c.pending || {})};
+      const decided = {...(c.decided || {})};
+      const theirsOf: {[f in CalField]: string} = {
+        title, author: col(r, 'author') || col(r, 'authors'), description: col(r, 'description') || col(r, 'comments'),
+        genres: col(r, 'genres') || col(r, 'genre'), tags: col(r, 'tags'), series: col(r, 'series'), language: col(r, 'language') || col(r, 'languages'),
+      };
+      for (const {id: f} of CAL_FIELDS) {
+        const theirs = theirsOf[f];
+        const mine = calValue(b, m, f);
+        const was = base[f];
+        const calChanged = was === undefined ? true : !calSame(f, theirs, was);
+        const snChanged = was === undefined ? true : !calSame(f, mine, was);
+        if (calChanged) delete decided[f]; // a new Calibre version: the old choice is done with
+        if (!calChanged || !theirs) {
+          // nothing new from Calibre (or Calibre has nothing): yours goes back to Calibre if different
+        } else if (!mine || !snChanged) {
+          if (!calSame(f, mine, theirs)) { m = {...m, ...calPatch(f, theirs)}; filled++; }
+          delete pending[f];
+        } else if (!calSame(f, mine, theirs)) pending[f] = theirs; // changed in both places: you choose
+        else delete pending[f];
+        base[f] = theirs;
+      }
+      if (Object.keys(pending).length) waiting++;
+      books2[b.key] = {...m, calibre: {id: id || c.id, base, pending, decided}};
+    }
+    const next: MetaStore = {...cur0, books: books2, calibre: {...(cur0.calibre || {}), [e.path]: e.mtime || Date.now()}};
+    await putMeta(l, bs, next);
+    await calibreExport(l, next, bs, e.path);
+    changeApp(a => ({...a, calibreAt: Date.now()}));
+    log('calibre', rows.length, 'rows', matched, 'matched', filled, 'filled', waiting, 'waiting');
+    if (filled || waiting) say(`${l.name}: ${filled ? `${filled} change${filled === 1 ? '' : 's'} from Calibre` : ''}${filled && waiting ? ', ' : ''}${waiting ? `${waiting} book${waiting === 1 ? '' : 's'} changed in both places: choose in Settings › Calibre` : ''}`);
+    return waiting;
+  }
+  /** what is different here from Calibre (and not waiting for a choice) goes to supernote-changes.csv for the helper */
+  async function calibreExport(l: Lib, ms: MetaStore, bs: Book[], csvPath?: string) {
+    const at = csvPath || (await calibreCsv(l))?.path;
+    if (!at) return;
+    const q = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const lines = ['calibre_id,title,field,value'];
+    for (const b of bs) {
+      const m = ms.books[b.key];
+      const c = m?.calibre;
+      if (!c?.id || b.missing) continue;
+      for (const {id: f} of CAL_FIELDS) {
+        if (c.pending?.[f] !== undefined) continue;
+        const mine = calValue(b, m, f);
+        if (mine && !calSame(f, mine, c.base?.[f] || '')) lines.push([c.id, shownTitle(b, m), f, mine].map(q).join(','));
+      }
+    }
+    await writeText(at.replace(/calibre\.csv$/i, 'supernote-changes.csv'), lines.join('\r\n') + '\r\n');
+  }
+  async function syncCalibre(force: boolean) {
+    let waiting = 0, any = false;
+    for (const l of libs) {
+      const d = l.path === lib?.path ? {books, meta: metaRef.current} : libDataRef.current[l.path];
+      if (!d) continue;
+      if (await calibreCsv(l)) any = true;
+      waiting += await calibreLib(l, d.books, force);
+    }
+    if (!any) say('No calibre.csv yet. Run the helper on your computer first (Settings › Calibre).');
+    else if (!waiting) say('Calibre: everything is in step.');
+  }
+  /** your choice for one field of one book; can be changed again until the next sync */
+  async function calDecide(l: Lib, key: string, f: CalField, use: 'sn' | 'cal') {
+    const d = l.path === lib?.path ? {books, meta: metaRef.current} : libDataRef.current[l.path];
+    if (!d) return;
+    const b = d.books.find(x => x.key === key);
+    const m = d.meta.books[key];
+    if (!b || !m?.calibre) return;
+    const c = m.calibre;
+    const pend = c.pending?.[f];
+    const was = c.decided?.[f];
+    const sn = pend !== undefined ? calValue(b, m, f) : was?.sn ?? calValue(b, m, f);
+    const cal = pend !== undefined ? pend : was?.cal ?? c.base?.[f] ?? '';
+    const pending = {...(c.pending || {})};
+    delete pending[f];
+    const next: Meta = {...m, ...calPatch(f, use === 'cal' ? cal : sn), calibre: {...c, pending, decided: {...(c.decided || {}), [f]: {sn, cal, use, at: Date.now()}}}};
+    const ms: MetaStore = {...d.meta, books: {...d.meta.books, [key]: next}};
+    await putMeta(l, d.books, ms);
+    await calibreExport(l, ms, d.books);
+  }
+  const [calOpen, setCalOpen] = useState<null | {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField}>(null);
+  /** AO3 downloads: read the work's tags from its first page (once per book); fills empty details too, never overwrites yours */
+  async function probeAo3(l: Lib, bs: Book[]) {
+    const cur0 = l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta;
+    if (!cur0) return;
+    const todo = bs.filter(b => !b.missing && /\.epub$/i.test(b.files[0] || '') && !cur0.books[b.key]?.ao3Seen);
+    if (!todo.length) return;
+    const patches: {[k: string]: Meta} = {};
+    let found = 0;
+    for (const b of todo) {
+      await loadContents(b.files[0]);
+      const w = parseAo3(FIRSTS[b.files[0]] || '');
+      const m = cur0.books[b.key] || {};
+      const p: Meta = {ao3Seen: true};
+      if (w) {
+        found++;
+        p.ao3 = {url: w.url, rating: w.rating, warnings: w.warnings, categories: w.categories, fandoms: w.fandoms, ships: w.ships, characters: w.characters, tags: w.tags, words: w.words, chapters: w.chapters, complete: w.complete, author: w.author};
+        if (!m.author && w.author) p.author = w.author;
+        if (!m.description && w.summary) p.description = w.summary.slice(0, 2000);
+        if (!m.language && w.language) p.language = w.language;
+        if (!m.status && w.chapters) p.status = `${w.chapters} chapters${w.complete ? ' (Completed)' : ''}`;
+        if (!m.seriesName && w.series) { p.seriesName = w.series; p.seriesNo = w.seriesNo; }
+        if (!m.length && w.words) p.length = {words: w.words, cjk: 0};
+      }
+      patches[b.key] = p;
+    }
+    const cur = l.path === libRef.current?.path ? metaRef.current : libDataRef.current[l.path]?.meta || cur0;
+    const next: MetaStore = {...cur, books: {...cur.books}};
+    Object.entries(patches).forEach(([k, p]) => (next.books[k] = {...next.books[k], ...p}));
+    await saveMeta(l.path, next, bs);
+    libDataRef.current = {...libDataRef.current, [l.path]: {books: bs, meta: next}};
+    setLibData(d => ({...d, [l.path]: {books: bs, meta: next}}));
+    if (l.path === libRef.current?.path) { metaRef.current = next; setMeta(next); }
+    log('ao3', todo.length, 'looked at', found, 'found');
+    if (found) say(`${l.name}: found ${found} AO3 work${found === 1 ? '' : 's'}, with their fandoms, ships and tags`);
   }
   /** fill empty details from what is written inside each EPUB (author, description, language); never overwrites yours */
   const probing = useRef(false);
@@ -1033,6 +1202,10 @@ function PurrinkShelfApp(): React.JSX.Element {
       }),
     [libs, lib, books, meta, libData],
   );
+  const calItems = index.filter(f => f.meta.calibre && (Object.keys(f.meta.calibre.pending || {}).length || Object.keys(f.meta.calibre.decided || {}).length));
+  const calWaiting = calItems.filter(f => Object.keys(f.meta.calibre!.pending || {}).length);
+  const calDecided = calItems.filter(f => !Object.keys(f.meta.calibre!.pending || {}).length);
+
   // ---------- the book details sheet (Document/PurrinkShelf/PurrinkShelf books.xlsx), filled in on a computer ----------
   const sheetPath = `${DEFAULT_BACKUP_DIR}/${XLSX_NAME}`;
   const csvPath = `${DEFAULT_BACKUP_DIR}/${SHEET_NAME}`;
@@ -1675,7 +1848,19 @@ function PurrinkShelfApp(): React.JSX.Element {
   const keysOf = (b: Book) => {
     const m = meta.books[b.key] || {};
     const au = authorOf(b, m);
-    return [...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t), ...catsOf(b, m).map(c => 'c:' + c), ...(au ? ['a:' + au] : []), ...(settings.warnings ? (m.warnings || []).map(w => 'w:' + w) : []), ...flagsOf(b)];
+    const o = m.ao3;
+    const ao3 = o ? [
+      ...(settings.ao3Keep.rating && o.rating ? ['R:' + o.rating] : []),
+      ...(settings.ao3Keep.fandom ? [...o.fandoms.map(x => 'F:' + x), ...o.ships.map(x => 'S:' + x), ...o.characters.map(x => 'H:' + x)] : []),
+      ...(settings.ao3Keep.tags ? o.tags.filter(t => !(m.tags || []).includes(t)).map(t => 't:' + t) : []),
+      ...(settings.ao3Keep.rating && settings.warnings ? o.warnings.filter(w => !(m.warnings || []).includes(w)).map(w => 'w:' + w) : []),
+      'f:ao3',
+    ] : [];
+    return [
+      ...(m.genres || []).map(g => 'g:' + g), ...(m.tags || []).map(t => 't:' + t), ...catsOf(b, m).map(c => 'c:' + c), ...(au ? ['a:' + au] : []),
+      ...(settings.warnings ? (m.warnings || []).map(w => 'w:' + w) : []), ...(m.language ? ['l:' + m.language] : []), 's:' + readLabel(m.reading?.state),
+      ...ao3, ...flagsOf(b),
+    ];
   };
   const matches = (b: Book, ts: TagState, skip?: string) => {
     const bt = keysOf(b);
@@ -1700,7 +1885,8 @@ function PurrinkShelfApp(): React.JSX.Element {
   };
   const results = useMemo(() => {
     const {by, asc} = settings.sort;
-    const list = shelf.filter(b => inCat(b) && matches(b, tags));
+    const sep = settings.ao3 === 'separate' && shelf.some(b => meta.books[b.key]?.ao3);
+    const list = shelf.filter(b => inCat(b) && matches(b, tags) && (!sep || !!meta.books[b.key]?.ao3 === ao3Only));
     const k = new Map(list.map(b => [b.key, sortKey(b, by)]));
     list.sort((a, b) => {
       const x = k.get(a.key)!, y = k.get(b.key)!;
@@ -1708,7 +1894,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       return asc ? c : -c;
     });
     return list;
-  }, [shelf, tags, mode, cat, settings.sort, meta, readKeys, app.bookmarks]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shelf, tags, mode, cat, settings.sort, settings.ao3, ao3Only, meta, readKeys, app.bookmarks]); // eslint-disable-line react-hooks/exhaustive-deps
   // categories as a tree (Category › Sub-category) for the picker at the top
   const catTree = useMemo(() => {
     const parentOf: {[c: string]: string} = {};
@@ -1803,11 +1989,37 @@ function PurrinkShelfApp(): React.JSX.Element {
     <View style={st.screen}>
       {body}
       {card}
+      {calOpen ? (
+        <CalibreCard
+          items={calItems}
+          at={app.calibreAt}
+          view={calOpen}
+          setView={setCalOpen}
+          onClose={() => setCalOpen(null)}
+          onDecide={(f, field, use) => calDecide(f.lib, f.book.key, field, use)}
+          onAll={async use => {
+            for (const f of calWaiting) for (const field of Object.keys(f.meta.calibre?.pending || {}) as CalField[]) await calDecide(f.lib, f.book.key, field, use);
+          }}
+          preview={(f, m) => (
+            <BookPage
+              preview
+              book={f.book} meta={m} title={shownTitle(f.book, m)} cats={catsOf(f.book, m)} cover={f.lib.path === lib?.path ? coverUri(f.book) : m.cover || null}
+              paging="arrows" volGrid={false} setVolGrid={() => {}} onRead={() => {}} onEdit={() => {}} onBack={() => {}} onFilter={() => {}}
+              marked={false} onMark={() => {}} onNotes={() => {}} onPaste={() => {}} onFav={() => {}} onReading={() => {}}
+              collections={[]} onCollection={() => {}} onNewCollection={() => {}} onReload={() => {}} reloading={false}
+              author={authorOf(f.book, m)} dup={null} showLength={settings.length} showWarnings={settings.warnings}
+            />
+          )}
+        />
+      ) : null}
       {showSettings && (
         <SettingsSheet
+          start={setsAt}
+          ao3Count={index.filter(f => f.meta.ao3).length}
+          calibre={{waiting: calWaiting.length, decided: calDecided.length, last: app.calibreAt, onOpen: () => fromSettings(() => setCalOpen({kind: 'list'})), onSync: () => syncCalibre(true)}}
           settings={settings}
           change={changeSettings}
-          onClose={() => setShowSettings(false)}
+          onClose={() => { setShowSettings(false); setSetsAt(undefined); }}
           onLibraries={() => fromSettings(() => setScreen({kind: 'libraries'}))}
           missing={settings.missing}
           onHelp={() => fromSettings(() => setScreen({kind: 'help'}))}
@@ -1996,6 +2208,7 @@ function PurrinkShelfApp(): React.JSX.Element {
         chaptersAt={settings.chaptersAt}
         nextUp={nextUp && nextUp.lib === lib.path && nextUp.key === b.key ? nextUp : null}
         onNextLater={() => setNextUp(null)}
+        onCalibre={() => setCalOpen({kind: 'book', lib: lib.path, key: b.key})}
         marked={isMarked(b)}
         onNotes={notes => updateMeta(b.key, {notes})}
         onPaste={async what => {
@@ -2521,7 +2734,9 @@ function PurrinkShelfApp(): React.JSX.Element {
   const chunk = results.slice((pg - 1) * per, pg * per);
   if (!settings.libFolders) scheduleCovers(chunk.filter(b => !b.missing));
   const resW = W - sideW;
-  const avail = H - px(64) - px(58) - px(64) - TASK_H;
+  const sepAo3 = settings.ao3 === 'separate' && shelf.some(b => meta.books[b.key]?.ao3);
+  const quickH = settings.quick.length || sepAo3 ? px(48) : 0;
+  const avail = H - px(64) - px(58) - px(64) - TASK_H - quickH;
   const active = Object.keys(tags).length;
   const badgeOf = (b: Book) => (b.missing ? 'MISSING LINK' : undefined);
   const isNewB = (b: Book) => settings.badges.newBadge && !!meta.newKeys?.includes(b.key);
@@ -2535,13 +2750,65 @@ function PurrinkShelfApp(): React.JSX.Element {
   const hasLoan = shelf.some(b => meta.books[b.key]?.loan);
   // Paper / E-book only when there are paper books; Lent or borrowed only when something is
   const shownFlags = FLAGS.filter(f => (f.k !== 'f:missing' || missingHere.length || tags[f.k]) && (!['f:paper', 'f:ebook'].includes(f.k) || hasPaper) && (f.k !== 'f:loan' || hasLoan));
-  const kinds = (['g', 't', 'a', 'w', 'f'] as const).filter(k => k !== 'w' || allWarnings.length);
-  const fNames = fKind === 'g' ? allGenres : fKind === 't' ? allTags : fKind === 'a' ? allAuthors : fKind === 'w' ? allWarnings : shownFlags.map(f => f.k);
-  const fixedTop = px(10) + px(36) + px(46) + (kinds.length > 4 ? px(38) : 0) + (fKind === 'f' ? px(24) : px(40) + px(24));
-  const perT = Math.max(4, Math.floor((H - px(64) - fixedTop - px(64) - TASK_H - px(10)) / px(40)));
-  const tPages = Math.max(1, Math.ceil(fNames.length / perT));
+  // the Filters panel: the tabs you chose (Settings › Filters), AO3's own tabs when there are AO3 works
+  const keyMap = new Map<string, string[]>();
+  const kOf = (b: Book) => { let k = keyMap.get(b.key); if (!k) { k = keysOf(b); keyMap.set(b.key, k); } return k; };
+  const namesFor = (k: string): string[] => {
+    if (k === 'f') return shownFlags.map(f => f.k);
+    const set = new Set<string>();
+    shelf.forEach(b => kOf(b).forEach(x => { if (x.startsWith(k + ':')) set.add(x.slice(k.length + 1)); }));
+    let list = Array.from(set);
+    if (k.length === 1 && 'RFSH'.includes(k) && settings.ao3Keep.hideSingles) list = list.filter(n => shelf.filter(b => kOf(b).includes(`${k}:${n}`)).length > 1);
+    return list;
+  };
+  const hasAo3 = shelf.some(b => meta.books[b.key]?.ao3);
+  const ao3View = settings.ao3 === 'separate' && hasAo3 && ao3Only;
+  const kinds = (ao3View ? ['R', 'F', 'S', 'H', 't', 'w', 'f'] : settings.filterTabs.filter(k => !'RFSH'.includes(k) || hasAo3))
+    .filter(k => k !== 'w' || allWarnings.length || hasAo3)
+    .filter(k => k === 'f' || namesFor(k).length || ['g', 't'].includes(k));
+  const kindNow = kinds.includes(fKind) ? fKind : kinds[0] || 'g';
+  const order = settings.filterOrder;
+  const sortNames = (k: string, list: string[]) => {
+    if (k === 'f') return list;
+    const key = (n: string) => `${k}:${n}`;
+    const alpha = (x: string, y: string) => x.localeCompare(y, undefined, {sensitivity: 'base'});
+    if (order === 'count') return [...list].sort((x, y) => tagCount(key(y)) - tagCount(key(x)) || alpha(x, y));
+    if (order === 'tapped') return [...list].sort((x, y) => (settings.tapped[key(y)] || 0) - (settings.tapped[key(x)] || 0) || alpha(x, y));
+    return [...list].sort(alpha);
+  };
+  const findQ = fFind.trim().toLowerCase();
+  const fNames = sortNames(kindNow, namesFor(kindNow)).filter(n => !findQ || (kindNow === 'f' ? flagLabel(n) : n).toLowerCase().includes(findQ));
+  const compact = ao3View || settings.compactTags;
+  const letterOf = (n: string) => { const c = n.trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+  const withHeads = kindNow !== 'f' && order === 'alpha' && !compact && fNames.length > 8;
+  // laid out by height: names (40), letter headings (30); chips wrap in lines
+  type FItem = {h: number; head?: string; names?: string[]};
+  const items: FItem[] = [];
+  const innerW = sideW - px(20);
+  if (compact) {
+    const chipW = (n: string) => (n.length + String(tagCount(`${kindNow}:${n}`)).length + 1) * px(13) * 0.56 + px(22);
+    let line: string[] = [], used = 0;
+    fNames.forEach(n => {
+      const w = chipW(n);
+      if (used + w > innerW && line.length) { items.push({h: px(34), names: line}); line = []; used = 0; }
+      line.push(n); used += w;
+    });
+    if (line.length) items.push({h: px(34), names: line});
+  } else {
+    let last = '';
+    fNames.forEach(n => {
+      if (withHeads && letterOf(n) !== last) { last = letterOf(n); items.push({h: px(30), head: last}); }
+      items.push({h: px(40), names: [n]});
+    });
+  }
+  const fixedTop = px(10) + px(36) + px(46) + (kinds.length > 4 ? px(38) * (Math.ceil(kinds.length / 3) - 1) : 0) + px(48) + (kindNow === 'f' ? px(24) : px(40) + px(24));
+  const listH = H - px(64) - fixedTop - px(64) - TASK_H - px(10);
+  const fPages: FItem[][] = [[]];
+  { let u = 0; items.forEach(it => { if (u + it.h > listH && fPages[fPages.length - 1].length) { fPages.push([]); u = 0; } fPages[fPages.length - 1].push(it); u += it.h; }); }
+  const tPages = fPages.length;
   const tp = Math.min(tPage, tPages);
-  const tagChunk = fNames.slice((tp - 1) * perT, tp * perT);
+  const letters = new Set(fNames.map(letterOf));
+  const pageOfLetter = (L: string) => fPages.findIndex(pg => pg.some(it => it.head === L || (!withHeads && it.names?.some(n => letterOf(n) === L)))) + 1;
   const cycleTag = (t: string) => {
     const n = {...tags};
     if (!n[t]) n[t] = 1;
@@ -2549,6 +2816,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     else delete n[t];
     setTags(n);
     setPage(1);
+    if (!t.startsWith('f:')) changeSettings({tapped: {...settings.tapped, [t]: (settings.tapped[t] || 0) + 1}});
   };
   const flagLabel = (k: string) => FLAGS.find(f => f.k === k)?.label || k;
   const kindOn = (k: string) => Object.keys(tags).filter(t => t.startsWith(k + ':')).length;
@@ -2690,35 +2958,60 @@ function PurrinkShelfApp(): React.JSX.Element {
             <View style={{flex: 1, padding: px(10)}}>
               <View style={st.sideHead}>
                 <Text style={st.sideTitle}>Filters</Text>
+                <View style={{flex: 1}} />
                 {active > 0 && (
-                  <Pressable onPress={clearAll} hitSlop={px(8)}>
+                  <Pressable onPress={clearAll} hitSlop={px(8)} style={{marginRight: px(10)}}>
                     <Text style={st.clear}>Clear</Text>
                   </Pressable>
                 )}
+                <IconBtn name="gear" label="Filter settings" onPress={() => { setSetsAt('filters'); setShowSettings(true); }} size={px(40)} iconSize={px(22)} />
               </View>
               <View style={st.kindTabs}>
                 {kinds.map((k, i) => (
-                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); }} style={[st.kindTab, {paddingHorizontal: 0}, kinds.length > 4 && {flexBasis: i < 3 ? '30%' : '46%', marginBottom: px(6)}, fKind === k && st.btnDark]} accessibilityLabel={k === 'g' ? 'Genre' : k === 't' ? 'Tags' : k === 'a' ? 'Author' : k === 'w' ? 'Content warnings' : 'More filters'}>
-                    <Text style={[st.kindTabText, {fontSize: px(14)}, fKind === k && {color: '#ffffff'}]} numberOfLines={1}>{(k === 'g' ? 'Genre' : k === 't' ? 'Tags' : k === 'a' ? 'Author' : k === 'w' ? 'Warnings' : 'More') + (kindOn(k) && fKind !== k ? '•' : '')}</Text>
+                  <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); setFFind(''); }} style={[st.kindTab, {paddingHorizontal: 0}, kinds.length > 4 && {flexBasis: '30%', flexGrow: 0, marginBottom: px(6)}, kindNow === k && st.btnDark]} accessibilityLabel={KIND_NAMES[k] || k}>
+                    <Text style={[st.kindTabText, {fontSize: kinds.length > 4 ? px(13) : px(14)}, kindNow === k && {color: '#ffffff'}]} numberOfLines={1}>{(KIND_SHORT[k] || k) + (kindOn(k) && kindNow !== k ? '•' : '')}</Text>
                   </Pressable>
                 ))}
               </View>
+              <View style={{flexDirection: 'row', alignItems: 'center', height: px(48)}}>
+                <TextInput value={fFind} onChangeText={t => { setFFind(t); setTPage(1); }} placeholder={`Find ${kindNow === 'f' ? 'a filter' : 'a ' + (KIND_ONE[kindNow] || 'tag')}`} style={[st.input, {width: innerW - (kindNow !== 'f' ? px(54) : 0), marginBottom: 0, fontSize: px(15), paddingVertical: px(4), height: px(40)}]} />
+                {kindNow !== 'f' ? (
+                  <Pressable onPress={() => setAzOpen(true)} style={[st.pageBox, {marginLeft: px(6), marginRight: 0, minWidth: px(46)}]} accessibilityLabel="Jump to a letter">
+                    <Text style={[st.pageBoxText, {fontSize: px(14)}]}>A–Z</Text>
+                  </Pressable>
+                ) : null}
+              </View>
               {fNames.length === 0 ? (
-                <Text style={st.hint}>{`No ${fKind === 'g' ? 'genres' : fKind === 'a' ? 'authors' : fKind === 'w' ? 'warnings' : 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
+                <Text style={st.hint}>{findQ ? 'Nothing matches.' : `No ${KIND_MANY[kindNow] || 'tags'} yet. Open a book and tap Edit to add some.`}</Text>
               ) : (
                 <>
-                  {fKind !== 'f' && fKind !== 'a' ? (
+                  {kindNow !== 'f' && kindNow !== 'a' ? (
                     <View style={st.modeRow}>
                       <Text style={st.small}>Match </Text>
                       <Pill toggle label="All" active={mode === 'all'} onPress={() => { setMode('all'); setPage(1); }} />
                       <Pill toggle label="Any" active={mode === 'any'} onPress={() => { setMode('any'); setPage(1); }} />
                     </View>
                   ) : null}
-                  <Text style={st.hint}>Tap once to include, again to exclude.</Text>
+                  <Text style={st.hint}>{`Tap once to include, again to exclude.${order === 'count' ? '  By most books.' : order === 'tapped' ? '  Most tapped first.' : ''}`}</Text>
                   <View style={{flex: 1}}>
-                    {tagChunk.map(t => {
-                      const k = fKind === 'f' ? t : `${fKind}:${t}`;
-                      return <FilterRow key={k} label={fKind === 'f' ? flagLabel(t) : t} count={tagCount(k)} state={tags[k] || 0} onPress={() => cycleTag(k)} />;
+                    {(fPages[tp - 1] || []).map((it, i) => {
+                      if (it.head) return <View key={'h' + it.head} style={{height: it.h, justifyContent: 'center'}}><View style={st.letterHead}><Text style={st.letterHeadText}>{it.head}</Text></View></View>;
+                      if (compact) return (
+                        <View key={'c' + i} style={{height: it.h, flexDirection: 'row', alignItems: 'center'}}>
+                          {it.names!.map(n => {
+                            const k = `${kindNow}:${n}`;
+                            const stt = tags[k] || 0;
+                            return (
+                              <Pressable key={k} onPress={() => cycleTag(k)} style={[st.fChip, stt === 1 && st.btnDark, stt === -1 && {borderStyle: 'dashed'}]} accessibilityLabel={n}>
+                                <Text style={[st.fChipText, stt === 1 && {color: '#ffffff'}, stt === -1 && {textDecorationLine: 'line-through'}]} numberOfLines={1}>{n}<Text style={[st.fChipCount, stt === 1 && {color: '#dddddd'}]}>{` ${tagCount(k)}`}</Text></Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      );
+                      const t = it.names![0];
+                      const k = kindNow === 'f' ? t : `${kindNow}:${t}`;
+                      return <FilterRow key={k} label={kindNow === 'f' ? flagLabel(t) : t} count={tagCount(k)} state={tags[k] || 0} onPress={() => cycleTag(k)} />;
                     })}
                   </View>
                   <View style={st.gPager}>
@@ -2729,6 +3022,25 @@ function PurrinkShelfApp(): React.JSX.Element {
                 </>
               )}
             </View>
+            {azOpen ? (
+              <View style={[st.inPanel, {top: px(120), bottom: undefined, left: px(6), right: px(6)}]}>
+                <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+                  <Text style={[st.rowTitle, {flex: 1}]}>Jump to</Text>
+                  <IconBtn name="close" label="Close" onPress={() => setAzOpen(false)} size={px(40)} />
+                </View>
+                <View style={{flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'}}>
+                  {'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').map(L => {
+                    const has = letters.has(L);
+                    return (
+                      <Pressable key={L} disabled={!has} onPress={() => { setFFind(''); setTPage(Math.max(1, pageOfLetter(L))); setAzOpen(false); }} style={[st.azKey, !has && {borderColor: '#bbbbbb'}]} accessibilityLabel={`Letter ${L}`}>
+                        <Text style={[st.azKeyText, !has && {color: '#bbbbbb'}]}>{L}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Text style={[st.hint, {marginTop: px(6), marginBottom: 0}]}>Grey letters have nothing under them.</Text>
+              </View>
+            ) : null}
           </View>
         )}
         <View style={{flex: 1}}>
@@ -2747,6 +3059,20 @@ function PurrinkShelfApp(): React.JSX.Element {
           <IconBtn name="folder" label="Folder view" dark={settings.libFolders} onPress={() => changeSettings({libFolders: !settings.libFolders})} size={px(42)} style={{marginLeft: px(8), borderRadius: px(10)}} />
         </View>
       </View>
+      {quickH ? (
+        <View style={st.quickRow}>
+          {sepAo3 ? (
+            <View style={{flexDirection: 'row', marginRight: px(10)}}>
+              <Pill toggle small label="Books" active={!ao3Only} onPress={() => { setAo3Only(false); setTags({}); setPage(1); setFKind('g'); }} />
+              <Pill toggle small label="AO3" active={ao3Only} onPress={() => { setAo3Only(true); setTags({}); setPage(1); setFKind('F'); }} />
+            </View>
+          ) : null}
+          {settings.quick.length ? <Text style={[st.small, {marginRight: px(6)}]}>Quick:</Text> : null}
+          {settings.quick.map(k => (
+            <Pill toggle small key={k} label={k.startsWith('f:') ? FLAGS.find(f => f.k === k)?.label || k : k.slice(k.indexOf(':') + 1)} active={tags[k] === 1} onPress={() => { const n = {...tags}; if (n[k] === 1) delete n[k]; else n[k] = 1; setTags(n); setPage(1); }} />
+          ))}
+        </View>
+      ) : null}
       {settings.libFolders && lib ? (
         <FolderView
           key={lib.path}
@@ -3283,6 +3609,7 @@ function BookPage(props: {
   nextUp?: {from: string; to: string} | null; // you just finished a volume: start the next one?
   onNextLater?: () => void;
   preview?: boolean; // a small look at the page (nothing can be tapped)
+  onCalibre?: () => void; // the Calibre versions of this book
 }) {
   const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings, nextUp} = props;
   const epubs = b.missing || b.ext === 'paper' ? [] : b.files.filter(f => /\.epub$/i.test(f));
@@ -3319,11 +3646,12 @@ function BookPage(props: {
   const left: Item[] = [];
   let sec = 'Overview';
   const label = (t: string) => ({h: px(32), sec, node: <Text style={st.infoLabel}>{t}</Text>});
+  const maxPill = Math.floor((lIn - px(30)) / (px(14) * 0.58)); // a longer name is shortened (the filter still uses all of it)
   const pills = (list: string[], k: FilterKind) =>
-    pillLines(list, lIn).map(line => ({
+    pillLines(list.map(t => t), lIn).map(line => ({
       h: px(33),
       sec,
-      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t} onPress={() => onFilter(k, t)} />)}</View>,
+      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
@@ -3354,12 +3682,26 @@ function BookPage(props: {
   sec = 'Tags';
   left.push({h: 0, brk: true});
   left.push(label('Tags'));
-  if (m.tags?.length) left.push(...pills(m.tags, 't'));
+  const allTagsHere = Array.from(new Set([...(m.tags || []), ...(m.ao3?.tags || [])]));
+  if (allTagsHere.length) left.push(...pills(allTagsHere, 't'));
   else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
   if (showWarnings && m.warnings?.length) {
     left.push({h: px(8), sec});
     left.push(label('Content warnings'));
     left.push(...pills(m.warnings, 'w'));
+  }
+  if (m.ao3) {
+    const o = m.ao3;
+    sec = 'AO3';
+    left.push({h: 0, brk: true});
+    if (o.rating) field('Rating', o.rating, () => onFilter('R', o.rating!));
+    if (o.fandoms.length) { left.push(label(o.fandoms.length > 1 ? 'Fandoms' : 'Fandom')); left.push(...pills(o.fandoms, 'F')); }
+    if (o.ships.length) { left.push(label(o.ships.length > 1 ? 'Ships' : 'Ship')); left.push(...pills(o.ships, 'S')); }
+    if (o.characters.length) { left.push(label('Characters')); left.push(...pills(o.characters, 'H')); }
+    if (o.warnings.length) { left.push(label('Archive warnings')); left.push(...pills(o.warnings, 'w')); }
+    const facts = [o.words ? `${o.words.toLocaleString()} words` : '', o.chapters ? `${o.chapters} chapters` : '', o.complete ? 'Complete' : o.chapters ? 'Work in progress' : ''].filter(Boolean).join(' · ');
+    if (facts) field('Length', facts);
+    if (o.url) field('Link', o.url.replace(/^https?:\/\/(www\.)?/, ''));
   }
   sec = 'Details';
   left.push({h: 0, brk: true});
@@ -3374,6 +3716,8 @@ function BookPage(props: {
     field('Reading', `${readLabel(m.reading.state)} since ${day(m.reading.at)}` + (done && m.reading.state !== 'completed' ? `. Finished ${day(done.at)}` : '') + (n > 1 ? `. Read ${n} times` : ''));
   }
   if (m.source) field('Got it from', m.source);
+  if (m.calibre?.pending && Object.keys(m.calibre.pending).length) field('Calibre', `${Object.keys(m.calibre.pending).length} to choose: tap to compare`, props.onCalibre);
+  else if (m.calibre?.decided && Object.keys(m.calibre.decided).length) field('Calibre', 'Your choices: tap to see or change', props.onCalibre);
   if (m.loan) field(m.loan.dir === 'lent' ? 'Lent to' : 'Borrowed from', `${m.loan.who}, since ${day(m.loan.at)}`);
   if (b.vols.length > 1) field('Files', `${b.vols.length} parts${b.series === 'group' ? ' (combined by you)' : b.series ? ' (one folder)' : ''}`);
 
@@ -4317,7 +4661,11 @@ function RoundBtn({label, note, onPress, children, dim}: {label: string; note?: 
 function MiniIcon({kind, on}: {kind: 'list' | 'grid'; on: boolean}) {
   return <View style={{opacity: on ? 1 : 0.5}}><Icon name={kind} size={px(28)} /></View>;
 }
-function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote, libs, lib, onLib, onActivity, activityCount}: {
+type SetPage = 'main' | 'look' | 'show' | 'about' | 'license' | 'book' | 'filters' | 'ao3' | 'calibre';
+function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches, onClearHistory, counts, onHelp, onPerms, permNote, libs, lib, onLib, onActivity, activityCount, start, calibre, ao3Count}: {
+  start?: SetPage;
+  calibre: {waiting: number; decided: number; last?: number; onOpen: () => void; onSync: () => void};
+  ao3Count: number;
   onActivity: () => void;
   activityCount: number;
   libs: Lib[];
@@ -4343,9 +4691,124 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
       ]}
     />
   );
-  const [page, setPage] = useState<'main' | 'look' | 'show' | 'about' | 'license'>('main');
+  const [page, setPage] = useState<SetPage>(start || 'main');
   const [licPg, setLicPg] = useState(0);
-  const back = () => setPage(page === 'license' ? 'about' : 'main');
+  const back = () => (start && page === start ? onClose() : setPage(page === 'license' ? 'about' : 'main'));
+  const sec = (t: string, top = px(18)) => <Text style={[st.section, st.showSection, {marginTop: top}]}>{t}</Text>;
+  const foot = (
+    <>
+      <View style={{flex: 1}} />
+      <Text style={[st.small, {marginBottom: px(4), textAlign: 'center', color: '#666666'}]}>Changes apply straight away.</Text>
+    </>
+  );
+  if (page === 'book') {
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Book pages" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          {sec('Show first on the right side', px(4))}
+          <Seg options={[{label: 'Description', on: settings.bookFirst !== 'chapters', onPress: () => change({bookFirst: 'about'})}, {label: 'Chapters', on: settings.bookFirst === 'chapters', onPress: () => change({bookFirst: 'chapters'})}]} />
+          <Text style={[st.small, {marginTop: px(6)}]}>The other one is a tap away on the tab next to it. Chapters show for EPUB books.</Text>
+          {sec('Description')}
+          <Seg options={[{label: 'Turn pages with arrows', on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})}, {label: 'Scroll', on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})}]} />
+          {sec('Chapters list')}
+          <Seg options={[{label: 'Open at where I am', on: settings.chaptersAt !== 'start', onPress: () => change({chaptersAt: 'here'})}, {label: 'Start from Ch 1', on: settings.chaptersAt === 'start', onPress: () => change({chaptersAt: 'start'})}]} />
+          <Text style={[st.small, {marginTop: px(6)}]}>{'"Where I am" comes from the last time you opened PurrinkShelf from inside the book (the toolbar in the reader).'}</Text>
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'filters') {
+    const ALL = ['g', 't', 'a', 'w', 's', 'l', 'F', 'S', 'H', 'R', 'f'];
+    const tabs = settings.filterTabs;
+    const rest = ALL.filter(k => !tabs.includes(k));
+    const flip = (k: string) => change({filterTabs: tabs.includes(k) ? tabs.filter(x => x !== k) : [...tabs, k]});
+    const up = (k: string) => { const i = tabs.indexOf(k); if (i > 0) { const n = [...tabs]; n.splice(i, 1); n.splice(i - 1, 0, k); change({filterTabs: n}); } };
+    const keyLabel = (k: string) => (k.startsWith('f:') ? FLAGS.find(f => f.k === k)?.label || k : k.slice(k.indexOf(':') + 1));
+    const often = Object.entries(settings.tapped).sort((a, b) => b[1] - a[1]).map(([k]) => k).filter(k => !settings.quick.includes(k)).slice(0, 8);
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Filters" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          {sec('Order of genres and tags', px(4))}
+          <Seg options={[{label: 'Most books', on: settings.filterOrder === 'count', onPress: () => change({filterOrder: 'count'})}, {label: 'A–Z', on: settings.filterOrder === 'alpha', onPress: () => change({filterOrder: 'alpha'})}, {label: 'Most tapped', on: settings.filterOrder === 'tapped', onPress: () => change({filterOrder: 'tapped'})}]} />
+          {sec('Tags look', px(14))}
+          <Seg options={[{label: 'List with ticks', on: !settings.compactTags, onPress: () => change({compactTags: false})}, {label: 'Compact chips', on: settings.compactTags, onPress: () => change({compactTags: true})}]} />
+          {sec('Tabs in the Filters panel', px(14))}
+          <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
+            {tabs.map((k, i) => (
+              <View key={k} style={{flexDirection: 'row', alignItems: 'center', marginRight: px(6), marginBottom: px(6)}}>
+                {i > 0 ? <Pressable onPress={() => up(k)} hitSlop={px(6)} accessibilityLabel={`Move ${KIND_NAMES[k]} earlier`}><Icon name="back" size={px(18)} /></Pressable> : null}
+                <Pill toggle small active label={KIND_SHORT[k]} onPress={() => flip(k)} />
+              </View>
+            ))}
+            {rest.map(k => <Pill toggle small key={k} label={KIND_SHORT[k]} onPress={() => flip(k)} />)}
+          </View>
+          <Text style={[st.small, {marginTop: px(2)}]}>Tap to show or hide a tab; the arrow moves it earlier. Fandom, Ship, Character and Rating come from AO3 works.</Text>
+          {sec('Quick filters on the Library page', px(14))}
+          <Text style={st.small}>One tap away, above your books. Tap one to remove it; add from the ones you filter by most.</Text>
+          <View style={[st.pillWrap, {marginTop: px(6)}]}>
+            {settings.quick.map(k => <Pill toggle small active key={k} label={keyLabel(k)} onPress={() => change({quick: settings.quick.filter(x => x !== k)})} />)}
+            {!settings.quick.length ? <Text style={st.small}>None yet.</Text> : null}
+          </View>
+          {often.length ? (
+            <View style={[st.pillWrap, {marginTop: px(4)}]}>
+              {often.map(k => <Pill small key={k} label={`+ ${keyLabel(k)}`} onPress={() => change({quick: [...settings.quick, k].slice(0, 6)})} />)}
+            </View>
+          ) : <Text style={[st.small, {marginTop: px(4)}]}>Filters you tap in the Filters panel show up here to add.</Text>}
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'ao3') {
+    const keep = settings.ao3Keep;
+    const k = (id: keyof Settings['ao3Keep'], label: string) => <TriRow label={label} state={keep[id] ? 1 : 0} onPress={() => change({ao3Keep: {...keep, [id]: !keep[id]}})} />;
+    const choice = (on: boolean, title: string, text: string, pick: () => void) => (
+      <Pressable onPress={pick} style={[st.dChoice, on && st.dChoiceOn]} accessibilityRole="button" accessibilityLabel={title}>
+        <View style={[st.dRadio, on && st.dRadioOn]} />
+        <View style={{flex: 1}}><Text style={st.rowTitle}>{title}</Text><Text style={[st.small, {marginTop: px(2)}]}>{text}</Text></View>
+      </Pressable>
+    );
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Fanfiction (AO3)" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={st.small}>{ao3Count ? `PurrinkShelf found ${ao3Count} AO3 download${ao3Count === 1 ? '' : 's'}: it reads their fandom, ships, characters, rating, warnings, tags, words and chapters by itself.` : 'EPUBs downloaded from Archive of Our Own are found by themselves: their fandom, ships, characters, rating, warnings and tags are read from the first page.'}</Text>
+          {sec('How should they sit with your books?', px(14))}
+          {choice(settings.ao3 !== 'separate', 'Together', 'One library. AO3 tags join your genres and tags.', () => change({ao3: 'together'}))}
+          {choice(settings.ao3 === 'separate', 'Separate AO3 library', "Books and AO3 switch above the list, with AO3-style filters, so the many tags don't crowd your novels.", () => change({ao3: 'separate'}))}
+          {sec('Which AO3 tags to keep', px(14))}
+          {k('fandom', 'Fandom, ship and character')}
+          {k('rating', 'Rating and warnings')}
+          {k('tags', 'Additional tags')}
+          {k('hideSingles', 'Hide fandoms, ships and characters with only 1 work')}
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
+  if (page === 'calibre') {
+    return (
+      <ModalCard onOutside={back}>
+        <CardHeader title="Calibre" onBack={back} onClose={onClose} />
+        <View style={[st.pad, {flex: 1}]}>
+          <Text style={st.small}>Keep titles, authors, descriptions, genres, tags, series and languages the same in Calibre and here. Calibre is on your computer, so a small helper there passes the details back and forth through your synced library folder.</Text>
+          {sec('Sync', px(14))}
+          <Text style={[st.rowTitle, {fontSize: px(17)}]}>{calibre.last ? `Last sync ${new Date(calibre.last).toLocaleString(undefined, {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit'})}` : 'Not synced yet'}</Text>
+          <Text style={st.small}>{`${calibre.waiting} waiting for your choice  ·  ${calibre.decided} decided (can still be changed)`}</Text>
+          <View style={{flexDirection: 'row', marginTop: px(10)}}>
+            <Btn dark icon="refresh" label="Check for changes" onPress={calibre.onSync} style={{marginRight: px(8)}} />
+            <Btn icon="list" label="Changes from Calibre" onPress={calibre.onOpen} />
+          </View>
+          {sec('Setting it up (once, on the computer)', px(18))}
+          {['1. Download "purrinkshelf_calibre.py" from the PurrinkShelf GitHub page (tools › calibre).', '2. Run it with your Calibre library and your synced library folder, e.g. python purrinkshelf_calibre.py "C:\\Users\\you\\Calibre Library" "…\\Supernote\\Novels".', '3. It writes _Library Data/calibre.csv for PurrinkShelf, and puts your changes from here into Calibre (through calibredb, never by editing its database).', '4. Close Calibre while it runs. Run it again whenever you want to sync.'].map(t => <Text key={t} style={[st.small, {color: BLACK, marginTop: px(4)}]}>{t}</Text>)}
+          {foot}
+        </View>
+      </ModalCard>
+    );
+  }
   if (page === 'about') {
     const sec = (t: string) => <Text style={[st.section, st.showSection, {fontSize: px(19), marginTop: px(16)}]}>{t}</Text>;
     const line = (t: string) => <Text style={[st.small, {color: BLACK, fontSize: px(15), lineHeight: px(21), marginTop: px(4)}]}>{t}</Text>;
@@ -4523,6 +4986,20 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           </RoundBtn>
           <RoundBtn label="How to use" onPress={onHelp}>
             <Icon name="help" size={px(30)} />
+          </RoundBtn>
+        </View>
+        <View style={{flexDirection: 'row', marginTop: px(12)}}>
+          <RoundBtn label="Book pages" note={settings.bookFirst === 'chapters' ? 'Chapters first' : 'Description first'} onPress={() => setPage('book')}>
+            <Icon name="pages" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Filters" note={settings.filterOrder === 'count' ? 'Most books' : settings.filterOrder === 'tapped' ? 'Most tapped' : 'A–Z'} onPress={() => setPage('filters')}>
+            <Icon name="filter" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Fanfiction (AO3)" note={settings.ao3 === 'separate' ? 'Separate' : 'Together'} onPress={() => setPage('ao3')}>
+            <Icon name="layers" size={px(30)} />
+          </RoundBtn>
+          <RoundBtn label="Calibre" note={calibre.waiting ? `${calibre.waiting} to choose` : calibre.last ? 'Synced' : 'Not set up'} onPress={() => setPage('calibre')}>
+            <Icon name="refresh" size={px(30)} />
           </RoundBtn>
         </View>
         <View style={{flex: 1}} />
@@ -6328,6 +6805,117 @@ function ActivityCard({items, onClose, onClear}: {items: {t: string; at: number}
     </ModalCard>
   );
 }
+// ---------- Calibre: books changed in both places, and your choices (which can be changed until the next sync) ----------
+const CAL_WORD: {[f in CalField]: string} = {title: 'title', author: 'author', description: 'description', genres: 'genres', tags: 'tags', series: 'series', language: 'language'};
+function CalibreCard({items, at, view, setView, onDecide, onAll, preview, onClose}: {
+  items: Found[]; at?: number; view: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField};
+  setView: (v: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField}) => void;
+  onDecide: (f: Found, field: CalField, use: 'sn' | 'cal') => void; onAll: (use: 'sn' | 'cal') => void;
+  preview: (f: Found, m: Meta) => React.ReactNode; onClose: () => void;
+}) {
+  const [pg, setPg] = useState(0);
+  const [tab, setTab] = useState<'sn' | 'cal'>('sn');
+  const waiting = items.filter(f => Object.keys(f.meta.calibre?.pending || {}).length);
+  const decided = items.filter(f => !Object.keys(f.meta.calibre?.pending || {}).length && Object.keys(f.meta.calibre?.decided || {}).length);
+  if (view.kind === 'book') {
+    const f = items.find(x => x.lib.path === view.lib && x.book.key === view.key);
+    if (!f) return null;
+    const c = f.meta.calibre || {};
+    const fields = CAL_FIELDS.map(x => x.id).filter(x => c.pending?.[x] !== undefined || c.decided?.[x]);
+    const field = view.f && fields.includes(view.f) ? view.f : fields[0];
+    const pend = c.pending?.[field];
+    const dec = c.decided?.[field];
+    const inUse: 'sn' | 'cal' | null = pend !== undefined ? null : dec?.use || null;
+    const sn = pend !== undefined ? calValue(f.book, f.meta, field) : dec?.sn ?? '';
+    const cal = pend !== undefined ? pend : dec?.cal ?? '';
+    const shown: Meta = {...f.meta, ...calPatch(field, tab === 'cal' ? cal : sn)};
+    const sc = Math.min((CARD_W - px(40)) / CARD_W, (CARD_H - px(64) - px(36) - (fields.length > 1 ? px(48) : 0) - px(60) - px(44) - px(130)) / CARD_H);
+    const title = shownTitle(f.book, f.meta);
+    return (
+      <ModalCard onOutside={() => setView({kind: 'list'})}>
+        <CardHeader title={title} onBack={() => setView({kind: 'list'})} onClose={onClose} />
+        <View style={[st.pad, {flex: 1, paddingTop: px(8)}]}>
+          <Text style={st.small}>{pend !== undefined ? 'Changed in both places since the last sync. Tap a tab to compare.' : 'You chose this one. Tap the other tab to look at it, and switch if you like.'}</Text>
+          {fields.length > 1 ? (
+            <View style={[st.pillWrap, {marginTop: px(8), height: px(40)}]}>
+              {fields.map(x => <Pill toggle small key={x} label={CAL_FIELDS.find(y => y.id === x)!.label + (c.pending?.[x] !== undefined ? ' · choose' : '')} active={x === field} onPress={() => { setTab('sn'); setView({...view, f: x}); }} />)}
+            </View>
+          ) : null}
+          <View style={{marginTop: px(8)}}>
+            <Seg options={[
+              {label: `On Supernote${inUse === 'sn' ? ' · in use' : ''}`, on: tab === 'sn', onPress: () => setTab('sn')},
+              {label: `From Calibre${inUse === 'cal' ? ' · in use' : ''}`, on: tab === 'cal', onPress: () => setTab('cal')},
+            ]} />
+          </View>
+          <View style={{alignItems: 'center', marginTop: px(10)}}>
+            <View style={{width: Math.round(CARD_W * sc), height: Math.round(CARD_H * sc), overflow: 'hidden', borderWidth: 2, borderColor: BLACK, borderRadius: px(14)}} pointerEvents="none">
+              <View style={{width: CARD_W, height: CARD_H, backgroundColor: '#ffffff', transform: [{translateX: (-CARD_W * (1 - sc)) / 2}, {translateY: (-CARD_H * (1 - sc)) / 2}, {scale: sc}]}}>
+                {preview(f, shown)}
+              </View>
+            </View>
+          </View>
+          <Text style={[st.small, {textAlign: 'center', marginTop: px(14)}]}>{`How the book card will look with this version. Different: ${CAL_WORD[field]}.`}</Text>
+          <View style={{flex: 1}} />
+          <View style={{flexDirection: 'row'}}>
+            <Btn label="Back" onPress={() => setView({kind: 'list'})} style={{flex: 1, marginRight: px(8)}} />
+            {inUse === tab ? (
+              <View style={[st.btn, {flex: 2, borderColor: '#999999'}]}><Text style={[st.btnText, {color: '#777777'}]}>In use</Text></View>
+            ) : (
+              <Btn dark label={`${inUse ? 'Switch to' : 'Use'} ${tab === 'sn' ? 'Supernote' : 'Calibre'} version`} onPress={() => onDecide(f, field, tab)} style={{flex: 2}} />
+            )}
+          </View>
+        </View>
+      </ModalCard>
+    );
+  }
+  type Row = {f: Found; done: boolean};
+  const rows: Row[] = [...waiting.map(f => ({f, done: false})), ...decided.map(f => ({f, done: true}))];
+  const per = 7;
+  const pages = Math.max(1, Math.ceil(rows.length / per));
+  const p = Math.min(pg, pages - 1);
+  const chunk = rows.slice(p * per, (p + 1) * per);
+  const using = (f: Found) => Object.entries(f.meta.calibre?.decided || {}).map(([k, d]) => `${d!.use === 'sn' ? 'Supernote' : 'Calibre'} ${CAL_WORD[k as CalField]}`).join(', ');
+  return (
+    <ModalCard onOutside={onClose}>
+      <CardHeader title="Changes from Calibre" onBack={onClose} onClose={onClose} />
+      <View style={[st.pad, {flex: 1, paddingTop: px(8)}]}>
+        <Text style={st.small}>{at ? `Synced ${new Date(at).toLocaleString(undefined, {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit'})}. Changes made in only one place were taken over by themselves.` : 'Not synced yet.'}</Text>
+        {!rows.length ? <Text style={[st.para, {marginTop: px(16)}]}>Nothing to choose: Calibre and PurrinkShelf agree.</Text> : null}
+        {chunk.map((r, i) => {
+          const first = i === 0 || chunk[i - 1].done !== r.done;
+          const fields = Object.keys(r.done ? r.f.meta.calibre?.decided || {} : r.f.meta.calibre?.pending || {}) as CalField[];
+          return (
+            <View key={r.f.lib.path + r.f.book.key}>
+              {first ? (
+                <View style={{flexDirection: 'row', alignItems: 'baseline', marginTop: px(14), marginBottom: px(6)}}>
+                  <Text style={[st.rowTitle, {fontSize: px(17), flex: 1}]}>{r.done ? 'Decided' : 'Needs a choice'}</Text>
+                  <Text style={st.small}>{r.done ? 'tap to change your mind' : 'changed in both places'}</Text>
+                </View>
+              ) : null}
+              <Pressable onPress={() => { setTab('sn'); setView({kind: 'book', lib: r.f.lib.path, key: r.f.book.key}); }} style={[st.calRow, r.done && st.chRowRead]} accessibilityLabel={`${r.done ? 'Change' : 'Choose'}: ${shownTitle(r.f.book, r.f.meta)}`}>
+                <View style={{flex: 1}}>
+                  <Text style={st.rowTitle} numberOfLines={1}>{shownTitle(r.f.book, r.f.meta)}</Text>
+                  <Text style={[st.small, {color: r.done ? BLACK : '#555555'}]} numberOfLines={1}>{r.done ? `Using: ${using(r.f)}` : fields.map(x => CAL_FIELDS.find(y => y.id === x)!.label).join(', ')}</Text>
+                </View>
+                <Pill small label={r.done ? 'Change' : 'Choose'} />
+              </Pressable>
+            </View>
+          );
+        })}
+        {rows.length ? <Text style={[st.small, {marginTop: px(12)}]}>Both versions are kept until the next sync, so you can switch back any time. Also on each book page: Details › Calibre.</Text> : null}
+        <View style={{flex: 1}} />
+        {pages > 1 ? <Arrows page={p} pages={pages} onPage={setPg} /> : null}
+        {waiting.length ? (
+          <View style={{flexDirection: 'row', marginTop: px(8)}}>
+            <Btn label="Keep all Supernote" onPress={() => onAll('sn')} style={{flex: 1, marginRight: px(8)}} />
+            <Btn label="Use all Calibre" onPress={() => onAll('cal')} style={{flex: 1}} />
+          </View>
+        ) : null}
+      </View>
+    </ModalCard>
+  );
+}
+
 function ModalCard({onOutside, children}: {onOutside: () => void; children: React.ReactNode}) {
   return (
     <View style={st.cardWrap}>
@@ -6349,6 +6937,7 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  calRow: {flexDirection: 'row', alignItems: 'center', minHeight: px(62), borderWidth: 2, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(12), paddingVertical: px(6), marginBottom: px(8), backgroundColor: '#ffffff'},
   aboutLink: {flexDirection: 'row', alignItems: 'center', height: px(56), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(16), paddingHorizontal: px(14)},
   showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},
   showSection: {fontSize: px(22), marginBottom: px(2), paddingBottom: px(5), borderColor: BLACK},
@@ -6606,6 +7195,14 @@ const st = StyleSheet.create({
   volCellText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
   volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2), textAlign: 'center'},
   kindTabs: {flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10), marginBottom: px(6)},
+  quickRow: {height: px(48), flexDirection: 'row', alignItems: 'center', paddingHorizontal: px(12), borderBottomWidth: 1, borderColor: '#888888', overflow: 'hidden'},
+  letterHead: {alignSelf: 'flex-start', backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(7), paddingVertical: px(1)},
+  letterHeadText: {color: '#ffffff', fontSize: px(14), fontWeight: 'bold'},
+  fChip: {height: px(28), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), paddingHorizontal: px(8), marginRight: px(4), justifyContent: 'center', backgroundColor: '#ffffff', flexShrink: 1},
+  fChipText: {fontSize: px(13), color: BLACK},
+  fChipCount: {fontSize: px(11), color: '#555555'},
+  azKey: {width: '22%', height: px(52), marginBottom: px(8), borderWidth: 2, borderColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  azKeyText: {fontSize: px(22), fontWeight: 'bold', color: BLACK},
   kindTab: {flex: 1, borderWidth: 1.5, borderColor: BLACK, paddingVertical: px(5), alignItems: 'center', marginRight: px(4), borderRadius: px(6)},
   kindTabText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
   choice: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), padding: px(14), marginBottom: px(12)},

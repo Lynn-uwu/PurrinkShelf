@@ -26,11 +26,14 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 - Pick any folders on the Supernote or SD card as libraries. Subfolders become categories.
 - Volumes named `Vol 1`, `Part 2`, `Chapter 3`… join into one book. You can also combine or split books by hand.
 - Browse as a list, covers or folders. Filter by genre, tag, author, content warnings and more (include, exclude, match all or any). Sort by title, last read, date added, author or your rating.
+- Filters your way: find a tag, jump with A–Z letter keys, order by most books, A–Z or most tapped, compact chips, choose the tabs, and pin quick filters above your books.
+- **AO3 fanfiction:** downloads from Archive of Our Own are recognised, with their rating, warnings, fandoms, ships, characters and tags. Keep them with your books or in their own AO3 view.
 - Turn pages with arrows (no scrolling needed), or switch to scrolling in Settings.
 - PurrinkShelf notices new, renamed and missing files, keeps the details of missing books, and reconnects them when they come back.
 
 **Each book**
-- Its own page with the cover, description, volumes and a **Start / Continue** button that reopens the volume you were on.
+- Its own page with the cover, description, volumes and a play button that reopens where you were (`Vol 4 · Ch 158`), with your progress through the whole book.
+- **Chapters:** the EPUB's contents next to the description, opened where you are, with page numbers and a number pad to jump. Bookmark chapters and add a note on why. Finished a volume? It offers the next one, and finished volumes are shaded.
 - Edit the title, author, categories, genres, tags, content warnings, series, language, status, cover, where you got it, and who you lent it to.
 - Fills empty details by itself from inside the EPUB, from Calibre's `metadata.opf` and `cover.jpg` next to the book, or from your own book list (`_Library Data/library.csv` with title, genres, summary and files). It never overwrites what you typed.
 - Reading status (plan to read, reading, completed…), with the date of every change.
@@ -44,6 +47,7 @@ A library for the books on your Supernote, in the spirit of NovelUpdates and Mih
 - **Profile:** books finished per month, an optional yearly goal, time spent reading, reading days in a row, and your top genres.
 - **Notes and quotes:** every note from every book on one searchable board.
 - **On a computer:** PurrinkShelf writes `Document/PurrinkShelf/PurrinkShelf books.xlsx`. It opens in Excel, Google Sheets or Numbers, with drop-downs for genres, tags, categories, status and collections. Fill it in, copy it back, and PurrinkShelf reads the changes. With **Supernote Cloud** there's no copying: turn on Auto Sync (Settings › Drive) and open the sheet from the **Supernote Partner** app's folder on your computer; edits sync back by themselves.
+- **Calibre sync:** a small helper on your computer (`tools/calibre/purrinkshelf_calibre.py`) keeps titles, authors, descriptions, genres, tags, series and languages in step both ways. When a book changed in both places you compare the two versions on a preview of the book page and choose, and you can change your mind until the next sync.
 - **Goodreads and StoryGraph:** import their export file (status, dates, ratings, reviews), or make a file they can import.
 - **Activity:** every message PurrinkShelf shows is kept in Settings › Activity.
 - **Appearance:** the Original look, or Cats: hand-drawn lines, cat toggles, paw prints on notes and little cats around the pages.
