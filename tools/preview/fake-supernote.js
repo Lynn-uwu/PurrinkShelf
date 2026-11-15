@@ -98,6 +98,19 @@ NativeModules.InkShelf = {
   },
   epubWords: async p => ({words: /Korean|Calibre/.test(p) ? 82000 + (p.length % 7) * 9000 : 0, cjk: /Chinese/.test(p) ? 180000 + (p.length % 5) * 40000 : 0}),
   removePaper: async p => true,
+  // chapters: a volume "Vol 4 (Ch 121-160)" carries on the numbering; AO3 works start with their tags page
+  epubContents: async p => {
+    const name = p.split('/').pop();
+    const r = name.match(/Ch (\d+)-(\d+)/);
+    const vn = Number((name.match(/Vol (\d+)/) || [])[1] || 0);
+    const [a, b] = r ? [Number(r[1]), Number(r[2])] : vn ? [(vn - 1) * 40 + 1, vn * 40] : [1, /Moon/.test(name) ? 112 : 36];
+    const toc = [];
+    if (!r && !vn) toc.push({t: 'Preface', d: 0, f: 0});
+    for (let c = a; c <= b; c++) toc.push({t: `Chapter ${c}${c % 7 === 3 ? ': The letter from the inner court' : c % 5 === 1 ? ': A quiet morning' : ''}`, d: 0, f: (c - a + (r || vn ? 0 : 1)) / (b - a + 2)});
+    const ao3 = /AO3|Fandom/.test(p);
+    const first = ao3 ? `<html><body><div class="meta"><dl class="tags"><dt>Rating:</dt><dd><a>Teen And Up Audiences</a></dd><dt>Archive Warning:</dt><dd><a>No Archive Warnings Apply</a></dd><dt>Category:</dt><dd><a>M/M</a></dd><dt>Fandom:</dt><dd><a>Original Work</a>, <a>Mo Dao Zu Shi - Mo Xiang Tong Xiu</a></dd><dt>Relationship:</dt><dd><a>Lan Zhan | Lan Wangji/Wei Ying | Wei Wuxian</a></dd><dt>Character:</dt><dd><a>Wei Ying | Wei Wuxian</a>, <a>Lan Zhan | Lan Wangji</a>, <a>Jiang Cheng</a></dd><dt>Additional Tags:</dt><dd><a>Fluff</a>, <a>Slow Burn</a>, <a>Mutual Pining</a>, <a>Hurt/Comfort</a>, <a>Canon Divergence</a>, <a>Happy Ending</a></dd><dt>Language:</dt><dd>English</dd><dt>Stats:</dt><dd>Published: 2025-03-01 Completed: 2025-11-20 Chapters: 24/24 Words: 98,412</dd></dl><h1>${name.replace(/\.epub$/, '')}</h1><div class="byline">by <a>moonlitpaw</a></div><p>Summary</p><blockquote class="userstuff"><p>Two disciples, one cursed lantern, and a winter that won't end.</p></blockquote></div><p>Posted originally on the <a href="http://archiveofourown.org/">Archive of Our Own</a> at <a href="http://archiveofourown.org/works/12345678">http://archiveofourown.org/works/12345678</a>.</p></body></html>` : '<html><body><p>Chapter 1</p></body></html>';
+    return JSON.stringify({toc, first});
+  },
   openFileManager: async () => ((window.__fm = 1), true),
   openDocument: async (path, how) => { window.__opened.push(how + ':' + path); return true; },
 };
@@ -110,6 +123,20 @@ export const PluginManager = {
   hasPermission: async p => (window.__perm?.[p] ?? (new URLSearchParams(location.search).get('perm') ? 0 : 1)), requestPermission: async p => { const pick = Number(new URLSearchParams(location.search).get('pick') || 2); window.__perm = {...(window.__perm || {}), [p]: pick ? 1 : 0}; return pick; }, // like Supernote: hasPermission says 0/1; the question returns 0 no, 1 this time, 2 always getPluginDirPath: async () => '/plugin', registerConfigButton: async () => true, registerConfigButtonListener: () => ({remove() {}}), showPluginView: async () => true,
 };
 export const FileUtils = {exists: async () => true, getExternalDirPath: async () => ['/storage/emulated/0', SD]};
+// ?prog=1: Echoes of the Ninth Gate read up to Vol 4, page 141, with three bookmarked chapters
+if (new URLSearchParams(location.search).get('prog')) {
+  const d = `${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate`;
+  const f = n => `${d} Vol ${n}${{1: ' (Ch 1-40)', 2: ' - Ninefold Debts', 3: ' - Lanterns at Dusk', 4: ' (Ch 121-160)'}[n]}.epub`;
+  const e = meta.books['Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate#vols'];
+  e.progress = {last: f(4), opened: [f(1), f(2), f(3), f(4)], at: Date.now()};
+  e.pos = {[f(4)]: {page: 290, pages: 412, at: Date.now()}};
+  e.done = {[f(1)]: Date.UTC(2026, 10, 2), [f(2)]: Date.UTC(2026, 10, 6), [f(3)]: Date.UTC(2026, 10, 12)};
+  e.marks = [
+    {id: 'a', file: f(1), ch: 11, t: 'Chapter 12', note: 'Where they first meet. Funniest line in the book.', at: 1},
+    {id: 'b', file: f(3), ch: 16, t: 'Chapter 97', at: 2},
+    {id: 'c', file: f(4), ch: 35, t: 'Chapter 156', note: 'The rain scene. Reread before the finale.', at: 3},
+  ];
+}
 // ?state=1: the reader added two books since InkShelf last looked (they show as NEW)
 function novelsMeta() {
   if (!new URLSearchParams(location.search).get('state')) return meta;
@@ -133,14 +160,16 @@ if (new URLSearchParams(location.search).get('backup')) {
 }
 window.__pasted = [];
 export const PluginCommAPI = {
-  getCurrentFilePath: async () => ({success: true, result: new URLSearchParams(location.search).get('reading') ? `${SD}/Novels/Korean Novels/Rain Over Busan.epub` : '/storage/emulated/0/Note/Book reviews.note'}),
+  getCurrentFilePath: async () => ({success: true, result: new URLSearchParams(location.search).get('reading') === 'echo' ? `${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate Vol 4 (Ch 121-160).epub` : new URLSearchParams(location.search).get('reading') ? `${SD}/Novels/Korean Novels/Rain Over Busan.epub` : '/storage/emulated/0/Note/Book reviews.note'}),
   getPageDisplaySize: async () => ({success: true, result: {width: 1404, height: 1872}}),
+  getCurrentPageNum: async () => ({success: true, result: Number(new URLSearchParams(location.search).get('page') || 140)}),
 };
+export const PluginDocAPI = {getCurrentTotalPages: async () => ({success: true, result: Number(new URLSearchParams(location.search).get('pages') || 412)})};
 export const PluginNoteAPI = {
   insertImage: async p => (window.__pasted.push('image:' + p), {success: true, result: true}),
   insertText: async t => (window.__pasted.push('text:' + t.textContentFull.split('\n')[0]), {success: true, result: true}),
 };
-export const PluginFileAPI = {openFile: async () => ({success: true, result: true})};
+export const PluginFileAPI = {openFile: async (p, page) => { (window.__opened = window.__opened || []).push(`at ${page}:${p}`); return {success: true, result: true}; }};
 export const RattaFileSelector = {
   selectImage: async () => null,
   // Supernote's own file picker: pretend the reader picked a book inside Novels/Chinese Novels

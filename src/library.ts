@@ -43,6 +43,32 @@ export type Meta = {
   probed?: boolean; // the EPUB's own details were looked at once
   progress?: {last: string; opened: string[]; at: number}; // which volumes were opened (from PurrinkShelf or Supernote)
   seen?: string[]; // files (inside the library) this book was last found as, to reconnect it
+  pos?: {[file: string]: {page: number; pages: number; at: number}}; // the page you were on in each file (seen when PurrinkShelf is opened inside the book)
+  done?: {[file: string]: number}; // volumes you finished, and when
+  marks?: ChapterMark[]; // bookmarked chapters, each with an optional note
+  ao3?: Ao3; // a work downloaded from Archive of Our Own: its own tags
+  calibre?: CalibreState; // what Calibre had at the last sync, and your choices when both sides changed
+};
+export type ChapterMark = {id: string; file: string; ch: number; t: string; note?: string; at: number};
+export type Ao3 = {
+  url?: string; rating?: string; warnings: string[]; categories: string[]; fandoms: string[]; ships: string[]; characters: string[]; tags: string[];
+  words?: number; chapters?: string; complete?: boolean; author?: string;
+};
+/** the fields kept in step with Calibre */
+export type CalField = 'title' | 'author' | 'description' | 'genres' | 'tags' | 'series' | 'language';
+export const CAL_FIELDS: {id: CalField; label: string}[] = [
+  {id: 'title', label: 'Title'},
+  {id: 'author', label: 'Author'},
+  {id: 'description', label: 'Description'},
+  {id: 'genres', label: 'Genres'},
+  {id: 'tags', label: 'Tags'},
+  {id: 'series', label: 'Series'},
+  {id: 'language', label: 'Language'},
+];
+export type CalibreState = {
+  base?: {[f in CalField]?: string}; // Calibre's values at the last sync (to tell who changed what)
+  pending?: {[f in CalField]?: string}; // changed in both places: Calibre's version, waiting for your choice
+  decided?: {[f in CalField]?: {sn: string; cal: string; use: 'sn' | 'cal'; at: number}}; // your choices, kept until the next sync
 };
 // ---------- reading status (like review states: each change is dated) ----------
 export type ReadState = 'plan' | 'reading' | 'completed' | 'rereading' | 'hold' | 'dropped';
@@ -133,7 +159,7 @@ export function inCollection(c: Collection, x: BookFacts): boolean {
 
 /** anything worth keeping when the file disappears */
 export const hasDetails = (m?: Meta) =>
-  !!m && !!(m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading || m.author || m.progress || m.seriesName || m.warnings?.length || m.source || m.loan);
+  !!m && !!(m.marks?.length || m.pos || m.calibre || m.title || m.genres?.length || m.tags?.length || m.description || m.cover || m.language || m.status || m.translated || m.notes?.length || m.categories?.length || m.fav || m.reading || m.author || m.progress || m.seriesName || m.warnings?.length || m.source || m.loan);
 /** still waiting for a genre/tag or a summary */
 export const needsDetails = (m: Meta) => !(m.genres?.length || m.tags?.length) || !m.description;
 export type Settings = {
@@ -154,6 +180,15 @@ export type Settings = {
   warnings: boolean; // show content warnings (off: hidden everywhere)
   look: 'plain' | 'drawn'; // straight lines, or slightly wobbly hand-drawn ones
   cats: boolean; // little cats on cards, the bottom bar and empty pages
+  bookFirst: 'about' | 'chapters'; // book page, right side: Description or Chapters first
+  chaptersAt: 'here' | 'start'; // the Chapters list opens where you are, or at chapter 1
+  filterOrder: 'count' | 'alpha' | 'tapped'; // genres and tags in the filters: most books, A to Z, or most tapped
+  filterTabs: string[]; // which tabs the Filters panel shows, in order (g, t, a, w, s, l, x, f)
+  quick: string[]; // quick filters above the books ("g:Romance", "f:inprogress"…)
+  tapped: {[k: string]: number}; // how often each filter was tapped (for "most tapped")
+  ao3: 'together' | 'separate'; // AO3 works: in with your books, or their own library view
+  ao3Keep: {fandom: boolean; rating: boolean; tags: boolean; hideSingles: boolean};
+  compactTags: boolean; // the filter tags as small chips instead of a list
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -180,6 +215,15 @@ export const DEFAULT_SETTINGS: Settings = {
   warnings: true,
   look: 'plain',
   cats: false,
+  bookFirst: 'about',
+  chaptersAt: 'here',
+  filterOrder: 'alpha',
+  filterTabs: ['g', 't', 'a', 'w', 'f'],
+  quick: [],
+  tapped: {},
+  ao3: 'together',
+  ao3Keep: {fandom: true, rating: true, tags: true, hideSingles: false},
+  compactTags: false,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */

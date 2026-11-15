@@ -10,7 +10,7 @@ import {bareTitle, goodreadsCsv, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
-import {AppState, Book, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
+import {AppState, Book, ChapterMark, DEFAULT_SETTINGS, PAPER_DIR, EMPTY_STATE, Lib, MAX_NOTES, Meta, MetaStore, Note, NoteColor, Settings, Snap, SortBy, Vol, arrange, catsOf, folderCats, hasDetails, missingBooks, needsDetails, norm, reconcile, pluginFile, readOnlyLibs, Backup, BACKUP_NAME, DEFAULT_BACKUP_DIR, isSetUp, readBackup, restoreMeta, writeBackup, coverFor, loadCache, loadLibraries, loadMeta, loadSettings, loadState, saveLibraries, saveMeta, saveSettings, saveState, scanLibrary} from './src/library';
 import {on} from './src/events';
 import {HELP, HelpTopic, searchHelp} from './src/help';
 import {SHEET_NAME, list as cells, parseCsv} from './src/sheet';
@@ -20,7 +20,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Entry, copyImage, copyText, currentFile, currentNote, epubMeta, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, openAt, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -706,9 +706,10 @@ function PurrinkShelfApp(): React.JSX.Element {
     setCat(null);
     setPage(1);
     // show what PurrinkShelf saw last time straight away, then look for changes quietly
-    const have = libData[l.path] || (await loadCache(l.path));
+    const have = libDataRef.current[l.path] || libData[l.path] || (await loadCache(l.path));
     setBooks(have?.books || []);
-    setMeta(have?.meta || {version: 1, books: {}});
+    metaRef.current = have?.meta || {version: 1, books: {}};
+    setMeta(metaRef.current);
     setScreen(then || {kind: 'library'});
     changeApp(a => ({...a, lastLib: l.path}));
     if (Date.now() - (lastScanAt.current[l.path] || 0) > 60000) quietScan(l);
@@ -1377,6 +1378,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     const d = libDataRef.current[l.path];
     if (!d) return;
     const m: MetaStore = {...d.meta, books: {...d.meta.books, [key]: {...d.meta.books[key], ...patch}}};
+    libDataRef.current = {...libDataRef.current, [l.path]: {books: d.books, meta: m}}; // at once: opening the library next must see it
     setLibData(x => ({...x, [l.path]: {books: d.books, meta: m}}));
     await saveMeta(l.path, m, d.books);
   }
@@ -1500,6 +1502,21 @@ function PurrinkShelfApp(): React.JSX.Element {
     if (l.path === lib?.path) setScreen({kind: 'edit', key: b.key, viaBook: true});
     else openLibrary(l, {kind: 'edit', key: b.key, viaBook: true});
   }
+  /** open a chapter: at its page when PurrinkShelf knows how many pages the file has, else at the start */
+  async function readAt(b: Book, file: string, f: number) {
+    const pages = metaOf(b).pos?.[file]?.pages;
+    markSeen(b);
+    await updateMeta(b.key, openedPatch(metaOf(b), file));
+    markDay();
+    if (!pages) {
+      say("Opened the volume. To jump straight to chapters, open PurrinkShelf once from inside this volume so it learns its page count.");
+      return read(file);
+    }
+    const page = Math.min(pages - 1, Math.round(f * pages));
+    log('open at page', `${page} ${file}`);
+    const err = await openAt(file, page);
+    if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+  }
   async function removePaperBook(b: Book) {
     if (!lib || b.ext !== 'paper') return;
     const ok = await removePaper(b.files[0]);
@@ -1511,13 +1528,28 @@ function PurrinkShelfApp(): React.JSX.Element {
   }
   /** PurrinkShelf is opened from Supernote's toolbar inside a document: if that document is one of your books, note it */
   const detectRef = useRef<() => void>(() => {});
+  const [nextUp, setNextUp] = useState<{lib: string; key: string; from: string; to: string} | null>(null);
   detectRef.current = async () => {
     const path = await currentFile();
     if (!path) return;
     const f = index.find(x => x.book.files.includes(path));
     if (!f) return;
     const again = f.meta.progress?.last === path && Date.now() - (f.meta.progress?.at || 0) < 30 * 60000;
-    await patchBook(f.lib, f.book.key, openedPatch(f.meta, path));
+    // the page you are on (and the file's page count, so chapters can be opened at their page)
+    const pg = await currentPage();
+    const finished = !!pg && pg.page >= pg.pages - 2;
+    await patchBook(f.lib, f.book.key, {
+      ...openedPatch(f.meta, path),
+      ...(pg ? {pos: {...(f.meta.pos || {}), [path]: {...pg, at: Date.now()}}} : {}),
+      ...(finished && !f.meta.done?.[path] ? {done: {...(f.meta.done || {}), [path]: Date.now()}} : {}),
+    });
+    const k = f.book.files.indexOf(path);
+    const next = f.book.files[k + 1];
+    if (finished && next && !f.meta.done?.[next]) {
+      setNextUp({lib: f.lib.path, key: f.book.key, from: path, to: next});
+      if (f.lib.path === libRef.current?.path) setScreen({kind: 'book', key: f.book.key, from: 'home'});
+      else openLibrary(f.lib, {kind: 'book', key: f.book.key, from: 'home'});
+    }
     markDay();
     const v = f.book.vols.find(x => x.path === path);
     const s1 = snapOf(f, {vol: v?.n, at: Date.now()});
@@ -1957,7 +1989,13 @@ function PurrinkShelfApp(): React.JSX.Element {
         showWarnings={settings.warnings}
         volGrid={volGrid}
         setVolGrid={setVolGrid}
-        onRead={path => readBook(b, path)}
+        onRead={path => { setNextUp(null); readBook(b, path); }}
+        onReadAt={(file, f) => readAt(b, file, f)}
+        onMarks={marks => updateMeta(b.key, {marks})}
+        first={settings.bookFirst}
+        chaptersAt={settings.chaptersAt}
+        nextUp={nextUp && nextUp.lib === lib.path && nextUp.key === b.key ? nextUp : null}
+        onNextLater={() => setNextUp(null)}
         marked={isMarked(b)}
         onNotes={notes => updateMeta(b.key, {notes})}
         onPaste={async what => {
@@ -2888,6 +2926,328 @@ function Arrows({page, pages, onPage, name}: {page: number; pages: number; onPag
   );
 }
 
+// ---------- chapters (from each EPUB's contents) and where you are in the whole book ----------
+const TOCS: {[file: string]: Chapter[]} = {}; // read once per file while PurrinkShelf is open
+const FIRSTS: {[file: string]: string} = {};
+async function loadContents(file: string): Promise<Chapter[]> {
+  if (TOCS[file]) return TOCS[file];
+  const r = /\.epub$/i.test(file) ? await epubContents(file) : null;
+  TOCS[file] = r?.toc || [];
+  if (r?.first) FIRSTS[file] = r.first;
+  return TOCS[file];
+}
+/** the chapters of every file of a book, filled in as they are read */
+function useChapters(files: string[]): {[file: string]: Chapter[]} {
+  const [got, setGot] = useState<{[file: string]: Chapter[]}>(() => {
+    const o: {[file: string]: Chapter[]} = {};
+    files.forEach(f => { if (TOCS[f]) o[f] = TOCS[f]; });
+    return o;
+  });
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      for (const f of files) {
+        if (got[f]) continue;
+        const toc = await loadContents(f);
+        if (!live) return;
+        setGot(g => ({...g, [f]: toc}));
+      }
+    })();
+    return () => { live = false; };
+  }, [files.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+  return got;
+}
+/** "Chapter 158: Two Exorcists" -> 158 */
+const chNum = (t: string): number | undefined => {
+  const m = t.match(/(?:chapter|chap\.?|ch\.?|episode|ep\.?|第)\s*(\d+)/i) || t.match(/^\s*(\d+)(?:\s*[.:)\-–—]|\s|$)/);
+  return m ? Number(m[1]) : undefined;
+};
+/** a chapter's name without its number: "Chapter 158: Two Exorcists" -> "Two Exorcists" */
+const chName = (t: string) => t.replace(/^\s*(?:chapter|chap\.?|ch\.?|episode|ep\.?)\s*\d+\s*[.:\-–—]?\s*/i, '').replace(/^\s*第\s*\d+\s*[章话話回节節]\s*/, '').replace(/^\s*\d+\s*[.:)\-–—]\s*/, '').trim();
+const chLabel = (c: Chapter) => {
+  const n = chNum(c.t);
+  const name = chName(c.t);
+  return n !== undefined ? `Ch ${n}${name && name !== c.t ? ` · ${name}` : ''}` : c.t;
+};
+const chShort = (c: Chapter) => {
+  const n = chNum(c.t);
+  return n !== undefined ? `Ch ${n}` : c.t.length > 22 ? c.t.slice(0, 21) + '…' : c.t;
+};
+/** the chapter a place in the file (0..1) falls in */
+const chapterAt = (toc: Chapter[], frac: number) => {
+  let i = -1;
+  for (let k = 0; k < toc.length; k++) if (toc[k].f <= frac + 1e-6) i = k;
+  return Math.max(0, i);
+};
+const volName = (b: Book, file: string) => {
+  const v = b.vols.find(x => x.path === file);
+  return v ? `${v.kind || 'Vol'} ${v.n}` : '';
+};
+type Where = {file: string; vol: string; page?: number; pages?: number; frac: number; ch?: Chapter; chText?: string};
+/** where you are in the whole book: the last file you opened, its page, and the chapter on that page */
+function whereAmI(b: Book, m: Meta, tocs: {[file: string]: Chapter[]}): Where | null {
+  const file = m.progress?.last && b.files.includes(m.progress.last) ? m.progress.last : undefined;
+  if (!file) return null;
+  const n = b.files.length;
+  const vi = b.files.indexOf(file);
+  const p = m.pos?.[file];
+  const inFile = m.done?.[file] ? 1 : p ? Math.min(1, (p.page + 1) / p.pages) : 0;
+  const toc = tocs[file];
+  const ch = toc?.length && p ? toc[chapterAt(toc, p.page / p.pages)] : undefined;
+  // "Ch 158 of 480": the chapter numbers when the files have them, else counted through the files
+  let chText: string | undefined;
+  if (ch) {
+    const known = b.files.every(f => tocs[f]);
+    const num = chNum(ch.t);
+    const lastToc = tocs[b.files[n - 1]];
+    const lastNum = lastToc?.length ? chNum(lastToc[lastToc.length - 1].t) : undefined;
+    if (num !== undefined && known && lastNum) chText = `Ch ${num} of ${lastNum.toLocaleString()}`;
+    else if (known) {
+      const before = b.files.slice(0, vi).reduce((a, f) => a + (tocs[f]?.length || 0), 0);
+      const total = b.files.reduce((a, f) => a + (tocs[f]?.length || 0), 0);
+      chText = `Chapter ${(before + toc!.indexOf(ch) + 1).toLocaleString()} of ${total.toLocaleString()}`;
+    } else chText = chShort(ch);
+  }
+  return {file, vol: n > 1 ? volName(b, file) : '', page: p?.page, pages: p?.pages, frac: (vi + inFile) / n, ch, chText};
+}
+/** page numbers between the arrows: 1 … 15 16 17 … 121 (the dots open a number pad) */
+function PageStrip({page, pages, onPage, onDots, room}: {page: number; pages: number; onPage: (p: number) => void; onDots: () => void; room: number}) {
+  const box = px(40);
+  const fit = Math.max(3, Math.floor((room - 2 * px(50)) / (box + px(4))));
+  let items: (number | 'dots')[] = [];
+  if (pages <= fit) items = Array.from({length: pages}, (_, i) => i);
+  else {
+    const mid = Math.max(1, fit - 4); // around the page you are on
+    let a = Math.max(1, page - Math.floor((mid - 1) / 2));
+    let z = Math.min(pages - 2, a + mid - 1);
+    a = Math.max(1, z - mid + 1);
+    items = [0, a > 1 ? 'dots' : 1, ...Array.from({length: z - a + 1}, (_, i) => a + i).filter(x => x !== 1 || a <= 1), z < pages - 2 ? 'dots' : pages - 2, pages - 1];
+    items = items.filter((x, i) => i === 0 || x !== items[i - 1]);
+  }
+  return (
+    <View style={[st.gPager, {justifyContent: 'space-between'}]}>
+      <IconBtn name="back" label="Previous" disabled={page <= 0} onPress={() => onPage(page - 1)} />
+      <View style={{flexDirection: 'row', alignItems: 'center'}}>
+        {items.map((x, i) =>
+          x === 'dots' ? (
+            <Pressable key={'d' + i} onPress={onDots} style={[st.pageBox, {borderStyle: 'dashed', minWidth: px(30)}]} accessibilityLabel="Go to a chapter or page">
+              <Text style={st.pageBoxText}>…</Text>
+            </Pressable>
+          ) : (
+            <Pressable key={x} onPress={() => onPage(x)} style={[st.pageBox, x === page && st.btnDark]} accessibilityLabel={`Page ${x + 1}`}>
+              <Text style={[st.pageBoxText, x === page && {color: '#ffffff'}]}>{String(x + 1)}</Text>
+            </Pressable>
+          ),
+        )}
+      </View>
+      <IconBtn name="forward" label="Next" disabled={page >= pages - 1} onPress={() => onPage(page + 1)} />
+    </View>
+  );
+}
+/** a number pad: jump to a chapter or a page of the list */
+function GoToPad({max, chapters, onGo, onClose}: {max: {ch: number; page: number}; chapters: boolean; onGo: (kind: 'ch' | 'page', n: number) => void; onClose: () => void}) {
+  const [kind, setKind] = useState<'ch' | 'page'>(chapters ? 'ch' : 'page');
+  const [v, setV] = useState('');
+  const top = kind === 'ch' ? max.ch : max.page;
+  const key = (d: string) => (
+    <Pressable key={d} onPress={() => setV(x => (x + d).replace(/^0+/, '').slice(0, 5))} style={st.padKey} accessibilityLabel={d}>
+      <Text style={st.padKeyText}>{d}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={st.inPanel}>
+      <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(10)}}>
+        <Text style={[st.rowTitle, {flex: 1}]}>Go to</Text>
+        <IconBtn name="close" label="Close" onPress={onClose} size={px(42)} />
+      </View>
+      {chapters ? (
+        <Seg options={[{label: 'Chapter', on: kind === 'ch', onPress: () => { setKind('ch'); setV(''); }}, {label: 'Page', on: kind === 'page', onPress: () => { setKind('page'); setV(''); }}]} />
+      ) : null}
+      <View style={st.padShow}>
+        <Text style={st.padNum}>{v || ' '}</Text>
+        <Text style={[st.small, {marginLeft: px(8)}]}>{`of ${top.toLocaleString()}`}</Text>
+      </View>
+      <View style={st.padRow}>{['1', '2', '3', '4', '5'].map(key)}</View>
+      <View style={st.padRow}>{['6', '7', '8', '9', '0'].map(key)}</View>
+      <View style={[st.padRow, {marginBottom: 0}]}>
+        <Btn label="Delete" onPress={() => setV(x => x.slice(0, -1))} style={{flex: 1}} />
+        <Btn dark label="Go" onPress={() => { const n = Number(v); if (n >= 1 && n <= top) onGo(kind, n); }} style={{flex: 2, marginLeft: px(8)}} />
+      </View>
+    </View>
+  );
+}
+
+/** the Chapters side of a book page: one volume (or all), bookmarks with notes, page numbers, and a number pad */
+function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMarks}: {
+  b: Book; m: Meta; tocs: {[file: string]: Chapter[]}; where: Where | null; width: number; height: number; startAt: 'here' | 'start';
+  onOpen: (file: string, f: number) => void; onMarks: (marks: ChapterMark[]) => void;
+}) {
+  const files = b.files.filter(f => /\.epub$/i.test(f));
+  const multi = files.length > 1;
+  const [sel, setSel] = useState<string>(() => (startAt === 'here' && where && files.includes(where.file) ? where.file : files[0]));
+  const [panel, setPanel] = useState<null | 'vols' | 'pad' | {file: string; ch: number}>(null);
+  const [draft, setDraft] = useState('');
+  const marks = m.marks || [];
+  const markOf = (file: string, ch: number) => marks.find(x => x.file === file && x.ch === ch);
+  const here = where?.ch && where.file ? {file: where.file, i: tocs[where.file]?.indexOf(where.ch) ?? -1} : null;
+  const fileIdx = (f: string) => b.files.indexOf(f);
+  const isRead = (file: string, i: number) => {
+    if (m.done?.[file]) return true;
+    if (!here) return false;
+    if (fileIdx(file) < fileIdx(here.file)) return true;
+    return file === here.file && i < here.i;
+  };
+  // a chapter split over two volumes: the last one of a volume has the same number as the first of the next
+  const carries = (file: string) => {
+    const k = files.indexOf(file);
+    const a = tocs[file], z = tocs[files[k + 1]];
+    if (!a?.length || !z?.length) return false;
+    const n = chNum(a[a.length - 1].t);
+    return n !== undefined && n === chNum(z[0].t);
+  };
+  type R = {h: number; key: string; node: React.ReactNode; file?: string; i?: number};
+  const rows: R[] = [];
+  const chRow = (file: string, i: number, c: Chapter, label?: string) => {
+    const mk = markOf(file, i);
+    const isHere = here && here.file === file && here.i === i;
+    const toc = tocs[file] || [];
+    const k = files.indexOf(file);
+    const side = i === toc.length - 1 && carries(file) ? `continues in ${volName(b, files[k + 1])}` : i === 0 && k > 0 && carries(files[k - 1]) ? `from ${volName(b, files[k - 1])}` : isRead(file, i) ? 'read' : '';
+    rows.push({h: px(52), key: `${file}#${i}`, file, i, node: (
+      <Pressable onPress={() => onOpen(file, c.f)} style={[st.chRow, isRead(file, i) && st.chRowRead, isHere && st.chRowHere, c.d > 0 && {marginLeft: px(14) * Math.min(2, c.d)}]} accessibilityLabel={`Open ${c.t}`}>
+        <Text style={[st.chText, isHere && {fontWeight: 'bold'}]} numberOfLines={1}>{label || chLabel(c)}</Text>
+        {isHere ? <View style={st.chHere}><Text style={{color: '#ffffff', fontSize: px(13), fontWeight: 'bold'}}>{"You're here"}</Text></View> : side ? <Text style={st.chSide} numberOfLines={1}>{side}</Text> : null}
+        <IconBtn bare name={mk ? 'bookmark-on' : 'bookmark'} label={mk ? 'Bookmark and note' : 'Bookmark this chapter'} iconSize={px(24)} size={px(40)} onPress={() => {
+          if (mk) { setDraft(mk.note || ''); setPanel({file, ch: i}); }
+          else onMarks([...marks, {id: Date.now().toString(36), file, ch: i, t: c.t, at: Date.now()}]);
+        }} />
+      </Pressable>
+    )});
+    if (mk && (mk.note || sel === 'marks')) {
+      rows.push({h: px(40), key: `${file}#${i}n`, node: (
+        <Pressable onPress={() => { setDraft(mk.note || ''); setPanel({file, ch: i}); }} style={[st.chNote, {height: px(34)}]} accessibilityLabel="Change the note">
+          <Text style={[st.small, {color: mk.note ? BLACK : '#555555'}]} numberOfLines={1}>{mk.note || '+ Add a note'}</Text>
+        </Pressable>
+      )});
+    }
+  };
+  if (sel === 'marks') {
+    const list = [...marks].sort((x, y) => fileIdx(x.file) - fileIdx(y.file) || x.ch - y.ch);
+    list.forEach(x => {
+      const c = tocs[x.file]?.[x.ch] || {t: x.t, d: 0, f: 0};
+      chRow(x.file, x.ch, c, `${multi ? volName(b, x.file) + ' · ' : ''}${chLabel({...c, d: 0})}`);
+    });
+  } else {
+    (sel === 'all' ? files : [sel]).forEach(f => {
+      const toc = tocs[f];
+      if (sel === 'all' && multi) {
+        const nums = (toc || []).map(c => chNum(c.t)).filter(n => n !== undefined) as number[];
+        rows.push({h: px(40), key: f + '#v', node: (
+          <View style={st.volDiv}>
+            <Text style={[st.rowTitle, {fontSize: px(16)}]}>{`${volName(b, f)}${nums.length ? ` · Ch ${nums[0]}–${nums[nums.length - 1]}` : ''}`}</Text>
+            <View style={{flex: 1, height: 2, backgroundColor: BLACK, marginLeft: px(10)}} />
+          </View>
+        )});
+      }
+      if (!toc) rows.push({h: px(40), key: f + '#l', node: <Text style={st.small}>Reading the contents…</Text>});
+      else if (!toc.length) rows.push({h: px(52), key: f + '#e', node: <Text style={st.small}>{"This file has no list of chapters inside it."}</Text>});
+      else toc.forEach((c, i) => chRow(f, i, c));
+    });
+  }
+  const headH = px(56);
+  const cap = height - headH - px(60);
+  const pages: R[][] = [[]];
+  let used = 0;
+  for (const r of rows) {
+    if (used + r.h > cap && pages[pages.length - 1].length) { pages.push([]); used = 0; }
+    pages[pages.length - 1].push(r);
+    used += r.h;
+  }
+  const pageOf = (file: string, i: number) => Math.max(0, pages.findIndex(pg => pg.some(r => r.file === file && r.i === i)));
+  const [pg, setPg] = useState(() => (here && sel === here.file ? pageOf(here.file, here.i) : 0));
+  const [flash, setFlash] = useState<string | null>(null);
+  const p = Math.min(pg, pages.length - 1);
+  // the highest chapter number in the book (or the count, when they aren't numbered)
+  const allToc = files.flatMap(f => (tocs[f] || []).map((c, i) => ({f, i, c})));
+  const lastNum = allToc.reduce((a, x) => Math.max(a, chNum(x.c.t) || 0), 0);
+  const goCh = (n: number) => {
+    let hit = lastNum ? allToc.find(x => chNum(x.c.t) === n) : allToc[n - 1];
+    if (!hit) return;
+    const showIn = sel === 'all' || sel === hit.f ? sel : hit.f;
+    setSel(showIn);
+    setPanel(null);
+    setFlash(`${hit.f}#${hit.i}`);
+    // the page is worked out again once the list for that volume is laid out
+    setTimeout(() => setPg(-1 - allToc.indexOf(hit!)), 0);
+  };
+  // a jump waits for its volume's rows: find the page that holds that chapter
+  useEffect(() => {
+    if (pg >= 0) return;
+    const x = allToc[-1 - pg];
+    if (x) setPg(pageOf(x.f, x.i));
+  });
+  const volLabel = sel === 'all' ? 'All volumes' : sel === 'marks' ? 'Bookmarks' : volName(b, sel);
+  const editing = panel && typeof panel === 'object' ? markOf(panel.file, panel.ch) : undefined;
+  return (
+    <View style={{flex: 1}}>
+      <View style={{height: headH, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end'}}>
+        {sel === 'marks' ? <Text style={[st.small, {flex: 1}]} numberOfLines={2}>{'Only bookmarked chapters. Tap one to open near it, or the note to change it.'}</Text> : <View style={{flex: 1}} />}
+        <View>
+          <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
+          {marks.length ? <View style={st.bubble} pointerEvents="none"><Text style={st.bubbleText}>{String(marks.length)}</Text></View> : null}
+        </View>
+        {multi && sel !== 'marks' ? (
+          <Pressable onPress={() => setPanel('vols')} style={[st.rTab, {marginLeft: px(10), marginRight: 0, flexDirection: 'row'}]} accessibilityLabel="Choose a volume">
+            <Text style={st.rTabText}>{volLabel}</Text>
+            <Icon name="down" size={px(20)} />
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={{flex: 1, overflow: 'hidden'}}>
+        {(pages[p] || []).map(r => (
+          <View key={r.key} style={{height: r.h, paddingBottom: px(6)}}>
+            {flash === r.key ? <View style={{flex: 1, borderWidth: 3, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(12), margin: -px(3)}}>{r.node}</View> : r.node}
+          </View>
+        ))}
+        {sel === 'marks' && !marks.length ? <Text style={[st.small, {marginTop: px(10)}]}>{'No bookmarks yet. Tap the bookmark on a chapter to keep it here, with a note on why.'}</Text> : null}
+      </View>
+      <PageStrip page={p} pages={pages.length} onPage={n => { setPg(n); setFlash(null); }} onDots={() => setPanel('pad')} room={width} />
+      {panel === 'vols' ? (
+        <View style={st.inPanel}>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+            <Text style={[st.rowTitle, {flex: 1}]}>Show chapters of</Text>
+            <IconBtn name="close" label="Close" onPress={() => setPanel(null)} size={px(42)} />
+          </View>
+          <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
+            {['all', ...files].map(f => (
+              <Pressable key={f} onPress={() => { setSel(f); setPanel(null); setPg(f !== 'all' && here?.file === f ? pageOf(f, here.i) : 0); setFlash(null); }} style={[st.rTab, {marginBottom: px(8)}, sel === f && st.btnDark, !!m.done?.[f] && sel !== f && st.chRowRead]}>
+                <Text style={[st.rTabText, sel === f && {color: '#ffffff'}]}>{f === 'all' ? 'All volumes' : volName(b, f)}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {panel === 'pad' ? (
+        <GoToPad chapters={allToc.length > 0} max={{ch: lastNum || allToc.length, page: pages.length}} onClose={() => setPanel(null)} onGo={(k, n) => { if (k === 'page') { setPg(n - 1); setPanel(null); setFlash(null); } else goCh(n); }} />
+      ) : null}
+      {editing && typeof panel === 'object' && panel ? (
+        <View style={st.inPanel}>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
+            <Text style={[st.rowTitle, {flex: 1}]} numberOfLines={1}>{`Note for ${chShort(tocs[editing.file]?.[editing.ch] || {t: editing.t, d: 0, f: 0})}`}</Text>
+            <IconBtn name="close" label="Close" onPress={() => setPanel(null)} size={px(42)} />
+          </View>
+          <TextInput value={draft} onChangeText={setDraft} multiline placeholder="Why you want to come back to it" style={[st.input, {height: px(110), textAlignVertical: 'top'}]} />
+          <View style={{flexDirection: 'row', marginTop: px(10)}}>
+            <Btn label="Remove bookmark" onPress={() => { onMarks(marks.filter(x => x !== editing)); setPanel(null); }} />
+            <View style={{flex: 1}} />
+            <Btn dark label="Save" onPress={() => { onMarks(marks.map(x => (x === editing ? {...x, note: draft.trim() || undefined} : x))); setPanel(null); }} />
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function BookPage(props: {
   book: Book;
   meta: Meta;
@@ -2916,8 +3276,20 @@ function BookPage(props: {
   showLength?: boolean;
   showWarnings?: boolean;
   dup: {others: {title: string; where: string; onOpen: () => void}[]; ignored: boolean; onIgnore: () => void; onFiles: () => void} | null;
+  onReadAt?: (file: string, f: number) => void; // open a chapter (a place in the file, 0..1)
+  onMarks?: (marks: ChapterMark[]) => void;
+  first?: 'about' | 'chapters';
+  chaptersAt?: 'here' | 'start';
+  nextUp?: {from: string; to: string} | null; // you just finished a volume: start the next one?
+  onNextLater?: () => void;
+  preview?: boolean; // a small look at the page (nothing can be tapped)
 }) {
-  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings} = props;
+  const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings, nextUp} = props;
+  const epubs = b.missing || b.ext === 'paper' ? [] : b.files.filter(f => /\.epub$/i.test(f));
+  const tocs = useChapters(epubs);
+  const where = whereAmI(b, m, tocs);
+  const hasCh = epubs.length > 0 && !epubs.every(f => tocs[f] && !tocs[f].length);
+  const [rTab, setRTab] = useState<'about' | 'ch'>(props.first === 'chapters' && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -3073,10 +3445,11 @@ function BookPage(props: {
           h: vlabel(v) && vlabel(v).length > 22 ? px(70) : px(50),
           vol: true,
           node: (
-            <Pressable style={st.volRow} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
-              <Icon name={opened.has(v.path) ? 'check' : 'play'} size={px(22)} />
+            <Pressable style={[st.volRow, !!m.done?.[v.path] && st.chRowRead, nextUp?.to === v.path && {borderWidth: 3}]} onPress={() => onRead(v.path)} accessibilityLabel={`Open ${v.kind || 'Vol'} ${v.n}`}>
+              <Icon name={m.done?.[v.path] || opened.has(v.path) ? 'check' : 'play'} size={px(22)} />
               <Text style={[st.volRowText, {marginLeft: px(8)}]}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
               <Text style={st.volName} numberOfLines={2}>{vlabel(v)}</Text>
+              {m.done?.[v.path] ? <Text style={st.chSide}>{`read ${new Date(m.done[v.path]).toLocaleDateString(undefined, {day: 'numeric', month: 'short'})}`}</Text> : nextUp?.to === v.path ? <Text style={[st.chSide, {color: BLACK, fontWeight: 'bold'}]}>next up</Text> : null}
             </Pressable>
           ),
         }),
@@ -3091,7 +3464,7 @@ function BookPage(props: {
           node: (
             <View style={{flexDirection: 'row'}}>
               {b.vols.slice(i, i + per).map((v, j) => (
-                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}, opened.has(v.path) && {borderWidth: 3}]} onPress={() => onRead(v.path)}>
+                <Pressable key={v.path} style={[st.volCell, {width: cw, marginLeft: j ? px(8) : 0}, opened.has(v.path) && {borderWidth: 3}, !!m.done?.[v.path] && st.chRowRead]} onPress={() => onRead(v.path)}>
                   {opened.has(v.path) ? <View style={{position: 'absolute', top: px(3), right: px(3)}}><Icon name="check" size={px(16)} /></View> : null}
                   <Text style={st.volCellText}>{`${v.kind || 'Vol'} ${v.n}`}</Text>
                   {vlabel(v) ? <Text style={st.volCellSub} numberOfLines={2}>{vlabel(v)}</Text> : null}
@@ -3106,8 +3479,10 @@ function BookPage(props: {
 
   const rated = ratingOf(m);
   const starsH = rated ? px(30) : 0; // your rating, under the cover
-  const lPages = scroll ? [left] : pack(left, colH - coverH - starsH - px(28) - startH - pagerH - px(4));
-  const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36)); // room for a "continued" line
+  const progH = where ? px(80) : 0;
+  const lPages = scroll ? [left] : pack(left, colH - coverH - starsH - px(28) - startH - progH - pagerH - px(4));
+  const tabsH = epubs.length ? px(52) : 0;
+  const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36) - tabsH); // room for a "continued" line
   rPages.forEach((pg, i) => {
     if (i > 0 && pg[0]?.vol) pg.unshift({h: px(36), node: <Text style={[st.colHead, {fontSize: px(18)}]}>Volumes, continued</Text>});
   });
@@ -3147,10 +3522,22 @@ function BookPage(props: {
     <Pressable style={[st.startBtn, {width: lIn}]} onPress={() => onRead(lastPath || b.files[0])} accessibilityLabel={lastPath ? 'Continue' : 'Start'}>
       <Icon name="play-on" size={px(26)} color="#ffffff" />
       <Text style={[st.startText, {marginLeft: px(8)}]} numberOfLines={1}>
-        {(lastPath ? 'Continue' : 'Start') + (lastVol ? ` · ${lastVol.kind || 'Vol'} ${lastVol.n}` : b.vols.length && !lastPath ? ` · ${b.vols[0].kind || 'Vol'} ${b.vols[0].n}` : '')}
+        {where && (where.vol || where.ch)
+          ? [where.vol, where.ch ? chShort(where.ch) : ''].filter(Boolean).join(' · ')
+          : (lastPath ? 'Continue' : 'Start') + (lastVol ? ` · ${lastVol.kind || 'Vol'} ${lastVol.n}` : b.vols.length && !lastPath ? ` · ${b.vols[0].kind || 'Vol'} ${b.vols[0].n}` : '')}
       </Text>
     </Pressable>
   );
+  const pct = where ? Math.round(where.frac * 100) : 0;
+  const progress = where ? (
+    <View style={{height: progH, justifyContent: 'flex-end', paddingBottom: px(8)}}>
+      <Text style={[st.infoLabel, {marginBottom: 0}]}>{b.files.length > 1 ? 'Progress · whole book' : 'Progress'}</Text>
+      <View style={st.progBar}><View style={{width: `${Math.max(2, pct)}%`, height: '100%', backgroundColor: BLACK}} /></View>
+      <Text style={[st.small, {marginTop: px(4)}]} numberOfLines={1}>
+        {[where.chText || (where.pages ? `Page ${(where.page || 0) + 1} of ${where.pages}${where.vol ? ` in ${where.vol}` : ''}` : where.vol ? `At ${where.vol}` : ''), `${pct}%`].filter(Boolean).join(' · ')}
+      </Text>
+    </View>
+  ) : null;
   return (
     <>
       <View style={st.header}>
@@ -3187,6 +3574,7 @@ function BookPage(props: {
               {ratingRow}
               <View style={{height: px(14)}} />
               {renderItems(left)}
+              {progress}
               {start}
             </ScrollView>
           ) : (
@@ -3197,7 +3585,7 @@ function BookPage(props: {
                 <View style={{height: px(14)}} />
                 {renderItems(lPages[lpg])}
               </View>
-              <View style={{paddingHorizontal: px(14), paddingBottom: px(10)}}>{start}</View>
+              <View style={{paddingHorizontal: px(14), paddingBottom: px(10)}}>{progress}{start}</View>
               <View style={{paddingHorizontal: px(10)}}>
                 <Arrows page={lpg} pages={lPages.length} onPage={setLp} name={lName(lpg)} />
               </View>
@@ -3205,7 +3593,21 @@ function BookPage(props: {
           )}
         </View>
         <View style={{flex: 1}}>
-          {scroll ? (
+          {epubs.length ? (
+            <View style={[st.rTabs, {paddingHorizontal: px(16), marginTop: px(8)}]}>
+              {([['about', 'Description'], ['ch', 'Chapters']] as const).map(([k, t]) => (
+                <Pressable key={k} onPress={() => setRTab(k)} style={[st.rTab, rTab === k && st.btnDark]} accessibilityLabel={t}>
+                  <Text style={[st.rTabText, rTab === k && {color: '#ffffff'}]}>{t}</Text>
+                </Pressable>
+              ))}
+              {!hasCh && epubs.every(f => tocs[f]) ? <Text style={st.small}>none inside</Text> : null}
+            </View>
+          ) : null}
+          {rTab === 'ch' && epubs.length ? (
+            <View style={{flex: 1, paddingHorizontal: px(12)}}>
+              <ChaptersPane b={b} m={m} tocs={tocs} where={where} width={RW - px(24)} height={colH - tabsH - px(8)} startAt={props.chaptersAt || 'here'} onOpen={(f, x) => props.onReadAt?.(f, x)} onMarks={mk => props.onMarks?.(mk)} />
+            </View>
+          ) : scroll ? (
             <ScrollView contentContainerStyle={{padding: px(16)}}>{renderItems(right)}</ScrollView>
           ) : (
             <>
@@ -3266,6 +3668,16 @@ function BookPage(props: {
             ))}
             <Btn small icon="plus" label="New collection" onPress={() => { setColOpen(false); onNewCollection(); }} style={{marginTop: px(12)}} />
           </View>
+        </View>
+      ) : null}
+      {nextUp ? (
+        <View style={[st.inPanel, {flexDirection: 'row', alignItems: 'center', left: px(12), right: px(12), bottom: px(12)}]}>
+          <View style={{flex: 1}}>
+            <Text style={st.rowTitle}>{`You finished ${volName(b, nextUp.from) || 'this part'}`}</Text>
+            <Text style={st.small} numberOfLines={1}>{`${title} · ${b.files.length - b.files.indexOf(nextUp.to)} ${partsWord(b.vols)} left`}</Text>
+          </View>
+          <Btn label="Later" onPress={() => props.onNextLater?.()} style={{marginRight: px(8)}} />
+          <Btn dark icon="play-on" label={`Start ${volName(b, nextUp.to)}`} onPress={() => onRead(nextUp.to)} />
         </View>
       ) : null}
       {notesOpen ? <NotesBoard title={title} notes={m.notes || []} onChange={onNotes} onClose={() => setNotesOpen(false)} /> : null}
@@ -6163,6 +6575,28 @@ const st = StyleSheet.create({
   toolbar: {height: px(60), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(16)},
   pagerName: {fontSize: px(15), fontWeight: 'bold', color: BLACK},
   colHead: {fontSize: px(21), fontWeight: 'bold', color: BLACK},
+  pageBox: {minWidth: px(38), height: px(42), paddingHorizontal: px(5), marginHorizontal: px(2), borderWidth: 2, borderColor: BLACK, borderRadius: px(8), alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff'},
+  pageBoxText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
+  inPanel: {position: 'absolute', left: px(8), right: px(8), bottom: px(8), backgroundColor: '#ffffff', borderWidth: 2.5, borderColor: BLACK, borderRadius: px(16), padding: px(14)},
+  padKey: {flex: 1, height: px(52), marginHorizontal: px(4), borderWidth: 2, borderColor: BLACK, borderRadius: px(10), alignItems: 'center', justifyContent: 'center'},
+  padKeyText: {fontSize: px(24), fontWeight: 'bold', color: BLACK},
+  padShow: {flexDirection: 'row', alignItems: 'baseline', borderWidth: 2, borderColor: BLACK, borderRadius: px(10), paddingHorizontal: px(14), paddingVertical: px(6), marginVertical: px(10)},
+  padNum: {fontSize: px(30), fontWeight: 'bold', color: BLACK, minWidth: px(20)},
+  padRow: {flexDirection: 'row', marginHorizontal: -px(4), marginBottom: px(8)},
+  rTabs: {flexDirection: 'row', alignItems: 'center', height: px(52)},
+  rTab: {height: px(40), paddingHorizontal: px(16), borderWidth: 2, borderColor: BLACK, borderRadius: px(20), alignItems: 'center', justifyContent: 'center', marginRight: px(8)},
+  rTabText: {fontSize: px(17), fontWeight: 'bold', color: BLACK},
+  chRow: {height: px(46), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), paddingLeft: px(12), paddingRight: px(4), backgroundColor: '#ffffff'},
+  chRowRead: {backgroundColor: '#dddddd'},
+  chRowHere: {borderWidth: 3},
+  chText: {flex: 1, fontSize: px(16), color: BLACK},
+  chSide: {fontSize: px(13), color: '#555555', marginLeft: px(6)},
+  chHere: {backgroundColor: BLACK, borderRadius: px(10), paddingHorizontal: px(8), paddingVertical: px(2), marginLeft: px(6)},
+  chNote: {marginLeft: px(14), borderLeftWidth: 3, borderColor: BLACK, backgroundColor: '#f2f2f2', paddingHorizontal: px(10), justifyContent: 'center', borderTopRightRadius: px(8), borderBottomRightRadius: px(8)},
+  volDiv: {flexDirection: 'row', alignItems: 'center', height: px(36)},
+  progBar: {height: px(12), borderWidth: 2, borderColor: BLACK, borderRadius: px(6), overflow: 'hidden', marginTop: px(6)},
+  bubble: {position: 'absolute', top: -px(6), right: -px(6), minWidth: px(22), height: px(22), borderRadius: px(11), backgroundColor: BLACK, borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  bubbleText: {color: '#ffffff', fontSize: px(12), fontWeight: 'bold'},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},
   volHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(56)},
   volRow: {minHeight: px(42), paddingVertical: px(6), flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(8), paddingHorizontal: px(12)},

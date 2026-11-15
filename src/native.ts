@@ -1,6 +1,6 @@
 // Thin wrapper around PurrinkShelf's native module (android/app/src/main/java/com/inkshelf).
 import {NativeModules} from 'react-native';
-import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
+import {PluginCommAPI, PluginDocAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
 
 export type Entry = {name: string; path: string; isDir: boolean; size: number; mtime?: number};
 
@@ -245,5 +245,48 @@ export async function removePaper(path: string): Promise<boolean> {
     return !!(await N.removePaper(path));
   } catch (e) {
     return false;
+  }
+}
+
+/** a chapter in an EPUB's contents: its title, how deep it sits, and where it starts (0..1 of the book's text) */
+export type Chapter = {t: string; d: number; f: number};
+/** the EPUB's chapters, and the start of its first pages (for AO3's tags) */
+export async function epubContents(path: string): Promise<{toc: Chapter[]; first: string} | null> {
+  if (!N?.epubContents) return null;
+  try {
+    const s = await N.epubContents(path);
+    if (!s) return null;
+    const j = JSON.parse(s);
+    return {toc: Array.isArray(j.toc) ? j.toc : [], first: String(j.first || '')};
+  } catch (e) {
+    return null;
+  }
+}
+
+/** where the reader is in the document PurrinkShelf was opened over: page (0-based) and page count */
+export async function currentPage(): Promise<{page: number; pages: number} | null> {
+  try {
+    const a: any = await PluginCommAPI.getCurrentPageNum();
+    const b: any = await PluginDocAPI.getCurrentTotalPages();
+    const page = Number(a?.result ?? a);
+    const pages = Number(b?.result ?? b);
+    if (!(pages > 0) || !(page >= 0)) return null;
+    return {page, pages};
+  } catch (e) {
+    return null;
+  }
+}
+
+/** open a book at a page (0-based) with the plugin kit; falls back to opening it normally */
+export async function openAt(path: string, page: number): Promise<string | null> {
+  try {
+    const r: any = await PluginFileAPI.openFile(path, Math.max(0, Math.floor(page)));
+    if (r && r.success === false) return openBook(path);
+    setTimeout(() => {
+      PluginManager.closePluginView().catch(() => {});
+    }, 600);
+    return null;
+  } catch (e) {
+    return openBook(path);
   }
 }
