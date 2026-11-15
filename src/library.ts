@@ -46,6 +46,7 @@ export type Meta = {
   pos?: {[file: string]: {page: number; pages: number; at: number}}; // the page you were on in each file (seen when PurrinkShelf is opened inside the book)
   done?: {[file: string]: number}; // volumes you finished, and when
   marks?: ChapterMark[]; // bookmarked chapters, each with an optional note
+  pageMap?: {[file: string]: {pages: number; at: number[]}}; // the page each chapter starts on (found by its title), for one page count
   ao3?: Ao3; // a work downloaded from Archive of Our Own: its own tags
   ao3Seen?: boolean; // its first page was checked for AO3 tags once
   calibre?: CalibreState; // what Calibre had at the last sync, and your choices when both sides changed

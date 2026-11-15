@@ -290,3 +290,28 @@ export async function openAt(path: string, page: number): Promise<string | null>
     return openBook(path);
   }
 }
+
+/** the text on one page of the document PurrinkShelf was opened over (0-based), or '' */
+export async function pageText(page: number): Promise<string> {
+  try {
+    const r: any = await PluginDocAPI.getCurrentDocText(Math.max(0, Math.floor(page)));
+    const t = r?.result ?? r;
+    return typeof t === 'string' ? t : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/** turn the open document to a page (0-based) and close PurrinkShelf so you can read */
+export async function jumpTo(page: number): Promise<boolean> {
+  try {
+    const r: any = await PluginCommAPI.jumpToPage(Math.max(0, Math.floor(page)));
+    if (r && r.success === false) return false;
+    setTimeout(() => {
+      PluginManager.closePluginView().catch(() => {});
+    }, 300);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}

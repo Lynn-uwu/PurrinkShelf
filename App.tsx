@@ -21,7 +21,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, openAt, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -1692,20 +1692,78 @@ function PurrinkShelfApp(): React.JSX.Element {
     if (l.path === lib?.path) setScreen({kind: 'edit', key: b.key, viaBook: true});
     else openLibrary(l, {kind: 'edit', key: b.key, viaBook: true});
   }
-  /** open a chapter: at its page when PurrinkShelf knows how many pages the file has, else at the start */
-  async function readAt(b: Book, file: string, f: number) {
-    const pages = metaOf(b).pos?.[file]?.pages;
+  /**
+   * Open a chapter. Over that very volume: find the page with the chapter's title and turn to it.
+   * Elsewhere: the page found before (Settings keeps it per page count), else worked out from where the chapter sits in the text.
+   */
+  async function readAt(b: Book, file: string, f: number, i: number) {
+    const m = metaOf(b);
+    const c = TOCS[file]?.[i];
     markSeen(b);
-    await updateMeta(b.key, openedPatch(metaOf(b), file));
+    await updateMeta(b.key, openedPatch(m, file));
     markDay();
+    if (c && (await currentFile()) === file) {
+      const pg = await currentPage();
+      if (pg) {
+        const map = m.pageMap?.[file];
+        let p = map && map.pages === pg.pages ? map.at[i] ?? -1 : -1;
+        if (p < 0) {
+          p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText);
+          if (p >= 0) {
+            const at = map && map.pages === pg.pages ? [...map.at] : (TOCS[file] || []).map(() => -1);
+            at[i] = p;
+            await updateMeta(b.key, {pageMap: {...(m.pageMap || {}), [file]: {pages: pg.pages, at}}});
+          }
+        }
+        if (p < 0) p = Math.round(f * pg.pages);
+        log('jump to page', `${p} for ${c.t}`);
+        if (await jumpTo(p)) return;
+      }
+    }
+    const pages = m.pos?.[file]?.pages;
     if (!pages) {
-      say("Opened the volume. To jump straight to chapters, open PurrinkShelf once from inside this volume so it learns its page count.");
+      say("Opened the volume. To jump straight to chapters, open PurrinkShelf once from inside this volume so it learns its pages.");
       return read(file);
     }
-    const page = Math.min(pages - 1, Math.round(f * pages));
-    log('open at page', `${page} ${file}`);
+    const map = m.pageMap?.[file];
+    const known = map && map.pages === pages ? map.at[i] ?? -1 : -1;
+    const page = known >= 0 ? known : Math.min(pages - 1, Math.round(f * pages));
+    log('open at page', `${page}${known >= 0 ? ' (found by title)' : ' (worked out)'} ${file}`);
     const err = await openAt(file, page);
     if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+  }
+  /** while PurrinkShelf is open over a volume: find the page every chapter starts on, by its title (once per page count) */
+  async function mapChapters(l: Lib, key: string, file: string, pages: number) {
+    const toc = await loadContents(file);
+    if (!toc.length) return;
+    const m0 = metaFor(l)?.books[key] || {};
+    const at = m0.pageMap?.[file]?.pages === pages ? [...m0.pageMap[file].at] : toc.map(() => -1);
+    if (at.length !== toc.length || at.every(x => x >= 0)) return;
+    const cache = new Map<number, string>();
+    let empty = 0;
+    const readPage = async (p: number) => {
+      if (!cache.has(p)) {
+        const t = await pageText(p);
+        empty = t.trim() ? 0 : empty + 1;
+        cache.set(p, t);
+      }
+      return cache.get(p) || '';
+    };
+    const save = async () => {
+      const cur = metaFor(l)?.books[key] || {};
+      await patchBook(l, key, {pageMap: {...(cur.pageMap || {}), [file]: {pages, at: [...at]}}});
+    };
+    let drift = 0, found = 0;
+    for (let k = 0; k < toc.length; k++) {
+      const est = Math.round(toc[k].f * pages);
+      if (at[k] >= 0) { drift = at[k] - est; continue; }
+      const p = await findChapterPage(toc[k], pages, Math.max(0, Math.min(pages - 1, est + drift)), readPage);
+      if (p >= 0) { at[k] = p; drift = p - est; found++; }
+      if (empty >= 8) { log('chapter pages', 'the reader gave no page text; stopped'); break; } // closed, or not supported
+      if (found && found % 10 === 0) await save();
+    }
+    await save();
+    log('chapter pages', `${at.filter(x => x >= 0).length} of ${toc.length} found by title in ${file.split('/').pop()}`);
   }
   async function removePaperBook(b: Book) {
     if (!lib || b.ext !== 'paper') return;
@@ -1733,6 +1791,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       ...(pg ? {pos: {...(f.meta.pos || {}), [path]: {...pg, at: Date.now()}}} : {}),
       ...(finished && !f.meta.done?.[path] ? {done: {...(f.meta.done || {}), [path]: Date.now()}} : {}),
     });
+    if (pg && /\.epub$/i.test(path)) mapChapters(f.lib, f.book.key, path, pg.pages).catch(e => log('chapter pages failed', String(e)));
     const k = f.book.files.indexOf(path);
     const next = f.book.files[k + 1];
     if (finished && next && !f.meta.done?.[next]) {
@@ -2220,7 +2279,7 @@ function PurrinkShelfApp(): React.JSX.Element {
         volGrid={volGrid}
         setVolGrid={setVolGrid}
         onRead={path => { setNextUp(null); readBook(b, path); }}
-        onReadAt={(file, f) => readAt(b, file, f)}
+        onReadAt={(file, f, i) => readAt(b, file, f, i)}
         onMarks={marks => updateMeta(b.key, {marks})}
         first={settings.bookFirst}
         chaptersAt={settings.chaptersAt}
@@ -3368,6 +3427,29 @@ function whereAmI(b: Book, m: Meta, tocs: {[file: string]: Chapter[]}): Where | 
   }
   return {file, vol: n > 1 ? volName(b, file) : '', page: p?.page, pages: p?.pages, frac: (vi + inFile) / n, ch, chText};
 }
+/** the words of a chapter title as they would appear on its page: lowercase letters and digits only */
+const squash = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+/**
+ * Find the page a chapter starts on in the document PurrinkShelf is open over: start at the page worked out from
+ * where the chapter sits in the text, and look at the pages around it for the chapter's title near the top.
+ */
+async function findChapterPage(c: Chapter, pages: number, guess: number, read: (p: number) => Promise<string>): Promise<number> {
+  const full = squash(c.t);
+  const n = chNum(c.t);
+  const name = squash(chName(c.t));
+  const keys = [full, ...(n !== undefined ? [`chapter${n}`, `ch${n}`, `第${n}章`] : []), ...(name.length >= 6 ? [name] : [])].filter(k => k.length >= 3);
+  if (!keys.length) return -1;
+  const reach = Math.max(4, Math.ceil(pages * 0.04));
+  for (let d = 0; d <= reach; d++) {
+    for (const p of d ? [guess + d, guess - d] : [guess]) {
+      if (p < 0 || p >= pages) continue;
+      const top = squash(await read(p)).slice(0, 400); // a chapter's title is at the top of its first page
+      // "chapter12" must not match "chapter120": the next character can't be a digit
+      if (keys.some(k => { const i = top.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(top.charAt(i + k.length))); })) return p;
+    }
+  }
+  return -1;
+}
 /** page numbers between the arrows: 1 … 15 16 17 … 121 (the dots open a number pad) */
 function PageStrip({page, pages, onPage, onDots, room}: {page: number; pages: number; onPage: (p: number) => void; onDots: () => void; room: number}) {
   const box = px(40);
@@ -3438,7 +3520,7 @@ function GoToPad({max, chapters, onGo, onClose}: {max: {ch: number; page: number
 /** the Chapters side of a book page: one volume (or all), bookmarks with notes, page numbers, and a number pad */
 function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMarks}: {
   b: Book; m: Meta; tocs: {[file: string]: Chapter[]}; where: Where | null; width: number; height: number; startAt: 'here' | 'start';
-  onOpen: (file: string, f: number) => void; onMarks: (marks: ChapterMark[]) => void;
+  onOpen: (file: string, f: number, i: number) => void; onMarks: (marks: ChapterMark[]) => void;
 }) {
   const files = b.files.filter(f => /\.epub$/i.test(f));
   const multi = files.length > 1;
@@ -3472,7 +3554,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
     const k = files.indexOf(file);
     const side = i === toc.length - 1 && carries(file) ? `continues in ${volName(b, files[k + 1])}` : i === 0 && k > 0 && carries(files[k - 1]) ? `from ${volName(b, files[k - 1])}` : isRead(file, i) ? 'read' : '';
     rows.push({h: px(52), key: `${file}#${i}`, file, i, node: (
-      <Pressable onPress={() => onOpen(file, c.f)} style={[st.chRow, isRead(file, i) && st.chRowRead, isHere && st.chRowHere, c.d > 0 && {marginLeft: px(14) * Math.min(2, c.d)}]} accessibilityLabel={`Open ${c.t}`}>
+      <Pressable onPress={() => onOpen(file, c.f, i)} style={[st.chRow, isRead(file, i) && st.chRowRead, isHere && st.chRowHere, c.d > 0 && {marginLeft: px(14) * Math.min(2, c.d)}]} accessibilityLabel={`Open ${c.t}`}>
         <Text style={[st.chText, isHere && {fontWeight: 'bold'}]} numberOfLines={1}>{label || chLabel(c)}</Text>
         {isHere ? <View style={st.chHere}><Text style={{color: '#ffffff', fontSize: px(13), fontWeight: 'bold'}}>{"You're here"}</Text></View> : side ? <Text style={st.chSide} numberOfLines={1}>{side}</Text> : null}
         <IconBtn bare name={mk ? 'bookmark-on' : 'bookmark'} label={mk ? 'Bookmark and note' : 'Bookmark this chapter'} iconSize={px(24)} size={px(40)} onPress={() => {
@@ -3644,7 +3726,7 @@ function BookPage(props: {
   showLength?: boolean;
   showWarnings?: boolean;
   dup: {others: {title: string; where: string; onOpen: () => void}[]; ignored: boolean; onIgnore: () => void; onFiles: () => void} | null;
-  onReadAt?: (file: string, f: number) => void; // open a chapter (a place in the file, 0..1)
+  onReadAt?: (file: string, f: number, i: number) => void; // open a chapter: its place in the file (0..1) and its number in the contents
   onMarks?: (marks: ChapterMark[]) => void;
   first?: 'about' | 'chapters' | 'started';
   chaptersAt?: 'here' | 'start';
@@ -4008,7 +4090,7 @@ function BookPage(props: {
           ) : null}
           {rTab === 'ch' && epubs.length ? (
             <View style={{flex: 1, paddingHorizontal: px(12)}}>
-              <ChaptersPane b={b} m={m} tocs={tocs} where={where} width={RW - px(24)} height={colH - tabsH - px(8)} startAt={props.chaptersAt || 'here'} onOpen={(f, x) => props.onReadAt?.(f, x)} onMarks={mk => props.onMarks?.(mk)} />
+              <ChaptersPane b={b} m={m} tocs={tocs} where={where} width={RW - px(24)} height={colH - tabsH - px(8)} startAt={props.chaptersAt || 'here'} onOpen={(f, x, i) => props.onReadAt?.(f, x, i)} onMarks={mk => props.onMarks?.(mk)} />
             </View>
           ) : scroll ? (
             <ScrollView contentContainerStyle={{padding: px(16)}}>{renderItems(right)}</ScrollView>
