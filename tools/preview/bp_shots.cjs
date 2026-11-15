@@ -1,0 +1,15 @@
+const {chromium} = require('playwright'); const path = require('path');
+const out = path.join(__dirname, 'shots31'); require('fs').mkdirSync(out, {recursive: true});
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const shot = async n => { await p.waitForTimeout(700); await p.screenshot({path: path.join(out, n + '.png')}); console.log(n); };
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1'); await p.waitForTimeout(13000);
+  await p.getByLabel('Settings', {exact: true}).first().click();
+  await p.getByText('Book pages', {exact: true}).click();
+  await p.getByText('Once started', {exact: true}).click(); await shot('1-setting');
+  await p.getByLabel('Close page', {exact: true}).last().click(); await p.waitForTimeout(500);
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await shot('2-started');
+  await p.getByLabel('Close page', {exact: true}).last().click(); await p.waitForTimeout(500);
+  await p.getByLabel('Library', {exact: true}).first().click(); await p.waitForTimeout(600);
+  await p.getByText('Crane and the Clockmaker', {exact: true}).first().click(); await shot('3-not-started');
+  await b.close(); })();

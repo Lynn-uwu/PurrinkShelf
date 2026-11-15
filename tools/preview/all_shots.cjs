@@ -17,6 +17,7 @@ const out = path.join(__dirname, 'shots29'); require('fs').mkdirSync(out, {recur
   await p.getByText('Changes from Calibre', {exact: true}).click(); await shot('a6-changes');
   await p.getByLabel('Choose: Moon Over the Jade Pavilion').click(); await shot('a7-compare');
   await p.getByText('From Calibre', {exact: true}).click(); await shot('a8-compare-cal');
+  await p.getByText('Genres · choose', {exact: true}).click(); await shot('a8b-genres');
   await p.getByText('Use Calibre version', {exact: true}).click(); await shot('a9-used');
   await lbl('Back').last().click(); await shot('a10-list-after');
   await lbl('Close page').last().click(); }

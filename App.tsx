@@ -21,7 +21,7 @@ const XLSX_NAME = 'PurrinkShelf books.xlsx';
 import {LOG_PATH, installGlobalHandler, log, recentLog, reportError, setErrorScreen} from './src/log';
 import {ICONS, IconName} from './src/icons';
 import {readText, readZip, removePaper, writeText, writeZip} from './src/native';
-import {Chapter, Entry, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, openAt, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
+import {Chapter, Entry, closeView, copyImage, copyText, currentFile, currentNote, currentPage, epubContents, epubMeta, jumpTo, openAt, openUnder, pageText, parseOpf, hasNative, listDir, openBook, openFileManager, pasteIntoNote, screenshotDir, storageRoots} from './src/native';
 
 const {width: W, height: H} = Dimensions.get('window');
 const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
@@ -772,7 +772,7 @@ function PurrinkShelfApp(): React.JSX.Element {
     const e = await calibreCsv(l);
     const cur0 = metaFor(l);
     if (!e || !cur0) return 0;
-    if (!force && cur0.calibre?.[e.path] === e.mtime) return 0;
+    if (!force && cur0.calibre?.[e.path] === e.mtime) { await calibreExport(l, cur0, bs, e.path); return 0; } // nothing new from Calibre; still send what changed here
     const rows = parseTable((await readText(e.path)) || '');
     const col = (r: {[h: string]: string}, n: string) => { const k = Object.keys(r).find(h => h.toLowerCase().replace(/\s+/g, '_') === n); return k ? (r[k] || '').trim() : ''; };
     const books2 = {...cur0.books};
@@ -796,6 +796,8 @@ function PurrinkShelfApp(): React.JSX.Element {
         title, author: col(r, 'author') || col(r, 'authors'), description: col(r, 'description') || col(r, 'comments'),
         genres: col(r, 'genres') || col(r, 'genre'), tags: col(r, 'tags'), series: col(r, 'series'), language: col(r, 'language') || col(r, 'languages'),
       };
+      // a book in volumes is a series of the same name in Calibre (one Calibre book per volume): not a series of its own
+      if (theirsOf.series.toLowerCase().startsWith(title.toLowerCase() + ' #') && b.files.length > 1) theirsOf.series = '';
       for (const {id: f} of CAL_FIELDS) {
         const theirs = theirsOf[f];
         const mine = calValue(b, m, f);
@@ -837,6 +839,21 @@ function PurrinkShelfApp(): React.JSX.Element {
         if (c.pending?.[f] !== undefined) continue;
         const mine = calValue(b, m, f);
         if (mine && !calSame(f, mine, c.base?.[f] || '')) lines.push([c.id, shownTitle(b, m), f, mine].map(q).join(','));
+      }
+    }
+    // books that are here but not in Calibre: the helper adds the files (volumes as a series), then their details
+    const root = at.replace(/\/_Library Data\/calibre\.csv$/i, '');
+    if (settings.calibreAdd) for (const b of bs) {
+      const m = ms.books[b.key] || {};
+      if (m.calibre?.id || b.missing || b.ext === 'paper' || m.paper) continue;
+      const files = b.files.filter(f => f.startsWith(root + '/') && CALIBRE_EXT.test(f));
+      if (!files.length) continue;
+      const id = 'new:' + b.key;
+      lines.push([id, shownTitle(b, m), 'add', files.map(f => f.slice(root.length + 1)).join('|')].map(q).join(','));
+      for (const {id: f} of CAL_FIELDS) {
+        if (f === 'series' && files.length > 1) continue; // volumes become a series of their own
+        const v = calValue(b, m, f);
+        if (v) lines.push([id, shownTitle(b, m), f, v].map(q).join(','));
       }
     }
     await writeText(at.replace(/calibre\.csv$/i, 'supernote-changes.csv'), lines.join('\r\n') + '\r\n');
@@ -1675,20 +1692,87 @@ function PurrinkShelfApp(): React.JSX.Element {
     if (l.path === lib?.path) setScreen({kind: 'edit', key: b.key, viaBook: true});
     else openLibrary(l, {kind: 'edit', key: b.key, viaBook: true});
   }
-  /** open a chapter: at its page when PurrinkShelf knows how many pages the file has, else at the start */
-  async function readAt(b: Book, file: string, f: number) {
-    const pages = metaOf(b).pos?.[file]?.pages;
+  /**
+   * Open a chapter. Over that very volume: find the page with the chapter's title and turn to it.
+   * Elsewhere: the page found before (Settings keeps it per page count), else worked out from where the chapter sits in the text.
+   */
+  async function readAt(b: Book, file: string, f: number, i: number) {
+    const m = metaOf(b);
+    const c = TOCS[file]?.[i];
     markSeen(b);
-    await updateMeta(b.key, openedPatch(metaOf(b), file));
+    await updateMeta(b.key, openedPatch(m, file));
     markDay();
-    if (!pages) {
-      say("Opened the volume. To jump straight to chapters, open PurrinkShelf once from inside this volume so it learns its page count.");
-      return read(file);
+    const known = m.pos?.[file]?.pages;
+    const map = m.pageMap?.[file];
+    const mapped = map && map.pages === known ? map.at[i] ?? -1 : -1;
+    // not the volume under PurrinkShelf: open it underneath (PurrinkShelf stays open), so its pages can be looked at
+    let here = settings.findPages && (await currentFile()) === file;
+    if (!here && c && settings.findPages) {
+      log('open under', file);
+      here = await openUnder(file, mapped >= 0 ? mapped : known ? Math.round(f * known) : 0);
+      if (!here) {
+        log('open under', 'the reader closed PurrinkShelf or kept the old book');
+        closeView();
+        return;
+      }
     }
-    const page = Math.min(pages - 1, Math.round(f * pages));
-    log('open at page', `${page} ${file}`);
-    const err = await openAt(file, page);
+    if (c && here) {
+      const pg = await currentPage();
+      if (pg) {
+        const cur = metaOf(b).pageMap?.[file];
+        let p = cur && cur.pages === pg.pages ? cur.at[i] ?? -1 : -1;
+        if (p < 0) {
+          p = await findChapterPage(c, pg.pages, Math.round(f * pg.pages), pageText);
+          if (p >= 0) {
+            const at = cur && cur.pages === pg.pages ? [...cur.at] : (TOCS[file] || []).map(() => -1);
+            at[i] = p;
+            await updateMeta(b.key, {pageMap: {...(metaOf(b).pageMap || {}), [file]: {pages: pg.pages, at}}, pos: {...(metaOf(b).pos || {}), [file]: {page: p, pages: pg.pages, at: Date.now()}}});
+          }
+        }
+        if (p < 0) p = Math.round(f * pg.pages);
+        log('jump to page', `${p} for ${c.t}`);
+        if (await jumpTo(p)) return;
+      }
+      closeView();
+      return;
+    }
+    // no chapter list: open it as before
+    if (!known) return read(file);
+    const err = await openAt(file, mapped >= 0 ? mapped : Math.min(known - 1, Math.round(f * known)));
     if (err) setMessage(`The reader didn't open the book.\n\n${err}`);
+  }
+  /** while PurrinkShelf is open over a volume: find the page every chapter starts on, by its title (once per page count) */
+  async function mapChapters(l: Lib, key: string, file: string, pages: number) {
+    const toc = await loadContents(file);
+    if (!toc.length) return;
+    const m0 = metaFor(l)?.books[key] || {};
+    const at = m0.pageMap?.[file]?.pages === pages ? [...m0.pageMap[file].at] : toc.map(() => -1);
+    if (at.length !== toc.length || at.every(x => x >= 0)) return;
+    const cache = new Map<number, string>();
+    let empty = 0;
+    const readPage = async (p: number) => {
+      if (!cache.has(p)) {
+        const t = await pageText(p);
+        empty = t.trim() ? 0 : empty + 1;
+        cache.set(p, t);
+      }
+      return cache.get(p) || '';
+    };
+    const save = async () => {
+      const cur = metaFor(l)?.books[key] || {};
+      await patchBook(l, key, {pageMap: {...(cur.pageMap || {}), [file]: {pages, at: [...at]}}});
+    };
+    let drift = 0, found = 0;
+    for (let k = 0; k < toc.length; k++) {
+      const est = Math.round(toc[k].f * pages);
+      if (at[k] >= 0) { drift = at[k] - est; continue; }
+      const p = await findChapterPage(toc[k], pages, Math.max(0, Math.min(pages - 1, est + drift)), readPage);
+      if (p >= 0) { at[k] = p; drift = p - est; found++; }
+      if (empty >= 8) { log('chapter pages', 'the reader gave no page text; stopped'); break; } // closed, or not supported
+      if (found && found % 10 === 0) await save();
+    }
+    await save();
+    log('chapter pages', `${at.filter(x => x >= 0).length} of ${toc.length} found by title in ${file.split('/').pop()}`);
   }
   async function removePaperBook(b: Book) {
     if (!lib || b.ext !== 'paper') return;
@@ -1716,6 +1800,7 @@ function PurrinkShelfApp(): React.JSX.Element {
       ...(pg ? {pos: {...(f.meta.pos || {}), [path]: {...pg, at: Date.now()}}} : {}),
       ...(finished && !f.meta.done?.[path] ? {done: {...(f.meta.done || {}), [path]: Date.now()}} : {}),
     });
+    if (pg && settings.findPages && /\.epub$/i.test(path)) mapChapters(f.lib, f.book.key, path, pg.pages).catch(e => log('chapter pages failed', String(e)));
     const k = f.book.files.indexOf(path);
     const next = f.book.files[k + 1];
     if (finished && next && !f.meta.done?.[next]) {
@@ -2000,9 +2085,10 @@ function PurrinkShelfApp(): React.JSX.Element {
           onAll={async use => {
             for (const f of calWaiting) for (const field of Object.keys(f.meta.calibre?.pending || {}) as CalField[]) await calDecide(f.lib, f.book.key, field, use);
           }}
-          preview={(f, m) => (
+          preview={(f, m, diff) => (
             <BookPage
               preview
+              diff={diff}
               book={f.book} meta={m} title={shownTitle(f.book, m)} cats={catsOf(f.book, m)} cover={f.lib.path === lib?.path ? coverUri(f.book) : m.cover || null}
               paging="arrows" volGrid={false} setVolGrid={() => {}} onRead={() => {}} onEdit={() => {}} onBack={() => {}} onFilter={() => {}}
               marked={false} onMark={() => {}} onNotes={() => {}} onPaste={() => {}} onFav={() => {}} onReading={() => {}}
@@ -2070,6 +2156,14 @@ function PurrinkShelfApp(): React.JSX.Element {
                 </View>
               );
             })}
+            <View style={[st.permRow, {borderTopWidth: 1, borderColor: '#888888', paddingTop: px(12), marginTop: px(4)}]}>
+              <Icon name="bookmark" size={px(30)} />
+              <View style={{flex: 1, marginLeft: px(12), marginRight: px(10)}}>
+                <Text style={st.choiceTitle}>Let plugin run in background</Text>
+                <Text style={st.small}>{"Helps chapters open at the right page: while PurrinkShelf is open over a book, it looks through that volume's pages once to find where each chapter starts, and remembers them. It stops when you close it. Turn off to save battery: chapters then open close to their page."}</Text>
+              </View>
+              <Pill toggle label={settings.findPages ? 'On' : 'Off'} active={settings.findPages} width={px(84)} onPress={() => changeSettings({findPages: !settings.findPages})} />
+            </View>
             {Object.keys(perm).length && PERMS.every(p => (perm[p.id] || 0) >= 1 && permChoice[p.id] !== 1) ? (
               <Btn dark icon="check" label="All allowed" onPress={() => { setPermOpen(false); closedLayer(); }} style={{marginTop: px(14)}} />
             ) : (
@@ -2202,7 +2296,7 @@ function PurrinkShelfApp(): React.JSX.Element {
         volGrid={volGrid}
         setVolGrid={setVolGrid}
         onRead={path => { setNextUp(null); readBook(b, path); }}
-        onReadAt={(file, f) => readAt(b, file, f)}
+        onReadAt={(file, f, i) => readAt(b, file, f, i)}
         onMarks={marks => updateMeta(b.key, {marks})}
         first={settings.bookFirst}
         chaptersAt={settings.chaptersAt}
@@ -3176,7 +3270,7 @@ const ago = (t: number) => {
 };
 
 // ---------- book page: two columns, paged with arrows (or scrolling) ----------
-type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean};
+type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean; hl?: boolean};
 
 /** greedy word wrap by character count (a cautious guess of what fits) */
 function wrapWords(text: string, perLine: number): string[] {
@@ -3221,7 +3315,21 @@ function pack(items: Item[], cap: number): Item[][] {
   }
   return pages;
 }
-function renderItems(items: Item[]) {
+function renderItems(items: Item[]): React.ReactNode[] {
+  // a run of marked items (what differs, in a Calibre preview) sits in one dashed, shaded box
+  if (items.some(it => it.hl)) {
+    const out: React.ReactNode[] = [];
+    let i = 0;
+    while (i < items.length) {
+      const on = !!items[i].hl;
+      let j = i;
+      while (j < items.length && !!items[j].hl === on) j++;
+      const run = items.slice(i, j).map(it => ({...it, hl: undefined}));
+      out.push(on ? <View key={'hl' + i} style={st.diffBox}>{renderItems(run)}</View> : <React.Fragment key={'r' + i}>{renderItems(run)}</React.Fragment>);
+      i = j;
+    }
+    return out;
+  }
   const out: React.ReactNode[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
@@ -3336,6 +3444,29 @@ function whereAmI(b: Book, m: Meta, tocs: {[file: string]: Chapter[]}): Where | 
   }
   return {file, vol: n > 1 ? volName(b, file) : '', page: p?.page, pages: p?.pages, frac: (vi + inFile) / n, ch, chText};
 }
+/** the words of a chapter title as they would appear on its page: lowercase letters and digits only */
+const squash = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+/**
+ * Find the page a chapter starts on in the document PurrinkShelf is open over: start at the page worked out from
+ * where the chapter sits in the text, and look at the pages around it for the chapter's title near the top.
+ */
+async function findChapterPage(c: Chapter, pages: number, guess: number, read: (p: number) => Promise<string>): Promise<number> {
+  const full = squash(c.t);
+  const n = chNum(c.t);
+  const name = squash(chName(c.t));
+  const keys = [full, ...(n !== undefined ? [`chapter${n}`, `ch${n}`, `第${n}章`] : []), ...(name.length >= 6 ? [name] : [])].filter(k => k.length >= 3);
+  if (!keys.length) return -1;
+  const reach = Math.max(4, Math.ceil(pages * 0.04));
+  for (let d = 0; d <= reach; d++) {
+    for (const p of d ? [guess + d, guess - d] : [guess]) {
+      if (p < 0 || p >= pages) continue;
+      const top = squash(await read(p)).slice(0, 400); // a chapter's title is at the top of its first page
+      // "chapter12" must not match "chapter120": the next character can't be a digit
+      if (keys.some(k => { const i = top.indexOf(k); return i >= 0 && !(/\d$/.test(k) && /\d/.test(top.charAt(i + k.length))); })) return p;
+    }
+  }
+  return -1;
+}
 /** page numbers between the arrows: 1 … 15 16 17 … 121 (the dots open a number pad) */
 function PageStrip({page, pages, onPage, onDots, room}: {page: number; pages: number; onPage: (p: number) => void; onDots: () => void; room: number}) {
   const box = px(40);
@@ -3406,7 +3537,7 @@ function GoToPad({max, chapters, onGo, onClose}: {max: {ch: number; page: number
 /** the Chapters side of a book page: one volume (or all), bookmarks with notes, page numbers, and a number pad */
 function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMarks}: {
   b: Book; m: Meta; tocs: {[file: string]: Chapter[]}; where: Where | null; width: number; height: number; startAt: 'here' | 'start';
-  onOpen: (file: string, f: number) => void; onMarks: (marks: ChapterMark[]) => void;
+  onOpen: (file: string, f: number, i: number) => void; onMarks: (marks: ChapterMark[]) => void;
 }) {
   const files = b.files.filter(f => /\.epub$/i.test(f));
   const multi = files.length > 1;
@@ -3440,7 +3571,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
     const k = files.indexOf(file);
     const side = i === toc.length - 1 && carries(file) ? `continues in ${volName(b, files[k + 1])}` : i === 0 && k > 0 && carries(files[k - 1]) ? `from ${volName(b, files[k - 1])}` : isRead(file, i) ? 'read' : '';
     rows.push({h: px(52), key: `${file}#${i}`, file, i, node: (
-      <Pressable onPress={() => onOpen(file, c.f)} style={[st.chRow, isRead(file, i) && st.chRowRead, isHere && st.chRowHere, c.d > 0 && {marginLeft: px(14) * Math.min(2, c.d)}]} accessibilityLabel={`Open ${c.t}`}>
+      <Pressable onPress={() => onOpen(file, c.f, i)} style={[st.chRow, isRead(file, i) && st.chRowRead, isHere && st.chRowHere, c.d > 0 && {marginLeft: px(14) * Math.min(2, c.d)}]} accessibilityLabel={`Open ${c.t}`}>
         <Text style={[st.chText, isHere && {fontWeight: 'bold'}]} numberOfLines={1}>{label || chLabel(c)}</Text>
         {isHere ? <View style={st.chHere}><Text style={{color: '#ffffff', fontSize: px(13), fontWeight: 'bold'}}>{"You're here"}</Text></View> : side ? <Text style={st.chSide} numberOfLines={1}>{side}</Text> : null}
         <IconBtn bare name={mk ? 'bookmark-on' : 'bookmark'} label={mk ? 'Bookmark and note' : 'Bookmark this chapter'} iconSize={px(24)} size={px(40)} onPress={() => {
@@ -3491,6 +3622,15 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
   }
   const pageOf = (file: string, i: number) => Math.max(0, pages.findIndex(pg => pg.some(r => r.file === file && r.i === i)));
   const [pg, setPg] = useState(() => (here && sel === here.file ? pageOf(here.file, here.i) : 0));
+  // "open where I am": until you move around yourself, the list follows your chapter (the contents can finish reading after the list opens)
+  const auto = useRef(startAt === 'here');
+  const hereKey = here ? `${here.file}#${here.i}` : '';
+  useEffect(() => {
+    if (!auto.current || !here || here.i < 0) return;
+    if (sel !== here.file && files.includes(here.file)) { setSel(here.file); return; }
+    const t = pageOf(here.file, here.i);
+    if (sel === here.file && t !== pg) setPg(t);
+  }, [hereKey, sel, pages.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const [flash, setFlash] = useState<string | null>(null);
   const p = Math.min(pg, pages.length - 1);
   // the highest chapter number in the book (or the count, when they aren't numbered)
@@ -3500,6 +3640,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
     let hit = lastNum ? allToc.find(x => chNum(x.c.t) === n) : allToc[n - 1];
     if (!hit) return;
     const showIn = sel === 'all' || sel === hit.f ? sel : hit.f;
+    auto.current = false;
     setSel(showIn);
     setPanel(null);
     setFlash(`${hit.f}#${hit.i}`);
@@ -3519,7 +3660,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
       <View style={{height: headH, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end'}}>
         {sel === 'marks' ? <Text style={[st.small, {flex: 1}]} numberOfLines={2}>{'Only bookmarked chapters. Tap one to open near it, or the note to change it.'}</Text> : <View style={{flex: 1}} />}
         <View>
-          <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
+          <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { auto.current = false; setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
           {marks.length ? <View style={st.bubble} pointerEvents="none"><Text style={st.bubbleText}>{String(marks.length)}</Text></View> : null}
         </View>
         {multi && sel !== 'marks' ? (
@@ -3537,7 +3678,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
         ))}
         {sel === 'marks' && !marks.length ? <Text style={[st.small, {marginTop: px(10)}]}>{'No bookmarks yet. Tap the bookmark on a chapter to keep it here, with a note on why.'}</Text> : null}
       </View>
-      <PageStrip page={p} pages={pages.length} onPage={n => { setPg(n); setFlash(null); }} onDots={() => setPanel('pad')} room={width} />
+      <PageStrip page={p} pages={pages.length} onPage={n => { auto.current = false; setPg(n); setFlash(null); }} onDots={() => setPanel('pad')} room={width} />
       {panel === 'vols' ? (
         <View style={st.inPanel}>
           <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: px(8)}}>
@@ -3546,7 +3687,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
           </View>
           <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
             {['all', ...files].map(f => (
-              <Pressable key={f} onPress={() => { setSel(f); setPanel(null); setPg(f !== 'all' && here?.file === f ? pageOf(f, here.i) : 0); setFlash(null); }} style={[st.rTab, {marginBottom: px(8)}, sel === f && st.btnDark, !!m.done?.[f] && sel !== f && st.chRowRead]}>
+              <Pressable key={f} onPress={() => { auto.current = false; setSel(f); setPanel(null); setPg(f !== 'all' && here?.file === f ? pageOf(f, here.i) : 0); setFlash(null); }} style={[st.rTab, {marginBottom: px(8)}, sel === f && st.btnDark, !!m.done?.[f] && sel !== f && st.chRowRead]}>
                 <Text style={[st.rTabText, sel === f && {color: '#ffffff'}]}>{f === 'all' ? 'All volumes' : volName(b, f)}</Text>
               </Pressable>
             ))}
@@ -3554,7 +3695,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
         </View>
       ) : null}
       {panel === 'pad' ? (
-        <GoToPad chapters={allToc.length > 0} max={{ch: lastNum || allToc.length, page: pages.length}} onClose={() => setPanel(null)} onGo={(k, n) => { if (k === 'page') { setPg(n - 1); setPanel(null); setFlash(null); } else goCh(n); }} />
+        <GoToPad chapters={allToc.length > 0} max={{ch: lastNum || allToc.length, page: pages.length}} onClose={() => setPanel(null)} onGo={(k, n) => { auto.current = false; if (k === 'page') { setPg(n - 1); setPanel(null); setFlash(null); } else goCh(n); }} />
       ) : null}
       {editing && typeof panel === 'object' && panel ? (
         <View style={st.inPanel}>
@@ -3602,21 +3743,23 @@ function BookPage(props: {
   showLength?: boolean;
   showWarnings?: boolean;
   dup: {others: {title: string; where: string; onOpen: () => void}[]; ignored: boolean; onIgnore: () => void; onFiles: () => void} | null;
-  onReadAt?: (file: string, f: number) => void; // open a chapter (a place in the file, 0..1)
+  onReadAt?: (file: string, f: number, i: number) => void; // open a chapter: its place in the file (0..1) and its number in the contents
   onMarks?: (marks: ChapterMark[]) => void;
-  first?: 'about' | 'chapters';
+  first?: 'about' | 'chapters' | 'started';
   chaptersAt?: 'here' | 'start';
   nextUp?: {from: string; to: string} | null; // you just finished a volume: start the next one?
   onNextLater?: () => void;
   preview?: boolean; // a small look at the page (nothing can be tapped)
   onCalibre?: () => void; // the Calibre versions of this book
+  diff?: CalField; // a Calibre preview: mark this field
 }) {
   const {book: b, meta: m, title, cats, cover, paging, volGrid, setVolGrid, onRead, onEdit, onBack, onFilter, marked, onMark, onNotes, onPaste, onFav, onReading, collections, onCollection, onNewCollection, onReload, reloading, author, dup, showLength, showWarnings, nextUp} = props;
   const epubs = b.missing || b.ext === 'paper' ? [] : b.files.filter(f => /\.epub$/i.test(f));
   const tocs = useChapters(epubs);
   const where = whereAmI(b, m, tocs);
   const hasCh = epubs.length > 0 && !epubs.every(f => tocs[f] && !tocs[f].length);
-  const [rTab, setRTab] = useState<'about' | 'ch'>(props.first === 'chapters' && epubs.length ? 'ch' : 'about');
+  const started = !!m.progress?.last && m.reading?.state !== 'completed';
+  const [rTab, setRTab] = useState<'about' | 'ch'>((props.first === 'chapters' || (props.first === 'started' && started)) && epubs.length ? 'ch' : 'about');
   const [statusOpen, setStatusOpen] = useState(false);
   const [colOpen, setColOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -3645,13 +3788,15 @@ function BookPage(props: {
   const startH = px(48) + px(10);
   const left: Item[] = [];
   let sec = 'Overview';
-  const label = (t: string) => ({h: px(32), sec, node: <Text style={st.infoLabel}>{t}</Text>});
+  let hl = false; // marks what differs, in a Calibre preview
+  const label = (t: string) => ({h: px(32), sec, hl, node: <Text style={st.infoLabel}>{t}</Text>});
   const maxPill = Math.floor((lIn - px(30)) / (px(14) * 0.58)); // a longer name is shortened (the filter still uses all of it)
   const pills = (list: string[], k: FilterKind) =>
-    pillLines(list.map(t => t), lIn).map(line => ({
-      h: px(33),
+    pillLines(list.map(t => t), lIn - px(4)).map((line, i) => ({
+      h: px(34) + (i === 0 ? px(6) : px(2)), // room above each line so its top edge is never cut off (more under a heading)
       sec,
-      node: <View style={{flexDirection: 'row'}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
+      hl,
+      node: <View style={{flexDirection: 'row', paddingTop: i === 0 ? px(6) : px(2), paddingLeft: px(2)}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
@@ -3660,6 +3805,7 @@ function BookPage(props: {
     left.push({
       h: px(32) + lines * px(24) + px(8),
       sec,
+      hl,
       node: (
         <View>
           <Text style={st.infoLabel}>{name}</Text>
@@ -3670,21 +3816,30 @@ function BookPage(props: {
       ),
     });
   };
+  hl = props.diff === 'genres';
   left.push(label('Genre'));
   if (m.genres?.length) left.push(...pills(m.genres, 'g'));
-  else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
+  else left.push({h: px(28), sec, hl, node: <Text style={st.small}>None yet</Text>});
+  hl = false;
   left.push({h: px(6), sec});
+  hl = props.diff === 'series';
+  if (props.diff === 'series' && !m.seriesName) field('Series', '');
   if (m.seriesName) field('Series', `${m.seriesName}${m.seriesNo ? `  #${String(m.seriesNo).replace(/\.0+$/, '')}` : ''}`);
+  hl = false;
   if (m.paper) field('Format', 'Paper book');
+  hl = props.diff === 'language';
   field('Language', m.language);
+  hl = false;
   field('Status', m.status);
   if (showLength && m.length) field('Length', `About ${hoursText(readMinutes(m))} to read  ·  ${Math.round((m.length.words + m.length.cjk) / 1000)}k ${m.length.cjk > m.length.words ? 'characters' : 'words'}`);
   sec = 'Tags';
   left.push({h: 0, brk: true});
+  hl = props.diff === 'tags';
   left.push(label('Tags'));
   const allTagsHere = Array.from(new Set([...(m.tags || []), ...(m.ao3?.tags || [])]));
   if (allTagsHere.length) left.push(...pills(allTagsHere, 't'));
-  else left.push({h: px(28), sec, node: <Text style={st.small}>None yet</Text>});
+  else left.push({h: px(28), sec, hl, node: <Text style={st.small}>None yet</Text>});
+  hl = false;
   if (showWarnings && m.warnings?.length) {
     left.push({h: px(8), sec});
     left.push(label('Content warnings'));
@@ -3750,7 +3905,8 @@ function BookPage(props: {
       </View>
     )});
   }
-  right.push({h: px(40), node: <Text style={st.colHead}>Description</Text>});
+  const dHl = props.diff === 'description';
+  right.push({h: px(40), hl: dHl, node: <Text style={st.colHead}>Description</Text>});
   const paras = (m.description || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
   if (!paras.length && CAT) {
     right.push({h: px(200), node: (
@@ -3763,10 +3919,10 @@ function BookPage(props: {
         <CatImg name="sitting" w={px(88)} style={{position: 'absolute', left: px(2), bottom: 0}} />
       </View>
     )});
-  } else if (!paras.length) right.push({h: px(36), node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
+  } else if (!paras.length) right.push({h: px(36), hl: dHl, node: <Text style={st.small}>No description yet. Tap Edit to add one.</Text>});
   paras.forEach((p, pi) => {
-    const lines = wrapWords(p, perLine);
-    lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1}));
+    const lines = wrapWords(p, perLine - (dHl ? 2 : 0));
+    lines.forEach((ln, li) => right.push({h: px(27) + (li === lines.length - 1 ? px(10) : 0), group: 'p' + pi, text: ln, endPara: li === lines.length - 1, hl: dHl}));
   });
   if (b.vols.length) {
     right.push({h: px(10)});
@@ -3834,8 +3990,10 @@ function BookPage(props: {
     const n = lPages[i][0]?.sec || '';
     return n === 'Tags' && i > 0 && lPages[i - 1][0]?.sec === 'Tags' ? 'More tags' : n;
   };
-  const lpg = Math.min(lp, lPages.length - 1);
-  const rpg = Math.min(rp, rPages.length - 1);
+  // a Calibre preview shows the page that holds the difference
+  const hlPage = (pgs: Item[][]) => Math.max(0, pgs.findIndex(pg => pg.some(it => it.hl)));
+  const lpg = props.diff ? hlPage(lPages) : Math.min(lp, lPages.length - 1);
+  const rpg = props.diff ? hlPage(rPages) : Math.min(rp, rPages.length - 1);
 
   const top = (
     <View style={{width: coverW + px(14), height: coverH + px(10)}}>
@@ -3898,11 +4056,11 @@ function BookPage(props: {
       <View style={{height: titleH, paddingHorizontal: px(16), flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#888888'}}>
         <View style={{flex: 1}}>
           {author ? (
-            <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`}>
+            <Pressable onPress={() => onFilter('a', author)} accessibilityLabel={`More by ${author}`} style={props.diff === 'author' && st.diffInline}>
               <Text style={st.byLine} numberOfLines={2}>{author}</Text>
             </Pressable>
-          ) : null}
-          <Text style={[st.bookTitle, {fontSize: tFont, lineHeight: tLine}]} numberOfLines={4}>{title}</Text>
+          ) : props.diff === 'author' ? <Text style={[st.byLine, st.diffInline, {color: '#777777'}]}>No author</Text> : null}
+          <Text style={[st.bookTitle, {fontSize: tFont, lineHeight: tLine}, props.diff === 'title' && st.diffInline]} numberOfLines={4}>{title}</Text>
         </View>
         <Pressable onPress={() => setStatusOpen(true)} style={[st.statusChip, {maxWidth: statusW}, m.reading && st.btnDark]} accessibilityLabel="Reading status">
           <StatusDot state={m.reading?.state} light={!!m.reading} />
@@ -3949,7 +4107,7 @@ function BookPage(props: {
           ) : null}
           {rTab === 'ch' && epubs.length ? (
             <View style={{flex: 1, paddingHorizontal: px(12)}}>
-              <ChaptersPane b={b} m={m} tocs={tocs} where={where} width={RW - px(24)} height={colH - tabsH - px(8)} startAt={props.chaptersAt || 'here'} onOpen={(f, x) => props.onReadAt?.(f, x)} onMarks={mk => props.onMarks?.(mk)} />
+              <ChaptersPane b={b} m={m} tocs={tocs} where={where} width={RW - px(24)} height={colH - tabsH - px(8)} startAt={props.chaptersAt || 'here'} onOpen={(f, x, i) => props.onReadAt?.(f, x, i)} onMarks={mk => props.onMarks?.(mk)} />
             </View>
           ) : scroll ? (
             <ScrollView contentContainerStyle={{padding: px(16)}}>{renderItems(right)}</ScrollView>
@@ -4707,8 +4865,12 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
         <CardHeader title="Book pages" onBack={back} onClose={onClose} />
         <View style={[st.pad, {flex: 1}]}>
           {sec('Show first on the right side', px(4))}
-          <Seg options={[{label: 'Description', on: settings.bookFirst !== 'chapters', onPress: () => change({bookFirst: 'about'})}, {label: 'Chapters', on: settings.bookFirst === 'chapters', onPress: () => change({bookFirst: 'chapters'})}]} />
-          <Text style={[st.small, {marginTop: px(6)}]}>The other one is a tap away on the tab next to it. Chapters show for EPUB books.</Text>
+          <Seg options={[
+            {label: 'Description', on: settings.bookFirst === 'about', onPress: () => change({bookFirst: 'about'})},
+            {label: 'Chapters', on: settings.bookFirst === 'chapters', onPress: () => change({bookFirst: 'chapters'})},
+            {label: 'Once started', on: settings.bookFirst === 'started', onPress: () => change({bookFirst: 'started'})},
+          ]} />
+          <Text style={[st.small, {marginTop: px(6)}]}>{settings.bookFirst === 'started' ? "Once started: Description for books you haven't opened yet, Chapters for books you're partway through." : 'The other one is a tap away on the tab next to it. Chapters show for EPUB books.'}</Text>
           {sec('Description')}
           <Seg options={[{label: 'Turn pages with arrows', on: settings.paging === 'arrows', onPress: () => change({paging: 'arrows'})}, {label: 'Scroll', on: settings.paging === 'scroll', onPress: () => change({paging: 'scroll'})}]} />
           {sec('Chapters list')}
@@ -4802,8 +4964,15 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
             <Btn dark icon="refresh" label="Check for changes" onPress={calibre.onSync} style={{marginRight: px(8)}} />
             <Btn icon="list" label="Changes from Calibre" onPress={calibre.onOpen} />
           </View>
+          <View style={{flexDirection: 'row', alignItems: 'center', marginTop: px(14)}}>
+            <View style={{flex: 1, marginRight: px(10)}}>
+              <Text style={st.showTitle}>Send new books to Calibre</Text>
+              <Text style={st.small}>Books here that Calibre doesn't have yet are added to it, with their details. Volumes become a series.</Text>
+            </View>
+            <Pill toggle label={settings.calibreAdd ? 'On' : 'Off'} active={settings.calibreAdd} width={px(84)} onPress={() => change({calibreAdd: !settings.calibreAdd})} />
+          </View>
           {sec('Setting it up (once, on the computer)', px(18))}
-          {['1. Download "purrinkshelf_calibre.py" from the PurrinkShelf GitHub page (tools › calibre).', '2. Run it with your Calibre library and your synced library folder, e.g. python purrinkshelf_calibre.py "C:\\Users\\you\\Calibre Library" "…\\Supernote\\Novels".', '3. It writes _Library Data/calibre.csv for PurrinkShelf, and puts your changes from here into Calibre (through calibredb, never by editing its database).', '4. Close Calibre while it runs. Run it again whenever you want to sync.'].map(t => <Text key={t} style={[st.small, {color: BLACK, marginTop: px(4)}]}>{t}</Text>)}
+          {['1. Download "purrinkshelf_calibre.py" from the PurrinkShelf GitHub page (tools › calibre).', '2. Run it with your Calibre library and your synced library folder, e.g. python purrinkshelf_calibre.py "C:\\Users\\you\\Calibre Library" "…\\Supernote\\Novels".', '3. It writes _Library Data/calibre.csv for PurrinkShelf, and puts your changes from here into Calibre (through calibredb, never by editing its database).', '4. Close Calibre while it runs. Run it again whenever you want to sync (new books from here are added on the run after PurrinkShelf has seen calibre.csv once).'].map(t => <Text key={t} style={[st.small, {color: BLACK, marginTop: px(4)}]}>{t}</Text>)}
           {foot}
         </View>
       </ModalCard>
@@ -4989,7 +5158,7 @@ function SettingsSheet({settings, change, onClose, onLibraries, onClearSearches,
           </RoundBtn>
         </View>
         <View style={{flexDirection: 'row', marginTop: px(12)}}>
-          <RoundBtn label="Book pages" note={settings.bookFirst === 'chapters' ? 'Chapters first' : 'Description first'} onPress={() => setPage('book')}>
+          <RoundBtn label="Book pages" note={settings.bookFirst === 'chapters' ? 'Chapters first' : settings.bookFirst === 'started' ? 'Once started' : 'Description first'} onPress={() => setPage('book')}>
             <Icon name="pages" size={px(30)} />
           </RoundBtn>
           <RoundBtn label="Filters" note={settings.filterOrder === 'count' ? 'Most books' : settings.filterOrder === 'tapped' ? 'Most tapped' : 'A–Z'} onPress={() => setPage('filters')}>
@@ -6805,13 +6974,14 @@ function ActivityCard({items, onClose, onClear}: {items: {t: string; at: number}
     </ModalCard>
   );
 }
+const CALIBRE_EXT = /\.(epub|pdf|mobi|azw3?|txt|docx|cbz|cbr|fb2|rtf|djvu)$/i;
 // ---------- Calibre: books changed in both places, and your choices (which can be changed until the next sync) ----------
 const CAL_WORD: {[f in CalField]: string} = {title: 'title', author: 'author', description: 'description', genres: 'genres', tags: 'tags', series: 'series', language: 'language'};
 function CalibreCard({items, at, view, setView, onDecide, onAll, preview, onClose}: {
   items: Found[]; at?: number; view: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField};
   setView: (v: {kind: 'list'} | {kind: 'book'; lib: string; key: string; f?: CalField}) => void;
   onDecide: (f: Found, field: CalField, use: 'sn' | 'cal') => void; onAll: (use: 'sn' | 'cal') => void;
-  preview: (f: Found, m: Meta) => React.ReactNode; onClose: () => void;
+  preview: (f: Found, m: Meta, diff: CalField) => React.ReactNode; onClose: () => void;
 }) {
   const [pg, setPg] = useState(0);
   const [tab, setTab] = useState<'sn' | 'cal'>('sn');
@@ -6850,11 +7020,11 @@ function CalibreCard({items, at, view, setView, onDecide, onAll, preview, onClos
           <View style={{alignItems: 'center', marginTop: px(10)}}>
             <View style={{width: Math.round(CARD_W * sc), height: Math.round(CARD_H * sc), overflow: 'hidden', borderWidth: 2, borderColor: BLACK, borderRadius: px(14)}} pointerEvents="none">
               <View style={{width: CARD_W, height: CARD_H, backgroundColor: '#ffffff', transform: [{translateX: (-CARD_W * (1 - sc)) / 2}, {translateY: (-CARD_H * (1 - sc)) / 2}, {scale: sc}]}}>
-                {preview(f, shown)}
+                {preview(f, shown, field)}
               </View>
             </View>
           </View>
-          <Text style={[st.small, {textAlign: 'center', marginTop: px(14)}]}>{`How the book card will look with this version. Different: ${CAL_WORD[field]}.`}</Text>
+          <Text style={[st.small, {textAlign: 'center', marginTop: px(14)}]}>{`How the book card will look with this version. Different: ${CAL_WORD[field]} (marked).`}</Text>
           <View style={{flex: 1}} />
           <View style={{flexDirection: 'row'}}>
             <Btn label="Back" onPress={() => setView({kind: 'list'})} style={{flex: 1, marginRight: px(8)}} />
@@ -6937,6 +7107,8 @@ function CardHeader({title, onBack, onClose, right}: {title: string; onBack: () 
 }
 
 const st = StyleSheet.create({
+  diffBox: {borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, backgroundColor: '#e9e9e9', borderRadius: px(8), marginHorizontal: -px(3), paddingHorizontal: px(3)},
+  diffInline: {borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, backgroundColor: '#e9e9e9', borderRadius: px(6), alignSelf: 'flex-start', paddingHorizontal: px(4)},
   calRow: {flexDirection: 'row', alignItems: 'center', minHeight: px(62), borderWidth: 2, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(12), paddingVertical: px(6), marginBottom: px(8), backgroundColor: '#ffffff'},
   aboutLink: {flexDirection: 'row', alignItems: 'center', height: px(56), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(16), paddingHorizontal: px(14)},
   showRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: px(10), borderBottomWidth: 1, borderColor: '#dddddd'},

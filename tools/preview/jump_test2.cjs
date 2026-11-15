@@ -1,0 +1,11 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  p.on('console', m => { const t = m.text(); if (/open under|jump to|chapter pages/.test(t)) console.log(t.slice(0, 200)); });
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1'); await p.waitForTimeout(13000);
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await p.waitForTimeout(600);
+  await p.getByLabel('Chapters', {exact: true}).click(); await p.waitForTimeout(500);
+  await p.getByLabel('Choose a volume').click(); await p.getByText('Vol 5', {exact: true}).last().click(); await p.waitForTimeout(500);
+  await p.getByLabel('Open Chapter 170', {exact: false}).first().click(); await p.waitForTimeout(5000);
+  console.log('opened:', await p.evaluate(() => JSON.stringify(window.__opened)));
+  await b.close(); })();

@@ -46,6 +46,7 @@ export type Meta = {
   pos?: {[file: string]: {page: number; pages: number; at: number}}; // the page you were on in each file (seen when PurrinkShelf is opened inside the book)
   done?: {[file: string]: number}; // volumes you finished, and when
   marks?: ChapterMark[]; // bookmarked chapters, each with an optional note
+  pageMap?: {[file: string]: {pages: number; at: number[]}}; // the page each chapter starts on (found by its title), for one page count
   ao3?: Ao3; // a work downloaded from Archive of Our Own: its own tags
   ao3Seen?: boolean; // its first page was checked for AO3 tags once
   calibre?: CalibreState; // what Calibre had at the last sync, and your choices when both sides changed
@@ -182,7 +183,7 @@ export type Settings = {
   warnings: boolean; // show content warnings (off: hidden everywhere)
   look: 'plain' | 'drawn'; // straight lines, or slightly wobbly hand-drawn ones
   cats: boolean; // little cats on cards, the bottom bar and empty pages
-  bookFirst: 'about' | 'chapters'; // book page, right side: Description or Chapters first
+  bookFirst: 'about' | 'chapters' | 'started'; // book page, right side: Description, Chapters, or Chapters once you've started the book
   chaptersAt: 'here' | 'start'; // the Chapters list opens where you are, or at chapter 1
   filterOrder: 'count' | 'alpha' | 'tapped'; // genres and tags in the filters: most books, A to Z, or most tapped
   filterTabs: string[]; // which tabs the Filters panel shows, in order (g, t, a, w, s, l, x, f)
@@ -191,6 +192,8 @@ export type Settings = {
   ao3: 'together' | 'separate'; // AO3 works: in with your books, or their own library view
   ao3Keep: {fandom: boolean; rating: boolean; tags: boolean; hideSingles: boolean};
   compactTags: boolean; // the filter tags as small chips instead of a list
+  calibreAdd: boolean; // books found here but not in Calibre are sent to Calibre (by the helper on the computer)
+  findPages: boolean; // read the pages of the book you're in to find where each chapter starts (off saves battery)
 };
 export type ProfileParts = {goal: boolean; chart: boolean; streak: boolean; genres: boolean; time: boolean};
 export const PROFILE_PARTS: {id: keyof ProfileParts; label: string}[] = [
@@ -226,6 +229,8 @@ export const DEFAULT_SETTINGS: Settings = {
   ao3: 'together',
   ao3Keep: {fandom: true, rating: true, tags: true, hideSingles: false},
   compactTags: false,
+  calibreAdd: true,
+  findPages: true,
 };
 
 /** a book remembered outside its library (recently read, bookmarks) */
