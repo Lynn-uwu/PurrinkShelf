@@ -2159,8 +2159,8 @@ function PurrinkShelfApp(): React.JSX.Element {
             <View style={[st.permRow, {borderTopWidth: 1, borderColor: '#888888', paddingTop: px(12), marginTop: px(4)}]}>
               <Icon name="bookmark" size={px(30)} />
               <View style={{flex: 1, marginLeft: px(12), marginRight: px(10)}}>
-                <Text style={st.choiceTitle}>Find chapter pages</Text>
-                <Text style={st.small}>{"Reads the pages of the book you're in (on the device only) to find where each chapter starts, so a chapter opens on its first page. Turn off to save battery: chapters then open close to their page."}</Text>
+                <Text style={st.choiceTitle}>Let plugin run in background</Text>
+                <Text style={st.small}>{"Helps chapters open at the right page: while PurrinkShelf is open over a book, it looks through that volume's pages once to find where each chapter starts, and remembers them. It stops when you close it. Turn off to save battery: chapters then open close to their page."}</Text>
               </View>
               <Pill toggle label={settings.findPages ? 'On' : 'Off'} active={settings.findPages} width={px(84)} onPress={() => changeSettings({findPages: !settings.findPages})} />
             </View>
