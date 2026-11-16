@@ -1,0 +1,13 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('console', m => { if (/DBG/.test(m.text())) console.log(m.text()); }); p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const swipe = async (x, y, dx) => { await p.mouse.move(x, y); await p.mouse.down(); for (let i = 1; i <= 8; i++) await p.mouse.move(x + (dx * i) / 8, y + 2); await p.mouse.up(); await p.waitForTimeout(500); };
+  const txt = async () => (await p.locator('text=/^\\d+ \\/ \\d+$/').allInnerTexts()).join(' | ');
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1'); await p.waitForTimeout(12000);
+  await p.getByText('Echoes of the Ninth Gate', {exact: true}).first().click(); await p.waitForTimeout(600);
+  console.log('start:', await txt());
+  await swipe(500, 500, -250); console.log('right column swiped left:', await txt());
+  await swipe(150, 640, -150); console.log('left column swiped left:', await txt());
+  await swipe(500, 500, 250); console.log('right column swiped right:', await txt());
+  await swipe(200, 125, -250); console.log('header swipe (nothing):', await txt());
+  await b.close(); })();

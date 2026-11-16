@@ -4,7 +4,7 @@
  * descriptions and covers on the device; filter by folder and tag; tap to read.
  */
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Dimensions, Image, Keyboard, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
+import {Dimensions, Image, Keyboard, PanResponder, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
 import {bareTitle, goodreadsCsv, parseAo3, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
@@ -335,6 +335,38 @@ function Icon({name, size, color}: {name: IconName; size?: number; color?: strin
 }
 
 /** a round icon button; "bare" drops the outline */
+// ---------- swipe left or right to turn pages: every page arrow joins the swipe area it sits in ----------
+type SwipeH = {dir: -1 | 1; go: React.MutableRefObject<(() => void) | null>};
+const SwipeCtx = React.createContext<{add: (h: SwipeH) => () => void} | null>(null);
+const PAGER = /^(previous( page)?|next( page)?|newer|older)$/i;
+/**
+ * A part of the screen where a sideways swipe turns its pages, like tapping its arrows: left = next, right = previous.
+ * The newest arrows win, so a page opened on top takes the swipe from the one under it. `stop`: a swipe here never
+ * reaches what lies underneath (a card over the library).
+ */
+function SwipeArea({children, style, stop}: {children: React.ReactNode; style?: any; stop?: boolean}) {
+  const hs = useRef<SwipeH[]>([]);
+  const ctx = useMemo(() => ({add: (h: SwipeH) => { hs.current.push(h); return () => { hs.current = hs.current.filter(x => x !== h); }; }}), []);
+  const pr = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > px(12) && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 && (!!stop || hs.current.length > 0),
+        onPanResponderRelease: (_, g) => {
+          if (Math.abs(g.dx) < px(50)) return;
+          const dir = g.dx < 0 ? 1 : -1;
+          const mine = hs.current.filter(h => h.dir === dir);
+          mine[mine.length - 1]?.go.current?.();
+        },
+        onPanResponderTerminationRequest: () => false, // once a swipe is ours, the areas around it don't take it
+      }),
+    [stop],
+  );
+  return (
+    <SwipeCtx.Provider value={ctx}>
+      <View style={style} {...pr.panHandlers}>{children}</View>
+    </SwipeCtx.Provider>
+  );
+}
 function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, style, onLongPress}: {
   name: IconName;
   onPress: () => void;
@@ -348,6 +380,12 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
   onLongPress?: () => void;
 }) {
   const sz = size || px(46);
+  // a page arrow: a swipe in its area does the same
+  const sw = React.useContext(SwipeCtx);
+  const dir: 0 | -1 | 1 = (name === 'back' || name === 'forward') && PAGER.test(label) ? (name === 'back' ? -1 : 1) : 0;
+  const go = useRef<(() => void) | null>(null);
+  go.current = dir && !disabled ? onPress : null;
+  useEffect(() => (sw && dir ? sw.add({dir, go}) : undefined), [sw, dir]);
   return (
     <Pressable
       onPress={onPress}
@@ -495,7 +533,9 @@ export default function App(): React.JSX.Element {
   return (
     <Guard>
       <KeyboardLift>
-        <PurrinkShelfApp />
+        <SwipeArea style={{flex: 1}}>
+          <PurrinkShelfApp />
+        </SwipeArea>
       </KeyboardLift>
     </Guard>
   );
@@ -3140,7 +3180,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       </View>
       <View style={{flex: 1, flexDirection: 'row'}}>
         {showFilters && (
-          <View style={[st.side, {width: sideW}]}>
+          <SwipeArea style={[st.side, {width: sideW}]}>
             <View style={{flex: 1, padding: px(10)}}>
               <View style={st.sideHead}>
                 <Text style={st.sideTitle}>Filters</Text>
@@ -3227,7 +3267,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                 <Text style={[st.hint, {marginTop: px(6), marginBottom: 0}]}>Grey letters have nothing under them.</Text>
               </View>
             ) : null}
-          </View>
+          </SwipeArea>
         )}
         <View style={{flex: 1}}>
       <View style={st.resBar}>
@@ -4246,7 +4286,7 @@ function BookPage(props: {
         </Pressable>
       </View>
       <View style={{flex: 1, flexDirection: 'row'}}>
-        <View style={[st.bookLeft, {width: LW}]}>
+        <SwipeArea style={[st.bookLeft, {width: LW}]}>
           {scroll ? (
             <ScrollView contentContainerStyle={{padding: px(14)}}>
               {top}
@@ -4270,8 +4310,8 @@ function BookPage(props: {
               </View>
             </>
           )}
-        </View>
-        <View style={{flex: 1}}>
+        </SwipeArea>
+        <SwipeArea style={{flex: 1}}>
           {epubs.length ? (
             <View style={[st.rTabs, {paddingHorizontal: px(16), marginTop: px(8)}]}>
               {([['about', 'Description'], ['ch', 'Chapters']] as const).map(([k, t]) => (
@@ -4296,7 +4336,7 @@ function BookPage(props: {
               </View>
             </>
           )}
-        </View>
+        </SwipeArea>
       </View>
       {statusOpen ? (
         // a drop-down under the status button
@@ -7292,7 +7332,7 @@ function ModalCard({onOutside, children}: {onOutside: () => void; children: Reac
   return (
     <View style={st.cardWrap}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onOutside} accessibilityLabel="Outside the page" />
-      <View style={st.pageCard}>{children}</View>
+      <SwipeArea stop style={st.pageCard}>{children}</SwipeArea>
       {CAT ? <CatImg name="peek" w={px(78)} style={{position: 'absolute', top: Math.max(0, CARD_Y - Math.round(px(78) * CAT_RATIO.peek * 0.82)), left: CARD_X + px(150)}} /> : null}
     </View>
   );

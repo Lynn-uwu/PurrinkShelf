@@ -74,7 +74,7 @@ export const HELP: HelpTopic[] = [
     steps: [
       'Tap a book to open its page. It opens as a card over the list: tap outside the card (or ✕) to close it.',
       'The black play button opens the book in Supernote\'s reader. Books in several files list every volume on the right.',
-      'Left and right arrows turn the pages of the book page (Overview, Tags, Details). Settings can switch this to scrolling.',
+      'Left and right arrows turn the pages of the book page (Overview, Tags, Details), or swipe left and right on that side. Swiping works wherever there are page arrows. Settings can switch this to scrolling.',
       'The refresh button at the top checks this book\'s files again (added, deleted or renamed volumes).',
       'The button says Start until you open the book, then Continue: it opens the last volume you had open. Opened volumes get a tick.',
       'Opening a book straight from Supernote counts too: the next time you tap the PurrinkShelf button inside that book, PurrinkShelf notes it.',
