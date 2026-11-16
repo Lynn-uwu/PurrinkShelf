@@ -1025,6 +1025,12 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
           if (!has.genres?.length && genres.length) p.genres = genres.slice(0, 20);
           if (!has.tags?.length && tags.length) p.tags = tags.slice(0, 60);
           if (!has.description && info.description && info.description.length > 20) p.description = info.description;
+          // the book's own description often starts with the site's leftovers ("Chapters: 94 + 6 … Status … Raw /// Novel Updates"):
+          // when what we have is just that, and the information page has the clean summary inside it, use the clean one
+          else if (has.description && em?.description && info.description) {
+            const flat = (x: string) => x.replace(/\s+/g, ' ').trim();
+            if (flat(has.description) === flat(em.description.slice(0, 10000)) && flat(has.description).includes(flat(info.description).slice(0, 60)) && flat(info.description).length < flat(has.description).length) p.description = info.description;
+          }
           if (!has.status && info.status) p.status = info.status;
           if (!has.author && info.author && !splitDash(b.fileTitle)) p.author = info.author;
           // every volume counts towards the length

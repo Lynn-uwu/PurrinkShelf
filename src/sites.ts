@@ -181,7 +181,7 @@ export function parseBookInfo(html: string): BookInfo {
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#8217;/g, '’');
   const lines = text.split(/\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 400);
-  const LABEL = /^(genres?|tags?|keywords?|categor(?:y|ies)|status|author\(?s?\)?|writer|description|summary|synopsis|blurb|about|associated names|alternative names?|other names?)\s*[:：]\s*(.*)$/i;
+  const LABEL = /^(genres?|tags?|keywords?|categor(?:y|ies)|status|novel status[^:：]*|author\(?s?\)?|writer|description|summary|synopsis|blurb|about|associated names|alternative names?|other names?|chapters|title|raw title|total|table of contents url|url|source|translators?|editors?|proofreaders?|year|raw|original(?: title)?|type|language|publisher|release|updated)\s*[:：]\s*(.*)$/i;
   const LONE = /^(genres?|tags?|keywords?|description|summary|synopsis|blurb|about)\s*[:：]?$/i;
   const list = (v: string) => v.split(/\s*(?:[,;|、，]|\s{2,}|\s·\s)\s*/).map(x => x.trim().replace(/\.$/, '')).filter(x => x && x.length <= 40);
   for (let i = 0; i < lines.length; i++) {
@@ -202,11 +202,34 @@ export function parseBookInfo(html: string): BookInfo {
     }
     if (!v) continue;
     if (/^genres?|categor/.test(label)) out.genres.push(...list(v));
+    else if (/^novel status/.test(label)) out.status = out.status || v.slice(0, 60);
+    else if (!/^(tags?|keywords?|status|author|writer|description|summary|synopsis|blurb|about|associated|alternative|other names)/.test(label)) continue; // known, not kept (url, translator, chapters…)
     else if (/^(tags?|keywords?)$/.test(label)) out.tags.push(...list(v));
     else if (label === 'status') out.status = out.status || v.slice(0, 60);
     else if (/^(author|writer)/.test(label)) out.author = out.author || v.slice(0, 80);
     else if (isText) out.description = out.description || v.slice(0, 10000);
     else out.altNames = out.altNames || v.slice(0, 200);
+  }
+  // an information page whose summary has no heading (knoxt.space and other WebToEpub pages): the sentences after its
+  // labelled lines, up to the contents or chapter 1. Only on a page that is clearly one (titled Information, or with labels).
+  const infoPage = lines.slice(0, 4).some(l => /^(information|info|book info(?:rmation)?|novel info(?:rmation)?|details)$/i.test(l)) || lines.slice(0, 30).filter(l => LABEL.test(l)).length >= 2;
+  // a line of short parts split by " / " ("Original Work / Male x Male / Modern / Drama"): the book's tags
+  const slashLine = (l: string) => l.split(' / ').length >= 3 && l.split(' / ').every(x => x.trim().length > 0 && x.trim().length <= 30);
+  if (infoPage) for (const l of lines.slice(0, 30)) if (slashLine(l)) out.tags.push(...l.split(' / ').map(x => x.trim()));
+  if (!out.description && infoPage) {
+    const chap = (l: string) => /\b(chapter|ch|episode|ep)\.?\s*\d+/i.test(l) || /^(prologue|epilogue)\b/i.test(l);
+    const stop = (l: string) => /^(table of contents|contents)$/i.test(l) || chap(l);
+    const start = lines.findIndex((l, k) => k < 60 && l.length >= 60 && !LABEL.test(l) && !/^https?:\/\//.test(l) && !chap(l) && !slashLine(l));
+    if (start >= 0) {
+      const desc: string[] = [];
+      for (let k = start; k < lines.length && !stop(lines[k]) && !LABEL.test(lines[k]); k++) {
+        if (/^https?:\/\//.test(lines[k])) continue;
+        desc.push(lines[k]);
+        if (desc.join('\n').length > 6000) break;
+      }
+      const d = desc.join('\n').trim();
+      if (d.length > 80) out.description = d.slice(0, 10000);
+    }
   }
   out.genres = Array.from(new Set(out.genres)).slice(0, 20);
   out.tags = Array.from(new Set(out.tags)).filter(t => !out.genres.includes(t)).slice(0, 60);
