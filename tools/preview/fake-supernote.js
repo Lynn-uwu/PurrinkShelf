@@ -143,6 +143,7 @@ if (new URLSearchParams(location.search).get('cal')) {
   (window.__mt = window.__mt || {})[`${SD}/Novels/_Library Data/calibre.csv`] = 5;
 }
 // ?prog=1: Echoes of the Ninth Gate read up to Vol 4, page 141, with three bookmarked chapters
+if (new URLSearchParams(location.search).get('longrow')) { meta.books['Chinese Novels/Moon Over the Jade Pavilion.epub'] = {...(meta.books['Chinese Novels/Moon Over the Jade Pavilion.epub'] || {}), title: 'Moon Over the Jade Pavilion and the Archivist Who Read Every Sealed Letter', author: 'Lin Wei', genres: ['Drama', 'Romance', 'Historical', 'Slice of Life']}; }
 if (new URLSearchParams(location.search).get('prog')) {
   const d = `${SD}/Novels/Chinese Novels/Echoes of the Ninth Gate/Echoes of the Ninth Gate`;
   const f = n => `${d} Vol ${n}${{1: ' (Ch 1-40)', 2: ' - Ninefold Debts', 3: ' - Lanterns at Dusk', 4: ' (Ch 121-160)'}[n]}.epub`;

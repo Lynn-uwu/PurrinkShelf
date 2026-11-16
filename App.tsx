@@ -3135,7 +3135,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       const dups = lib ? dupOf(lib.path, b.key) : [];
       // the description gets whatever height is left, in whole lines (never a line cut in half)
       const titleLines = (titleOf(b).length + (sub ? sub.length * 0.8 + 3 : 0)) * px(18) * 0.55 > resW - Math.round((ch * 2) / 3) - px(40) - (dups.length ? px(44) : 0) ? 2 : 1;
-      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(44);
+      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(34);
       const teaserLines = Math.max(0, Math.min(2, Math.floor(left / px(19))));
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
@@ -3158,12 +3158,12 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
               {(() => {
                 // only whole pills: show what fits on one line, then "+N"
                 const all = Array.from(new Set([...cats.slice(-1), ...(m.genres || [])]));
-                const room = resW - Math.round((ch * 2) / 3) - px(40);
-                const pw = (t: string) => t.length * px(15) * 0.56 + px(33);
+                const room = resW - Math.round((ch * 2) / 3) - px(40) - (stars ? px(100) : 0); // the stars sit at the right
+                const pw = pillTinyW;
                 const shown: string[] = [];
                 let used = 0;
                 for (let i = 0; i < all.length; i++) {
-                  const more = i < all.length - 1 ? px(48) : 0;
+                  const more = i < all.length - 1 ? px(40) : 0;
                   if (used + pw(all[i]) + more > room) break;
                   shown.push(all[i]);
                   used += pw(all[i]);
@@ -3171,8 +3171,8 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                 const extra = all.length - shown.length;
                 return (
                   <>
-                    {shown.map((t, i) => <Pill key={t + i} label={t} active={tags['g:' + t] === 1 || tags['c:' + t] === 1} />)}
-                    {extra > 0 ? <Pill label={`+${extra}`} /> : null}
+                    {shown.map((t, i) => <Pill tiny key={t + i} label={t} active={tags['g:' + t] === 1 || tags['c:' + t] === 1} />)}
+                    {extra > 0 ? <Pill tiny label={`+${extra}`} /> : null}
                   </>
                 );
               })()}
@@ -6413,7 +6413,7 @@ function SnapRow({x, cover, onPress, right, h}: {x: Snap; cover?: string | null;
         <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
         <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{[x.libName, x.folder].filter(Boolean).join('  ·  ') + (x.vol ? `  ·  Vol ${x.vol}` : '')}</Text>
         {x.genres?.length ? (
-          <View style={[st.pillLine, {marginTop: px(6)}]}>{x.genres.slice(0, 3).map(g => <Pill small key={g} label={g} />)}</View>
+          <View style={[st.pillLine, {marginTop: px(6)}]}>{x.genres.slice(0, 3).map(g => <Pill tiny key={g} label={g} />)}</View>
         ) : null}
       </View>
       {right}
@@ -6501,8 +6501,8 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
           <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
           {x.sub ? <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{x.sub}</Text> : null}
           <View style={[st.pillLine, {marginTop: px(6)}]}>
-            {(x.marks || []).map(t => <Pill small active key={t} label={t} />)}
-            {(x.pills || []).slice(0, 3).map(t => <Pill small key={t} label={t} />)}
+            {(x.marks || []).map(t => <Pill tiny active key={t} label={t} />)}
+            {(x.pills || []).slice(0, 3).map(t => <Pill tiny key={t} label={t} />)}
           </View>
         </View>
         {x.action ? <IconBtn name={x.action.icon} label={x.action.label} dark={x.action.dark} onPress={x.action.onPress} style={{marginLeft: px(8)}} /> : null}
@@ -7501,7 +7501,7 @@ const st = StyleSheet.create({
   resBar: {height: px(58), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(10), paddingTop: px(8)},
   resCount: {fontSize: px(19), fontWeight: 'bold', color: BLACK},
   pillWrap: {flexDirection: 'row', flexWrap: 'wrap', marginVertical: px(4)},
-  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(2), height: px(40), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
+  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(1), height: px(31), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
   pill: {borderWidth: 2, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
   pillSmall: {paddingHorizontal: px(10), paddingVertical: px(3), marginRight: px(6), marginBottom: px(5)},
   pillTiny: {paddingHorizontal: px(9), paddingVertical: px(2), marginRight: px(5), marginBottom: 0}, // book pages: genres and tags
