@@ -152,3 +152,63 @@ export function parseAo3(html: string): Ao3Work | null {
   if (!w.fandoms.length && !w.rating && !w.url) return null;
   return w;
 }
+
+/** genres as Novel Updates and most novel sites name them; other subjects become tags */
+const KNOWN_GENRES = new Set(
+  ['action', 'adult', 'adventure', 'comedy', 'drama', 'ecchi', 'fantasy', 'gender bender', 'harem', 'historical', 'horror', 'josei', 'martial arts', 'mature', 'mecha', 'mystery',
+    'psychological', 'romance', 'school life', 'sci-fi', 'science fiction', 'seinen', 'shoujo', 'shoujo ai', 'shounen', 'shounen ai', 'slice of life', 'smut', 'sports', 'supernatural',
+    'tragedy', 'wuxia', 'xianxia', 'xuanhuan', 'yaoi', 'yuri', 'danmei', 'bl', 'boys love', "boys' love", 'gl', 'lgbt', 'lgbt+', 'lgbtq+', 'isekai', 'thriller', 'urban', 'urban fantasy',
+    'contemporary', 'modern', 'military', 'post-apocalyptic', 'apocalypse', 'cultivation', 'reincarnation', 'transmigration', 'crime', 'suspense', 'youth', 'family', 'fanfiction',
+    'game', 'games', 'video games', 'novel', 'short story', 'one shot', 'omegaverse', 'abo'].map(x => x.toLowerCase()),
+);
+export const isGenre = (s: string) => KNOWN_GENRES.has(s.trim().toLowerCase());
+
+export type BookInfo = {description?: string; genres: string[]; tags: string[]; status?: string; author?: string; altNames?: string};
+/**
+ * The information page many novel EPUBs carry before chapter 1 (made by WebToEpub, lightnovel-crawler, FanFicFare…):
+ * "Genre: Romance, Drama", "Tags: …", "Status: Completed", then the summary. Read like Calibre reads a book's details.
+ */
+export function parseBookInfo(html: string): BookInfo {
+  const out: BookInfo = {genres: [], tags: []};
+  if (!html) return out;
+  const body = html.replace(/^[\s\S]*?<body[^>]*>/i, '');
+  const text = body
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<\/t[dh]>\s*<t[dh][^>]*>/gi, ': ')
+    .replace(/<\/dt>\s*<dd[^>]*>/gi, ': ')
+    .replace(/<(br|hr)\b[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|h\d|li|tr|dt|dd|section|blockquote|ul|ol|table)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#8217;/g, '’');
+  const lines = text.split(/\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 400);
+  const LABEL = /^(genres?|tags?|keywords?|categor(?:y|ies)|status|author\(?s?\)?|writer|description|summary|synopsis|blurb|about|associated names|alternative names?|other names?)\s*[:：]\s*(.*)$/i;
+  const LONE = /^(genres?|tags?|keywords?|description|summary|synopsis|blurb|about)\s*[:：]?$/i;
+  const list = (v: string) => v.split(/\s*(?:[,;|、，]|\s{2,}|\s·\s)\s*/).map(x => x.trim().replace(/\.$/, '')).filter(x => x && x.length <= 40);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(LABEL) || (LONE.test(lines[i]) ? [lines[i], lines[i].replace(/[:：]$/, ''), ''] : null);
+    if (!m) continue;
+    const label = m[1].toLowerCase();
+    let v = m[2].trim();
+    const isText = /^(description|summary|synopsis|blurb|about)$/.test(label);
+    // the value can be on the lines below the label (a heading, then the text)
+    if (!v || isText) {
+      const more: string[] = [];
+      for (let j = i + 1; j < lines.length && !LABEL.test(lines[j]) && !LONE.test(lines[j]); j++) {
+        more.push(lines[j]);
+        if (!isText && more.length >= 1) break;
+        if (/^(chapter|ch\.?)\s*\d+/i.test(lines[j]) || more.join('\n').length > 6000) { more.pop(); break; }
+      }
+      v = [v, ...more].filter(Boolean).join(isText ? '\n' : ', ');
+    }
+    if (!v) continue;
+    if (/^genres?|categor/.test(label)) out.genres.push(...list(v));
+    else if (/^(tags?|keywords?)$/.test(label)) out.tags.push(...list(v));
+    else if (label === 'status') out.status = out.status || v.slice(0, 60);
+    else if (/^(author|writer)/.test(label)) out.author = out.author || v.slice(0, 80);
+    else if (isText) out.description = out.description || v.slice(0, 10000);
+    else out.altNames = out.altNames || v.slice(0, 200);
+  }
+  out.genres = Array.from(new Set(out.genres)).slice(0, 20);
+  out.tags = Array.from(new Set(out.tags)).filter(t => !out.genres.includes(t)).slice(0, 60);
+  return out;
+}

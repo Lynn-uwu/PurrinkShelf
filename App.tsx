@@ -6,7 +6,7 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Keyboard, PanResponder, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {bareTitle, goodreadsCsv, parseAo3, parseTable, readSiteExport} from './src/sites';
+import {bareTitle, goodreadsCsv, isGenre, parseAo3, parseBookInfo, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, allStates, setCustomStates, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
@@ -977,7 +977,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
     probing.current = true;
     try {
       // new books, and descriptions earlier versions cut at 2,000 letters (read once more in full)
-      const todo = bs.filter(b => !b.missing && b.ext !== 'paper' && (!m0.books[b.key]?.probed || (m0.books[b.key]?.description?.length === 2000 && !m0.books[b.key]?.descFixed))).slice(0, 40);
+      const todo = bs.filter(b => !b.missing && b.ext !== 'paper' && (!m0.books[b.key]?.probed || (b.ext === 'epub' && !m0.books[b.key]?.infoRead) || (m0.books[b.key]?.description?.length === 2000 && !m0.books[b.key]?.descFixed))).slice(0, 40);
       if (!todo.length) return;
       const patches: {[k: string]: Meta} = {};
       const dirs: {[d: string]: string[]} = {};
@@ -1014,6 +1014,19 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
             if (!has.language && em.language) p.language = em.language;
             if (!has.seriesName && em.series) { p.seriesName = em.series; p.seriesNo = em.seriesNo; }
           }
+          // like Calibre: the book's subjects, and the information page before chapter 1 (genres, tags, status, summary)
+          p.infoRead = true;
+          await loadContents(b.files[0]);
+          const info = parseBookInfo(FIRSTS[b.files[0]] || '');
+          const has = {...m, ...p};
+          const subjects = (em?.subjects || []).flatMap(x => x.split(/\s*[,;]\s*/)).map(x => x.trim()).filter(x => x && x.length <= 40);
+          const genres = Array.from(new Set([...info.genres, ...subjects.filter(isGenre)]));
+          const tags = Array.from(new Set([...info.tags, ...subjects.filter(x => !isGenre(x))])).filter(t => !genres.includes(t));
+          if (!has.genres?.length && genres.length) p.genres = genres.slice(0, 20);
+          if (!has.tags?.length && tags.length) p.tags = tags.slice(0, 60);
+          if (!has.description && info.description && info.description.length > 20) p.description = info.description;
+          if (!has.status && info.status) p.status = info.status;
+          if (!has.author && info.author && !splitDash(b.fileTitle)) p.author = info.author;
           // every volume counts towards the length
           let words = em?.words || 0, cjk = em?.cjk || 0;
           for (const f of b.files.slice(1, 60)) {
