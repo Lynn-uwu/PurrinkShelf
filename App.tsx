@@ -3128,7 +3128,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       const dups = lib ? dupOf(lib.path, b.key) : [];
       // the description gets whatever height is left, in whole lines (never a line cut in half)
       const titleLines = (titleOf(b).length + (sub ? sub.length * 0.8 + 3 : 0)) * px(18) * 0.55 > resW - Math.round((ch * 2) / 3) - px(40) - (dups.length ? px(44) : 0) ? 2 : 1;
-      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(40);
+      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(44);
       const teaserLines = Math.max(0, Math.min(2, Math.floor(left / px(19))));
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
@@ -3275,7 +3275,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                   <Text style={st.hint}>{`Tap once to include, again to exclude.${order === 'count' ? '  By most books.' : order === 'tapped' ? '  Most tapped first.' : ''}`}</Text>
                   <View style={{flex: 1, overflow: 'hidden'}} onLayout={e => { const h = Math.floor(e.nativeEvent.layout.height); if (Math.abs(h - fListH) > 2) setFListH(h); }}>
                     {(fPages[tp - 1] || []).map((it, i) => {
-                      if (it.head) return <View key={'h' + it.head} style={{height: it.h, justifyContent: 'center'}}><View style={st.letterHead}><Text style={st.letterHeadText}>{it.head}</Text></View></View>;
+                      if (it.head) return <View key={'h' + it.head} style={{height: it.h, flexDirection: 'row', alignItems: 'center'}}><Text style={st.letterHeadText}>{it.head}</Text><View style={st.letterLine} /></View>;
                       if (compact) return (
                         <View key={'c' + i} style={{height: it.h, flexDirection: 'row', alignItems: 'center'}}>
                           {it.names!.map(n => {
@@ -7485,8 +7485,8 @@ const st = StyleSheet.create({
   resBar: {height: px(58), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(10), paddingTop: px(8)},
   resCount: {fontSize: px(19), fontWeight: 'bold', color: BLACK},
   pillWrap: {flexDirection: 'row', flexWrap: 'wrap', marginVertical: px(4)},
-  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(4), marginBottom: px(2), height: px(34), alignItems: 'center'},
-  pill: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
+  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(2), height: px(40), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
+  pill: {borderWidth: 2, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
   pillSmall: {paddingHorizontal: px(10), paddingVertical: px(3), marginRight: px(6), marginBottom: px(5)},
   pillActive: {backgroundColor: BLACK},
   pillText: {fontSize: px(15), lineHeight: px(20), color: BLACK},
@@ -7674,8 +7674,8 @@ const st = StyleSheet.create({
   volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2), textAlign: 'center'},
   kindTabs: {flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10), marginBottom: px(6)},
   quickRow: {height: px(48), flexDirection: 'row', alignItems: 'center', paddingHorizontal: px(12), borderBottomWidth: 1, borderColor: '#888888', overflow: 'hidden'},
-  letterHead: {alignSelf: 'flex-start', backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(7), paddingVertical: px(1)},
-  letterHeadText: {color: '#ffffff', fontSize: px(14), fontWeight: 'bold'},
+  letterHeadText: {color: BLACK, fontSize: px(16), fontWeight: 'bold', minWidth: px(14)},
+  letterLine: {flex: 1, height: 1, backgroundColor: '#b0b0b0', marginLeft: px(8), marginRight: px(4)}, // a letter, then a long line: A ————
   fChip: {height: px(28), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), paddingHorizontal: px(8), marginRight: px(4), justifyContent: 'center', backgroundColor: '#ffffff', flexShrink: 1},
   fChipText: {fontSize: px(13), color: BLACK},
   fChipCount: {fontSize: px(11), color: '#555555'},
