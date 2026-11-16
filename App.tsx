@@ -7675,7 +7675,7 @@ const st = StyleSheet.create({
   kindTabs: {flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10), marginBottom: px(6)},
   quickRow: {height: px(48), flexDirection: 'row', alignItems: 'center', paddingHorizontal: px(12), borderBottomWidth: 1, borderColor: '#888888', overflow: 'hidden'},
   letterHeadText: {color: BLACK, fontSize: px(16), fontWeight: 'bold', minWidth: px(14)},
-  letterLine: {flex: 1, height: 2, backgroundColor: BLACK, marginLeft: px(8), marginRight: px(4)}, // a letter, then a long line: A ————
+  letterLine: {flex: 1, height: 1, backgroundColor: '#b0b0b0', marginLeft: px(8), marginRight: px(4)}, // a letter, then a long line: A ————
   fChip: {height: px(28), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), paddingHorizontal: px(8), marginRight: px(4), justifyContent: 'center', backgroundColor: '#ffffff', flexShrink: 1},
   fChipText: {fontSize: px(13), color: BLACK},
   fChipCount: {fontSize: px(11), color: '#555555'},
