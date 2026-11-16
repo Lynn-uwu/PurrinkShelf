@@ -28,7 +28,8 @@ const S = Math.min(W, H) / 702; // designed for a 702-wide screen, then scaled
 const px = (n: number) => Math.round(n * S);
 const BLACK = '#000000';
 const LIST_PER_PAGE = 6;
-const TASK_H = px(80);
+const TASK_BUMP = px(12); // room above the bar for the round button and its ears, inside the bar's own box
+const TASK_H = px(80) + TASK_BUMP;
 const DIP_IMG = require('./assets/taskbar-dip.png'); // drawn in tools/logo/taskbar-dip.svg
 // the Cat look (Settings): cat pictures cut from tools/cats/source-sheet.png by tools/cats/cut.py
 const CAT_IMG = {
@@ -619,6 +620,7 @@ function PurrinkShelfApp(): React.JSX.Element {
   const [fKind, setFKind] = useState<string>('g'); // filter panel tab: Genre, Tags, Author, Warnings, More, AO3's Fandom…
   const [fFind, setFFind] = useState(''); // "find a tag" in the filter panel
   const [azOpen, setAzOpen] = useState(false); // the A–Z letter keys
+  const [fListH, setFListH] = useState(0); // the filter list's measured height
   const [ao3Only, setAo3Only] = useState(false); // AO3 works as their own library (Settings › AO3: Separate)
   const [tPage, setTPage] = useState(1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -3072,9 +3074,17 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
     });
   }
   const fixedTop = px(10) + px(36) + px(46) + (kinds.length > 4 ? px(38) * (Math.ceil(kinds.length / 3) - 1) : 0) + px(48) + (kindNow === 'f' ? px(24) : px(40) + px(24));
-  const listH = H - px(64) - fixedTop - px(64) - TASK_H - px(10);
+  // the list's real height once laid out (measured), so a page never runs under the arrows
+  const listH = (fListH || H - px(64) - fixedTop - px(64) - TASK_H - px(10)) - px(4);
   const fPages: FItem[][] = [[]];
-  { let u = 0; items.forEach(it => { if (u + it.h > listH && fPages[fPages.length - 1].length) { fPages.push([]); u = 0; } fPages[fPages.length - 1].push(it); u += it.h; }); }
+  { let u = 0; items.forEach(it => {
+    if (u + it.h > listH && fPages[fPages.length - 1].length) {
+      // a letter heading never sits alone at the bottom: it moves to the next page with its names
+      const cur = fPages[fPages.length - 1];
+      const carry = cur.length > 1 && cur[cur.length - 1].head ? [cur.pop()!] : [];
+      fPages.push(carry); u = carry.reduce((a, x) => a + x.h, 0);
+    }
+    fPages[fPages.length - 1].push(it); u += it.h; }); }
   const tPages = fPages.length;
   const tp = Math.min(tPage, tPages);
   const letters = new Set(fNames.map(letterOf));
@@ -3204,7 +3214,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
     <>
       <View style={st.header}>
         <View style={{minWidth: px(110), flexDirection: 'row'}}>
-          <View>
+          <View style={{paddingTop: px(6), paddingRight: px(8), marginTop: -0}}>
             <IconBtn name="sidebar" label={settings.showFilters ? 'Hide filters' : 'Show filters'} dark={settings.showFilters} onPress={() => changeSettings({showFilters: !settings.showFilters, libFolders: false})} size={px(46)} style={{borderRadius: px(12)}} />
             {!showFilters && active ? <View style={st.badge}><Text style={st.badgeText}>{active}</Text></View> : null}
           </View>
@@ -3214,7 +3224,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
             <Text style={st.headerName} numberOfLines={1}>{cat || 'All'}</Text>
             <Icon name="down" size={px(24)} />
           </View>
-          {libs.length > 1 && lib ? <Text style={[st.small, {marginTop: -px(2)}]} numberOfLines={1}>{lib.name}</Text> : null}
+          {libs.length > 1 && lib ? <Text style={st.small} numberOfLines={1}>{lib.name}</Text> : null}
         </Pressable>
         <View style={{minWidth: px(110), flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center'}}>
           <IconBtn bare name="help" label="How to use PurrinkShelf" onPress={() => setScreen({kind: 'help'})} iconSize={px(30)} />
@@ -3239,7 +3249,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
               <View style={st.kindTabs}>
                 {kinds.map((k, i) => (
                   <Pressable key={k} onPress={() => { setFKind(k); setTPage(1); setFFind(''); }} style={[st.kindTab, {paddingHorizontal: 0}, kinds.length > 4 && {flexBasis: '30%', flexGrow: 0, marginBottom: px(6)}, kindNow === k && st.btnDark]} accessibilityLabel={KIND_NAMES[k] || k}>
-                    <Text style={[st.kindTabText, {fontSize: kinds.length > 4 ? px(13) : px(14)}, kindNow === k && {color: '#ffffff'}]} numberOfLines={1}>{(KIND_SHORT[k] || k) + (kindOn(k) && kindNow !== k ? '•' : '')}</Text>
+                    <Text style={[st.kindTabText, {fontSize: kinds.length > 4 ? px(12) : px(14)}, kindNow === k && {color: '#ffffff'}]} numberOfLines={1}>{(KIND_SHORT[k] || k) + (kindOn(k) && kindNow !== k ? '•' : '')}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -3263,7 +3273,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                     </View>
                   ) : null}
                   <Text style={st.hint}>{`Tap once to include, again to exclude.${order === 'count' ? '  By most books.' : order === 'tapped' ? '  Most tapped first.' : ''}`}</Text>
-                  <View style={{flex: 1}}>
+                  <View style={{flex: 1, overflow: 'hidden'}} onLayout={e => { const h = Math.floor(e.nativeEvent.layout.height); if (Math.abs(h - fListH) > 2) setFListH(h); }}>
                     {(fPages[tp - 1] || []).map((it, i) => {
                       if (it.head) return <View key={'h' + it.head} style={{height: it.h, justifyContent: 'center'}}><View style={st.letterHead}><Text style={st.letterHeadText}>{it.head}</Text></View></View>;
                       if (compact) return (
@@ -3885,7 +3895,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
     <View style={{flex: 1}}>
       <View style={{height: headH, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end'}}>
         {sel === 'marks' ? <Text style={[st.small, {flex: 1}]} numberOfLines={2}>{'Only bookmarked chapters. Tap one to open near it, or the note to change it.'}</Text> : <View style={{flex: 1}} />}
-        <View>
+        <View style={{paddingTop: px(6), paddingRight: px(6)}}>
           <IconBtn name={sel === 'marks' ? 'bookmark-on' : 'bookmark'} dark={sel === 'marks'} label={sel === 'marks' ? 'Show all chapters' : 'Show only bookmarked chapters'} onPress={() => { auto.current = false; setSel(sel === 'marks' ? (where?.file && files.includes(where.file) ? where.file : files[0]) : 'marks'); setPg(0); }} />
           {marks.length ? <View style={st.bubble} pointerEvents="none"><Text style={st.bubbleText}>{String(marks.length)}</Text></View> : null}
         </View>
@@ -3899,7 +3909,7 @@ function ChaptersPane({b, m, tocs, where, width, height, startAt, onOpen, onMark
       <View style={{flex: 1, overflow: 'hidden'}}>
         {(pages[p] || []).map(r => (
           <View key={r.key} style={{height: r.h, paddingBottom: px(6)}}>
-            {flash === r.key ? <View style={{flex: 1, borderWidth: 3, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(12), margin: -px(3)}}>{r.node}</View> : r.node}
+            {flash === r.key ? <View style={{flex: 1, borderWidth: 3, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(12)}}>{r.node}</View> : r.node}
           </View>
         ))}
         {sel === 'marks' && !marks.length ? <Text style={[st.small, {marginTop: px(10)}]}>{'No bookmarks yet. Tap the bookmark on a chapter to keep it here, with a note on why.'}</Text> : null}
@@ -5034,12 +5044,13 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
   ];
   const short: {[t in Tab]: string} = {library: 'Library', new: 'New', home: 'Home', bookmarks: 'Collections', profile: 'Profile'};
   return (
+    <RNView style={st.taskbarBox} collapsable={false}>
     <View style={st.taskbar} testID="taskbar">
       {items.map(({t, icon, label}) => {
         const on = t === tab;
         const badge =
           t === 'new' && newCount > 0 ? (
-            <View style={[st.badge, {top: on ? px(2) : -px(4), right: on ? px(2) : -px(10)}]}>
+            <View style={[st.badge, {top: on ? px(2) : 0, right: on ? px(2) : 0}]}>
               <Text style={st.badgeText}>{newCount > 99 ? '99+' : newCount}</Text>
             </View>
           ) : null;
@@ -5059,7 +5070,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
               </>
             ) : (
               <>
-                <View style={{marginTop: px(12)}}>
+                <View style={{marginTop: px(6), paddingTop: px(6), paddingHorizontal: px(12)}}>
                   <Icon name={icon} size={px(28)} color="#555555" />
                   {badge}
                 </View>
@@ -5070,6 +5081,7 @@ function Taskbar({tab, onTab, newCount}: {tab: Tab; onTab: (t: Tab) => void; new
         );
       })}
     </View>
+    </RNView>
   );
 }
 
@@ -7460,7 +7472,7 @@ const st = StyleSheet.create({
   clear: {fontSize: px(17), color: BLACK, textDecorationLine: 'underline'},
   section: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(10), marginBottom: px(4), borderBottomWidth: 1, borderColor: '#888888', paddingBottom: px(3)},
   hint: {fontSize: px(13), color: '#444444', marginBottom: px(6)},
-  modeRow: {flexDirection: 'row', alignItems: 'center', marginBottom: px(4)},
+  modeRow: {flexDirection: 'row', alignItems: 'center', marginTop: px(6), marginBottom: px(6)},
   fRow: {flexDirection: 'row', alignItems: 'center', height: px(40)},
   box: {width: px(24), height: px(24), borderWidth: 2, borderColor: BLACK, borderRadius: px(4), alignItems: 'center', justifyContent: 'center', marginRight: px(8)},
   boxMark: {fontSize: px(16), lineHeight: px(20), fontWeight: 'bold', color: BLACK},
@@ -7500,7 +7512,8 @@ const st = StyleSheet.create({
   editText: {fontSize: px(17), color: BLACK},
   infoLabel: {fontSize: px(18), fontWeight: 'bold', color: BLACK, marginTop: px(4)},
   infoValue: {fontSize: px(17), lineHeight: px(24), color: BLACK},
-  taskbar: {height: TASK_H, flexDirection: 'row', borderTopWidth: px(2), borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
+  taskbar: {height: TASK_H - TASK_BUMP, marginTop: TASK_BUMP, flexDirection: 'row', borderTopWidth: px(2), borderColor: BLACK, backgroundColor: '#ffffff', overflow: 'visible'},
+  taskbarBox: {height: TASK_H, paddingTop: 0},
   // a half circle cut down into the bar (only its lower half shows), with the button sitting in it
   dip: {position: 'absolute', top: -px(3), alignSelf: 'center', width: px(137), height: px(54)}, // tools/logo/taskbar-dip.svg
   taskCta: {position: 'absolute', top: -px(8), alignSelf: 'center', width: px(52), height: px(52), borderRadius: px(26), borderWidth: px(4), borderColor: BLACK, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center'},
@@ -7565,7 +7578,7 @@ const st = StyleSheet.create({
   libChip: {flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: BLACK, borderRadius: px(12), paddingHorizontal: px(14), height: px(48), marginRight: px(10), marginBottom: px(10)},
   libChipText: {fontSize: px(18), color: BLACK, marginLeft: px(8)},
   taskHome: {width: px(76), height: px(50), borderRadius: px(25), borderWidth: 1.5, borderColor: BLACK},
-  badge: {position: 'absolute', top: -px(4), right: -px(2), minWidth: px(20), height: px(20), borderRadius: px(10), backgroundColor: BLACK, borderWidth: 1.5, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  badge: {position: 'absolute', top: 0, right: 0, minWidth: px(20), height: px(20), borderRadius: px(10), backgroundColor: BLACK, borderWidth: 1.5, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
   badgeText: {fontSize: px(11), fontWeight: 'bold', color: '#ffffff'},
   chipsRow: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', paddingHorizontal: px(16), paddingVertical: px(12)},
   fchip: {borderWidth: 1.5, borderColor: '#bbbbbb', borderRadius: px(20), paddingHorizontal: px(16), height: px(38), justifyContent: 'center', marginRight: px(8), backgroundColor: '#f4f4f4'},
@@ -7649,7 +7662,7 @@ const st = StyleSheet.create({
   chNote: {marginLeft: px(14), borderLeftWidth: 3, borderColor: BLACK, backgroundColor: '#f2f2f2', paddingHorizontal: px(10), justifyContent: 'center', borderTopRightRadius: px(8), borderBottomRightRadius: px(8)},
   volDiv: {flexDirection: 'row', alignItems: 'center', height: px(36)},
   progBar: {height: px(12), borderWidth: 2, borderColor: BLACK, borderRadius: px(6), overflow: 'hidden', marginTop: px(6)},
-  bubble: {position: 'absolute', top: -px(6), right: -px(6), minWidth: px(22), height: px(22), borderRadius: px(11), backgroundColor: BLACK, borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
+  bubble: {position: 'absolute', top: 0, right: 0, minWidth: px(22), height: px(22), borderRadius: px(11), backgroundColor: BLACK, borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: px(4)},
   bubbleText: {color: '#ffffff', fontSize: px(12), fontWeight: 'bold'},
   bodyText: {fontSize: px(18), lineHeight: px(27), color: BLACK},
   volHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: px(56)},
