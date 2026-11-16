@@ -3128,7 +3128,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       const dups = lib ? dupOf(lib.path, b.key) : [];
       // the description gets whatever height is left, in whole lines (never a line cut in half)
       const titleLines = (titleOf(b).length + (sub ? sub.length * 0.8 + 3 : 0)) * px(18) * 0.55 > resW - Math.round((ch * 2) / 3) - px(40) - (dups.length ? px(44) : 0) ? 2 : 1;
-      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(40);
+      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(44);
       const teaserLines = Math.max(0, Math.min(2, Math.floor(left / px(19))));
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
@@ -7485,8 +7485,8 @@ const st = StyleSheet.create({
   resBar: {height: px(58), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(10), paddingTop: px(8)},
   resCount: {fontSize: px(19), fontWeight: 'bold', color: BLACK},
   pillWrap: {flexDirection: 'row', flexWrap: 'wrap', marginVertical: px(4)},
-  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(4), marginBottom: px(2), height: px(34), alignItems: 'center'},
-  pill: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
+  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(2), height: px(40), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
+  pill: {borderWidth: 2, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
   pillSmall: {paddingHorizontal: px(10), paddingVertical: px(3), marginRight: px(6), marginBottom: px(5)},
   pillActive: {backgroundColor: BLACK},
   pillText: {fontSize: px(15), lineHeight: px(20), color: BLACK},
