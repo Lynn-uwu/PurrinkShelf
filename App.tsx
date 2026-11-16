@@ -3275,7 +3275,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                   <Text style={st.hint}>{`Tap once to include, again to exclude.${order === 'count' ? '  By most books.' : order === 'tapped' ? '  Most tapped first.' : ''}`}</Text>
                   <View style={{flex: 1, overflow: 'hidden'}} onLayout={e => { const h = Math.floor(e.nativeEvent.layout.height); if (Math.abs(h - fListH) > 2) setFListH(h); }}>
                     {(fPages[tp - 1] || []).map((it, i) => {
-                      if (it.head) return <View key={'h' + it.head} style={{height: it.h, justifyContent: 'center'}}><View style={st.letterHead}><Text style={st.letterHeadText}>{it.head}</Text></View></View>;
+                      if (it.head) return <View key={'h' + it.head} style={{height: it.h, flexDirection: 'row', alignItems: 'center'}}><Text style={st.letterHeadText}>{it.head}</Text><View style={st.letterLine} /></View>;
                       if (compact) return (
                         <View key={'c' + i} style={{height: it.h, flexDirection: 'row', alignItems: 'center'}}>
                           {it.names!.map(n => {
@@ -7674,8 +7674,8 @@ const st = StyleSheet.create({
   volCellSub: {fontSize: px(12), color: '#333333', marginTop: px(2), textAlign: 'center'},
   kindTabs: {flexDirection: 'row', flexWrap: 'wrap', marginTop: px(10), marginBottom: px(6)},
   quickRow: {height: px(48), flexDirection: 'row', alignItems: 'center', paddingHorizontal: px(12), borderBottomWidth: 1, borderColor: '#888888', overflow: 'hidden'},
-  letterHead: {alignSelf: 'flex-start', backgroundColor: BLACK, borderRadius: px(6), paddingHorizontal: px(7), paddingVertical: px(1)},
-  letterHeadText: {color: '#ffffff', fontSize: px(14), fontWeight: 'bold'},
+  letterHeadText: {color: BLACK, fontSize: px(16), fontWeight: 'bold', minWidth: px(14)},
+  letterLine: {flex: 1, height: 2, backgroundColor: BLACK, marginLeft: px(8), marginRight: px(4)}, // a letter, then a long line: A ————
   fChip: {height: px(28), borderWidth: 1.5, borderColor: BLACK, borderRadius: px(14), paddingHorizontal: px(8), marginRight: px(4), justifyContent: 'center', backgroundColor: '#ffffff', flexShrink: 1},
   fChipText: {fontSize: px(13), color: BLACK},
   fChipCount: {fontSize: px(11), color: '#555555'},
