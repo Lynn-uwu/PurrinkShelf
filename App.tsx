@@ -3128,14 +3128,15 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       const cats = catsOf(b, m);
       const sub = [
         settings.badges.vols && b.vols.length > 1 ? `${b.vols.length} vols` : '',
-        settings.badges.notes && m.notes?.length ? `${m.notes.length} note${m.notes.length === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join('  ·  ');
       const stars = ratingOf(m);
+      const noted = settings.badges.notes && m.notes?.length ? m.notes : null;
+      const side = !!(stars || noted); // the right-hand column: notes on top, rating under
       const au = authorOf(b, m);
       const dups = lib ? dupOf(lib.path, b.key) : [];
       // the description gets whatever height is left, in whole lines (never a line cut in half)
       const titleLines = (titleOf(b).length + (sub ? sub.length * 0.8 + 3 : 0)) * px(18) * 0.55 > resW - Math.round((ch * 2) / 3) - px(40) - (dups.length ? px(44) : 0) ? 2 : 1;
-      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(44);
+      const left = rowH - px(14) - titleLines * px(22) - (au ? px(19) : 0) - px(34);
       const teaserLines = Math.max(0, Math.min(2, Math.floor(left / px(19))));
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
@@ -3153,17 +3154,17 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                 </Pressable>
               ) : null}
             </View>
-            {au ? <Text style={st.byLineSmall} numberOfLines={1}>{au}</Text> : null}
+            {au ? <Text style={[st.byLineSmall, noted ? {marginRight: px(48)} : null]} numberOfLines={1}>{au}</Text> : null}
             <View style={st.pillLine}>
               {(() => {
                 // only whole pills: show what fits on one line, then "+N"
                 const all = Array.from(new Set([...cats.slice(-1), ...(m.genres || [])]));
-                const room = resW - Math.round((ch * 2) / 3) - px(40);
-                const pw = (t: string) => t.length * px(15) * 0.56 + px(33);
+                const room = resW - Math.round((ch * 2) / 3) - px(40) - (side ? px(100) : 0); // the notes and stars sit at the right
+                const pw = pillTinyW;
                 const shown: string[] = [];
                 let used = 0;
                 for (let i = 0; i < all.length; i++) {
-                  const more = i < all.length - 1 ? px(48) : 0;
+                  const more = i < all.length - 1 ? px(40) : 0;
                   if (used + pw(all[i]) + more > room) break;
                   shown.push(all[i]);
                   used += pw(all[i]);
@@ -3171,20 +3172,23 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                 const extra = all.length - shown.length;
                 return (
                   <>
-                    {shown.map((t, i) => <Pill key={t + i} label={t} active={tags['g:' + t] === 1 || tags['c:' + t] === 1} />)}
-                    {extra > 0 ? <Pill label={`+${extra}`} /> : null}
+                    {shown.map((t, i) => <Pill tiny key={t + i} label={t} active={tags['g:' + t] === 1 || tags['c:' + t] === 1} />)}
+                    {extra > 0 ? <Pill tiny label={`+${extra}`} /> : null}
                   </>
                 );
               })()}
             </View>
-            {stars ? (
-              // your rating, bottom right of the row
-              <View style={st.rowStars} pointerEvents="none"><Stars value={stars} size={px(17)} /></View>
+            {side ? (
+              // bottom right of the row: your notes as a little sticky note, your rating under it
+              <View style={st.rowStars} pointerEvents="none">
+                {noted ? <View style={{marginBottom: stars ? px(6) : 0, marginRight: px(3)}}><NoteMark notes={noted} /></View> : null}
+                {stars ? <Stars value={stars} size={px(17)} /> : null}
+              </View>
             ) : null}
             {b.missing ? (
               <Text style={st.teaser} numberOfLines={2}>{"The file isn't in the library any more. Its details are kept and come back when the file does."}</Text>
             ) : m.description && teaserLines ? (
-              <Text style={st.teaser} numberOfLines={teaserLines}>{m.description.replace(/\s+/g, ' ')}</Text>
+              <Text style={[st.teaser, side ? {marginRight: px(100)} : null]} numberOfLines={teaserLines}>{m.description.replace(/\s+/g, ' ')}</Text>
             ) : null}
           </View>
         </Pressable>
@@ -4542,6 +4546,17 @@ const NOTE_COLORS: {id: NoteColor; label: string; bg: string}[] = [
 const noteBg = (c: NoteColor) => (NOTE_COLORS.find(x => x.id === c) || NOTE_COLORS[0]).bg;
 
 /** the little sticky note on the cover's bottom-right corner */
+// a small sticky note with the count, for corners of covers
+function NoteMark({notes}: {notes: Note[]}) {
+  const sz = px(32);
+  return (
+    <View style={[st.postit, {transform: [{rotate: '-4deg'}]}, SKETCH && {borderRadius: px(5), overflow: 'hidden', borderWidth: 1.5, borderColor: BLACK}, {width: sz, height: sz, backgroundColor: noteBg(notes[0].color)}]} accessibilityLabel={`${notes.length} notes`}>
+      <View style={[st.postitFold, {borderLeftWidth: px(8), borderTopWidth: px(8)}]} />
+      <Text style={st.noteMarkNum}>{notes.length}</Text>
+    </View>
+  );
+}
+
 function PostIt({notes, onPress, style}: {notes: Note[]; onPress: () => void; style?: any}) {
   const n = notes.length;
   const sz = px(52);
@@ -6413,7 +6428,7 @@ function SnapRow({x, cover, onPress, right, h}: {x: Snap; cover?: string | null;
         <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
         <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{[x.libName, x.folder].filter(Boolean).join('  ·  ') + (x.vol ? `  ·  Vol ${x.vol}` : '')}</Text>
         {x.genres?.length ? (
-          <View style={[st.pillLine, {marginTop: px(6)}]}>{x.genres.slice(0, 3).map(g => <Pill small key={g} label={g} />)}</View>
+          <View style={[st.pillLine, {marginTop: px(6)}]}>{x.genres.slice(0, 3).map(g => <Pill tiny key={g} label={g} />)}</View>
         ) : null}
       </View>
       {right}
@@ -6501,8 +6516,8 @@ function Collection({items, grid, top, paging, empty}: {items: CItem[]; grid: bo
           <Text style={st.rowTitle} numberOfLines={2}>{x.title}</Text>
           {x.sub ? <Text style={[st.small, {marginTop: px(3)}]} numberOfLines={1}>{x.sub}</Text> : null}
           <View style={[st.pillLine, {marginTop: px(6)}]}>
-            {(x.marks || []).map(t => <Pill small active key={t} label={t} />)}
-            {(x.pills || []).slice(0, 3).map(t => <Pill small key={t} label={t} />)}
+            {(x.marks || []).map(t => <Pill tiny active key={t} label={t} />)}
+            {(x.pills || []).slice(0, 3).map(t => <Pill tiny key={t} label={t} />)}
           </View>
         </View>
         {x.action ? <IconBtn name={x.action.icon} label={x.action.label} dark={x.action.dark} onPress={x.action.onPress} style={{marginLeft: px(8)}} /> : null}
@@ -7439,7 +7454,7 @@ const st = StyleSheet.create({
   descFrame: {flex: 1, borderWidth: 2.5, borderColor: BLACK, borderRadius: px(22), alignItems: 'center', justifyContent: 'center'},
   byLineSmall: {fontSize: px(14), lineHeight: px(18), color: '#444444', marginTop: px(1), flexShrink: 0},
   waitBar: {flexDirection: 'row', alignItems: 'center', height: px(62), marginHorizontal: px(12), marginTop: px(8), paddingHorizontal: px(12), borderWidth: 2, borderStyle: 'dashed', borderColor: BLACK, borderRadius: px(14)},
-  rowStars: {position: 'absolute', right: 0, bottom: px(2), backgroundColor: '#ffffff', paddingLeft: px(6)},
+  rowStars: {position: 'absolute', right: 0, bottom: px(2), backgroundColor: '#ffffff', paddingLeft: px(6), paddingTop: px(3), alignItems: 'flex-end'},
   dupMark: {borderWidth: 1.5, borderColor: BLACK, borderRadius: px(10), paddingHorizontal: px(6), marginLeft: px(6)},
   dupMarkText: {fontSize: px(13), fontWeight: 'bold', color: BLACK},
   byLine: {fontSize: px(15), color: '#444444', fontWeight: 'bold', marginBottom: px(1)},
@@ -7501,7 +7516,7 @@ const st = StyleSheet.create({
   resBar: {height: px(58), flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: px(10), paddingTop: px(8)},
   resCount: {fontSize: px(19), fontWeight: 'bold', color: BLACK},
   pillWrap: {flexDirection: 'row', flexWrap: 'wrap', marginVertical: px(4)},
-  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(2), height: px(40), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
+  pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(1), height: px(31), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
   pill: {borderWidth: 2, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
   pillSmall: {paddingHorizontal: px(10), paddingVertical: px(3), marginRight: px(6), marginBottom: px(5)},
   pillTiny: {paddingHorizontal: px(9), paddingVertical: px(2), marginRight: px(5), marginBottom: 0}, // book pages: genres and tags
@@ -7615,6 +7630,7 @@ const st = StyleSheet.create({
   postitFold: {position: 'absolute', right: 0, bottom: 0, width: 0, height: 0, borderLeftWidth: px(12), borderTopWidth: px(12), borderLeftColor: 'transparent', borderTopColor: '#999999'},
   postitNum: {fontSize: px(20), lineHeight: px(22), fontWeight: 'bold', color: BLACK},
   postitLabel: {fontSize: px(11), color: BLACK},
+  noteMarkNum: {fontSize: px(16), lineHeight: px(19), fontWeight: 'bold', color: BLACK},
   board: {alignSelf: 'center', marginTop: px(10), backgroundColor: '#e9e4d8', borderRadius: px(14), borderWidth: 1.5, borderColor: '#9a917f', padding: px(6)},
   statTile: {flex: 1, marginHorizontal: px(5), borderWidth: 2, borderColor: BLACK, borderRadius: px(16), paddingVertical: px(12), paddingHorizontal: px(10), alignItems: 'center'},
   statNum: {fontSize: px(36), fontWeight: 'bold', color: BLACK},
