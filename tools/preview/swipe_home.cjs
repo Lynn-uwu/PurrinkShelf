@@ -1,0 +1,12 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const swipe = async (x, y, dx) => { await p.mouse.move(x, y); await p.mouse.down(); for (let i = 1; i <= 8; i++) await p.mouse.move(x + (dx * i) / 8, y + 2); await p.mouse.up(); await p.waitForTimeout(600); };
+  const state = async () => (await p.$$eval('[aria-label="Previous"]', els => els.map(e => { const r = e.getBoundingClientRect(); return `${Math.round(r.y)}:${e.getAttribute('aria-disabled') === 'true' ? 'first' : 'moved'}`; }))).join(' ');
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&prog=1'); await p.waitForTimeout(12000);
+  await p.screenshot({path: path.join(__dirname, 'shots34/home.png')});
+  console.log('start:', await state());
+  const ys = await p.$$eval('[aria-label="Previous"]', els => els.map(e => e.getBoundingClientRect().y));
+  await swipe(350, ys[0] + 150, -250); console.log('swipe on recently read:', await state());
+  await swipe(350, ys[1] + 150, -250); console.log('swipe on genres:', await state());
+  await b.close(); })();

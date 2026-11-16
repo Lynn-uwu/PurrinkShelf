@@ -336,7 +336,7 @@ function Icon({name, size, color}: {name: IconName; size?: number; color?: strin
 
 /** a round icon button; "bare" drops the outline */
 // ---------- swipe left or right to turn pages: every page arrow joins the swipe area it sits in ----------
-type SwipeH = {dir: -1 | 1; go: React.MutableRefObject<(() => void) | null>};
+type SwipeH = {dir: -1 | 1; go: React.MutableRefObject<(() => void) | null>; at: React.RefObject<RNView | null>};
 const SwipeCtx = React.createContext<{add: (h: SwipeH) => () => void} | null>(null);
 const PAGER = /^(previous( page)?|next( page)?|newer|older)$/i;
 /**
@@ -351,11 +351,25 @@ function SwipeArea({children, style, stop}: {children: React.ReactNode; style?: 
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > px(12) && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 && (!!stop || hs.current.length > 0),
-        onPanResponderRelease: (_, g) => {
+        onPanResponderRelease: async (_, g) => {
           if (Math.abs(g.dx) < px(50)) return;
           const dir = g.dx < 0 ? 1 : -1;
           const mine = hs.current.filter(h => h.dir === dir);
-          mine[mine.length - 1]?.go.current?.();
+          if (mine.length <= 1) return mine[0]?.go.current?.();
+          // several page arrows here: the ones that belong to where the swipe started. A part's arrows sit at its top
+          // (a heading) or bottom: take the nearest arrows above the swipe, else the nearest below.
+          const spots = await Promise.all(
+            mine.map(h => new Promise<{h: SwipeH; x: number; y: number} | null>(res => {
+              const v = h.at.current;
+              if (!v) return res(null);
+              v.measureInWindow((x, y, w, hh) => res(w || hh ? {h, x: x + w / 2, y: y + hh / 2} : null));
+            })),
+          );
+          const seen = spots.filter(Boolean) as {h: SwipeH; x: number; y: number}[];
+          if (!seen.length) return mine[mine.length - 1]?.go.current?.();
+          const above = seen.filter(s => s.y <= g.y0 + px(30));
+          const pick = (l: typeof seen) => l.sort((a, b) => Math.abs(a.y - g.y0) - Math.abs(b.y - g.y0) || Math.abs(a.x - g.x0) - Math.abs(b.x - g.x0))[0];
+          (pick(above.length ? above : seen)?.h.go.current || (() => {}))();
         },
         onPanResponderTerminationRequest: () => false, // once a swipe is ours, the areas around it don't take it
       }),
@@ -384,8 +398,9 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
   const sw = React.useContext(SwipeCtx);
   const dir: 0 | -1 | 1 = (name === 'back' || name === 'forward') && PAGER.test(label) ? (name === 'back' ? -1 : 1) : 0;
   const go = useRef<(() => void) | null>(null);
+  const at = useRef<RNView | null>(null);
   go.current = dir && !disabled ? onPress : null;
-  useEffect(() => (sw && dir ? sw.add({dir, go}) : undefined), [sw, dir]);
+  useEffect(() => (sw && dir ? sw.add({dir, go, at}) : undefined), [sw, dir]);
   return (
     <Pressable
       onPress={onPress}
@@ -395,7 +410,9 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
       accessibilityRole="button"
       accessibilityLabel={label}
       style={[{width: sz, height: sz, borderRadius: sz / 2, alignItems: 'center', justifyContent: 'center'}, !bare && st.iconRing, dark && st.btnDark, disabled && st.dim, style]}>
-      <Icon name={name} size={iconSize || Math.round(sz * 0.56)} color={dark ? '#ffffff' : BLACK} />
+      <RNView ref={at} collapsable={false}>
+        <Icon name={name} size={iconSize || Math.round(sz * 0.56)} color={dark ? '#ffffff' : BLACK} />
+      </RNView>
     </Pressable>
   );
 }
@@ -6786,6 +6803,7 @@ function Home(props: {
 
       {libs.length ? (
         <>
+          <SwipeArea>
           <View style={{paddingHorizontal: px(16), marginTop: px(2)}}>{head('Recently', 'read', rpg, rPages, setRp, 'recent')}</View>
           {recent.length ? (
             row(
@@ -6803,7 +6821,9 @@ function Home(props: {
           ) : (
             <Text style={[st.small, {paddingHorizontal: px(16)}]}>Books you open will show up here.</Text>
           )}
+          </SwipeArea>
 
+          <SwipeArea>
           <View style={{paddingHorizontal: px(16), marginTop: px(6)}}>{head('Explore', 'by genre', gpg, gPages, setGp, 'genres')}</View>
           {genres.length ? (
             <View style={[st.genrePanel, {marginHorizontal: px(16)}]}>
@@ -6812,6 +6832,7 @@ function Home(props: {
           ) : (
             <Text style={[st.small, {paddingHorizontal: px(16)}]}>{ready ? 'Add genres to your books and they will show up here.' : 'Looking through your libraries…'}</Text>
           )}
+          </SwipeArea>
         </>
       ) : null}
     </>
