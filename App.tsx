@@ -3128,7 +3128,6 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       const cats = catsOf(b, m);
       const sub = [
         settings.badges.vols && b.vols.length > 1 ? `${b.vols.length} vols` : '',
-        settings.badges.notes && m.notes?.length ? `${m.notes.length} note${m.notes.length === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join('  ·  ');
       const stars = ratingOf(m);
       const au = authorOf(b, m);
@@ -3139,7 +3138,13 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       const teaserLines = Math.max(0, Math.min(2, Math.floor(left / px(19))));
       return (
         <Pressable key={b.key} style={[st.row, {height: rowH}]} onPress={() => setScreen({kind: 'book', key: b.key})}>
-          <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} isNew={isNewB(b)} badge={badgeOf(b)} />
+          <RNView style={{width: Math.round((ch * 2) / 3), height: ch}}>
+            <Cover uri={coverUri(b)} w={Math.round((ch * 2) / 3)} h={ch} title={titleOf(b)} isNew={isNewB(b)} badge={badgeOf(b)} />
+            {settings.badges.notes && m.notes?.length ? (
+              // your notes, as a little sticky note on the cover's corner (kept inside the cover)
+              <View style={st.coverNoteBox} pointerEvents="none"><NoteMark notes={m.notes} /></View>
+            ) : null}
+          </RNView>
           <View style={st.rowText}>
             <View style={{flexDirection: 'row', alignItems: 'flex-start'}}>
               <Text style={[st.rowTitle, {flex: 1}]} numberOfLines={2}>
@@ -4542,6 +4547,17 @@ const NOTE_COLORS: {id: NoteColor; label: string; bg: string}[] = [
 const noteBg = (c: NoteColor) => (NOTE_COLORS.find(x => x.id === c) || NOTE_COLORS[0]).bg;
 
 /** the little sticky note on the cover's bottom-right corner */
+// a small sticky note with the count, for corners of covers
+function NoteMark({notes}: {notes: Note[]}) {
+  const sz = px(32);
+  return (
+    <View style={[st.postit, {transform: [{rotate: '-4deg'}]}, SKETCH && {borderRadius: px(5), overflow: 'hidden', borderWidth: 1.5, borderColor: BLACK}, {width: sz, height: sz, backgroundColor: noteBg(notes[0].color)}]} accessibilityLabel={`${notes.length} notes`}>
+      <View style={[st.postitFold, {borderLeftWidth: px(8), borderTopWidth: px(8)}]} />
+      <Text style={st.noteMarkNum}>{notes.length}</Text>
+    </View>
+  );
+}
+
 function PostIt({notes, onPress, style}: {notes: Note[]; onPress: () => void; style?: any}) {
   const n = notes.length;
   const sz = px(52);
@@ -7615,6 +7631,8 @@ const st = StyleSheet.create({
   postitFold: {position: 'absolute', right: 0, bottom: 0, width: 0, height: 0, borderLeftWidth: px(12), borderTopWidth: px(12), borderLeftColor: 'transparent', borderTopColor: '#999999'},
   postitNum: {fontSize: px(20), lineHeight: px(22), fontWeight: 'bold', color: BLACK},
   postitLabel: {fontSize: px(11), color: BLACK},
+  coverNoteBox: {position: 'absolute', right: px(4), bottom: px(4)},
+  noteMarkNum: {fontSize: px(16), lineHeight: px(19), fontWeight: 'bold', color: BLACK},
   board: {alignSelf: 'center', marginTop: px(10), backgroundColor: '#e9e4d8', borderRadius: px(14), borderWidth: 1.5, borderColor: '#9a917f', padding: px(6)},
   statTile: {flex: 1, marginHorizontal: px(5), borderWidth: 2, borderColor: BLACK, borderRadius: px(16), paddingVertical: px(12), paddingHorizontal: px(10), alignItems: 'center'},
   statNum: {fontSize: px(36), fontWeight: 'bold', color: BLACK},

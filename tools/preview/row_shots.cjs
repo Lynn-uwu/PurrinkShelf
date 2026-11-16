@@ -5,5 +5,5 @@ const {chromium} = require('playwright'); const path = require('path');
   await p.getByLabel('Library', {exact: true}).first().click(); await p.waitForTimeout(800);
   await p.getByLabel('Hide filters', {exact: true}).first().click(); await p.waitForTimeout(500);
   for (let i = 0; i < 4 && !(await p.getByText('Moon Over the Jade Pavilion and', {exact: false}).count()); i++) { await p.getByLabel(/^Next( page)?$/).last().click(); await p.waitForTimeout(500); }
-  await p.screenshot({path: path.join(__dirname, 'shots35/rows.png')});
+  await p.screenshot({path: path.join(__dirname, 'shots36/rows.png')});
   await b.close(); })();
