@@ -4,9 +4,9 @@
  * descriptions and covers on the device; filter by folder and tag; tap to read.
  */
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Dimensions, Image, Keyboard, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
+import {Dimensions, Image, Keyboard, PanResponder, Platform, Pressable as RNPressable, ScrollView, StyleSheet, Text as RNText, TextInput as RNTextInput, View as RNView} from 'react-native';
 import {PluginManager, RattaFileSelector as FileSelector} from 'sn-plugin-lib';
-import {bareTitle, goodreadsCsv, parseAo3, parseTable, readSiteExport} from './src/sites';
+import {bareTitle, goodreadsCsv, isGenre, parseAo3, parseBookInfo, parseTable, readSiteExport} from './src/sites';
 import {LICENSE_TEXT, SOURCE, SUPPORT, VERSION} from './src/about';
 import {PROFILE_PARTS, Wish, authorOf, hoursText, ratingOf, readMinutes, setDashAuthor, shownTitle, splitDash, similar} from './src/library';
 import {Collection as Coll, COLLECTION_TEMPLATES, READ_STATES, ReadState, allStates, setCustomStates, RULE_FIELDS, Rule, RuleField, STARTER_COLLECTIONS, inCollection, readLabel, setReading, timesRead} from './src/library';
@@ -335,6 +335,38 @@ function Icon({name, size, color}: {name: IconName; size?: number; color?: strin
 }
 
 /** a round icon button; "bare" drops the outline */
+// ---------- swipe left or right to turn pages: every page arrow joins the swipe area it sits in ----------
+type SwipeH = {dir: -1 | 1; go: React.MutableRefObject<(() => void) | null>};
+const SwipeCtx = React.createContext<{add: (h: SwipeH) => () => void} | null>(null);
+const PAGER = /^(previous( page)?|next( page)?|newer|older)$/i;
+/**
+ * A part of the screen where a sideways swipe turns its pages, like tapping its arrows: left = next, right = previous.
+ * The newest arrows win, so a page opened on top takes the swipe from the one under it. `stop`: a swipe here never
+ * reaches what lies underneath (a card over the library).
+ */
+function SwipeArea({children, style, stop}: {children: React.ReactNode; style?: any; stop?: boolean}) {
+  const hs = useRef<SwipeH[]>([]);
+  const ctx = useMemo(() => ({add: (h: SwipeH) => { hs.current.push(h); return () => { hs.current = hs.current.filter(x => x !== h); }; }}), []);
+  const pr = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > px(12) && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 && (!!stop || hs.current.length > 0),
+        onPanResponderRelease: (_, g) => {
+          if (Math.abs(g.dx) < px(50)) return;
+          const dir = g.dx < 0 ? 1 : -1;
+          const mine = hs.current.filter(h => h.dir === dir);
+          mine[mine.length - 1]?.go.current?.();
+        },
+        onPanResponderTerminationRequest: () => false, // once a swipe is ours, the areas around it don't take it
+      }),
+    [stop],
+  );
+  return (
+    <SwipeCtx.Provider value={ctx}>
+      <View style={style} {...pr.panHandlers}>{children}</View>
+    </SwipeCtx.Provider>
+  );
+}
 function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, style, onLongPress}: {
   name: IconName;
   onPress: () => void;
@@ -348,6 +380,12 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
   onLongPress?: () => void;
 }) {
   const sz = size || px(46);
+  // a page arrow: a swipe in its area does the same
+  const sw = React.useContext(SwipeCtx);
+  const dir: 0 | -1 | 1 = (name === 'back' || name === 'forward') && PAGER.test(label) ? (name === 'back' ? -1 : 1) : 0;
+  const go = useRef<(() => void) | null>(null);
+  go.current = dir && !disabled ? onPress : null;
+  useEffect(() => (sw && dir ? sw.add({dir, go}) : undefined), [sw, dir]);
   return (
     <Pressable
       onPress={onPress}
@@ -495,7 +533,9 @@ export default function App(): React.JSX.Element {
   return (
     <Guard>
       <KeyboardLift>
-        <PurrinkShelfApp />
+        <SwipeArea style={{flex: 1}}>
+          <PurrinkShelfApp />
+        </SwipeArea>
       </KeyboardLift>
     </Guard>
   );
@@ -937,7 +977,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
     probing.current = true;
     try {
       // new books, and descriptions earlier versions cut at 2,000 letters (read once more in full)
-      const todo = bs.filter(b => !b.missing && b.ext !== 'paper' && (!m0.books[b.key]?.probed || (m0.books[b.key]?.description?.length === 2000 && !m0.books[b.key]?.descFixed))).slice(0, 40);
+      const todo = bs.filter(b => !b.missing && b.ext !== 'paper' && (!m0.books[b.key]?.probed || (b.ext === 'epub' && !m0.books[b.key]?.infoRead) || (m0.books[b.key]?.description?.length === 2000 && !m0.books[b.key]?.descFixed))).slice(0, 40);
       if (!todo.length) return;
       const patches: {[k: string]: Meta} = {};
       const dirs: {[d: string]: string[]} = {};
@@ -974,6 +1014,25 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
             if (!has.language && em.language) p.language = em.language;
             if (!has.seriesName && em.series) { p.seriesName = em.series; p.seriesNo = em.seriesNo; }
           }
+          // like Calibre: the book's subjects, and the information page before chapter 1 (genres, tags, status, summary)
+          p.infoRead = true;
+          await loadContents(b.files[0]);
+          const info = parseBookInfo(FIRSTS[b.files[0]] || '');
+          const has = {...m, ...p};
+          const subjects = (em?.subjects || []).flatMap(x => x.split(/\s*[,;]\s*/)).map(x => x.trim()).filter(x => x && x.length <= 40);
+          const genres = Array.from(new Set([...info.genres, ...subjects.filter(isGenre)]));
+          const tags = Array.from(new Set([...info.tags, ...subjects.filter(x => !isGenre(x))])).filter(t => !genres.includes(t));
+          if (!has.genres?.length && genres.length) p.genres = genres.slice(0, 20);
+          if (!has.tags?.length && tags.length) p.tags = tags.slice(0, 60);
+          if (!has.description && info.description && info.description.length > 20) p.description = info.description;
+          // the book's own description often starts with the site's leftovers ("Chapters: 94 + 6 … Status … Raw /// Novel Updates"):
+          // when what we have is just that, and the information page has the clean summary inside it, use the clean one
+          else if (has.description && em?.description && info.description) {
+            const flat = (x: string) => x.replace(/\s+/g, ' ').trim();
+            if (flat(has.description) === flat(em.description.slice(0, 10000)) && flat(has.description).includes(flat(info.description).slice(0, 60)) && flat(info.description).length < flat(has.description).length) p.description = info.description;
+          }
+          if (!has.status && info.status) p.status = info.status;
+          if (!has.author && info.author && !splitDash(b.fileTitle)) p.author = info.author;
           // every volume counts towards the length
           let words = em?.words || 0, cjk = em?.cjk || 0;
           for (const f of b.files.slice(1, 60)) {
@@ -3140,7 +3199,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
       </View>
       <View style={{flex: 1, flexDirection: 'row'}}>
         {showFilters && (
-          <View style={[st.side, {width: sideW}]}>
+          <SwipeArea style={[st.side, {width: sideW}]}>
             <View style={{flex: 1, padding: px(10)}}>
               <View style={st.sideHead}>
                 <Text style={st.sideTitle}>Filters</Text>
@@ -3227,7 +3286,7 @@ const cutShort = (have?: string, full?: string) => !!have && have.length === 200
                 <Text style={[st.hint, {marginTop: px(6), marginBottom: 0}]}>Grey letters have nothing under them.</Text>
               </View>
             ) : null}
-          </View>
+          </SwipeArea>
         )}
         <View style={{flex: 1}}>
       <View style={st.resBar}>
@@ -4246,7 +4305,7 @@ function BookPage(props: {
         </Pressable>
       </View>
       <View style={{flex: 1, flexDirection: 'row'}}>
-        <View style={[st.bookLeft, {width: LW}]}>
+        <SwipeArea style={[st.bookLeft, {width: LW}]}>
           {scroll ? (
             <ScrollView contentContainerStyle={{padding: px(14)}}>
               {top}
@@ -4270,8 +4329,8 @@ function BookPage(props: {
               </View>
             </>
           )}
-        </View>
-        <View style={{flex: 1}}>
+        </SwipeArea>
+        <SwipeArea style={{flex: 1}}>
           {epubs.length ? (
             <View style={[st.rTabs, {paddingHorizontal: px(16), marginTop: px(8)}]}>
               {([['about', 'Description'], ['ch', 'Chapters']] as const).map(([k, t]) => (
@@ -4296,7 +4355,7 @@ function BookPage(props: {
               </View>
             </>
           )}
-        </View>
+        </SwipeArea>
       </View>
       {statusOpen ? (
         // a drop-down under the status button
@@ -7292,7 +7351,7 @@ function ModalCard({onOutside, children}: {onOutside: () => void; children: Reac
   return (
     <View style={st.cardWrap}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onOutside} accessibilityLabel="Outside the page" />
-      <View style={st.pageCard}>{children}</View>
+      <SwipeArea stop style={st.pageCard}>{children}</SwipeArea>
       {CAT ? <CatImg name="peek" w={px(78)} style={{position: 'absolute', top: Math.max(0, CARD_Y - Math.round(px(78) * CAT_RATIO.peek * 0.82)), left: CARD_X + px(150)}} /> : null}
     </View>
   );

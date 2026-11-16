@@ -1,0 +1,11 @@
+const {chromium} = require('playwright'); const path = require('path');
+(async () => { const b = await chromium.launch(); const p = await b.newPage({viewport: {width: 702, height: 936}});
+  p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+  const swipe = async (x, y, dx) => { await p.mouse.move(x, y); await p.mouse.down(); for (let i = 1; i <= 8; i++) await p.mouse.move(x + (dx * i) / 8, y + 2); await p.mouse.up(); await p.waitForTimeout(500); };
+  const txt = async () => (await p.locator('text=/^\\d+ \\/ \\d+$/').allInnerTexts()).join(' | ');
+  await p.goto('file://' + path.join(__dirname, 'index.html') + '?lib=1&state=1&ao3=1'); await p.waitForTimeout(12000);
+  await p.getByLabel('Library', {exact: true}).first().click(); await p.waitForTimeout(800);
+  console.log('library:', await txt());
+  await swipe(550, 500, -250); console.log('results swiped left:', await txt());
+  await swipe(120, 600, -150); console.log('filters swiped left:', await txt());
+  await b.close(); })();
