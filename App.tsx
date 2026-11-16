@@ -419,27 +419,35 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
 
 function Pill({label, onPress, active, small, width, toggle}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; width?: number; toggle?: boolean}) {
   const cat = CAT && toggle; // only switches become cats; tags and labels stay plain pills
+  const text = <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, active && {color: '#ffffff'}]}>{cat ? label.replace(/^✓\s*/, '') : label}</Text>;
+  if (!cat) {
+    return (
+      <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
+        {text}
+      </Pressable>
+    );
+  }
+  // the Cats look: every toggle is a little cat. On: a black cat with white eyes. Off: the same cat in outline, facing the other way.
+  // The ears sit inside a box that is a little taller than the pill, so the screen redraws them when the cat turns (on e-ink an
+  // ear drawn outside its box stayed behind).
+  const room = px(10);
+  const side = width ? px(14) : px(5);
+  const after = width ? 0 : px(6);
   return (
-    <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, cat && {marginTop: px(5), marginBottom: px(3), overflow: 'visible'}, cat && (active ? {paddingLeft: px(6)} : {paddingRight: px(6)}), width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
-      {/* the Cats look: every toggle is a little cat. On: a black cat with white eyes (where the tick was). Off: the same cat in outline. */}
-      {cat ? (
-        active ? (
-          <Image source={TOGGLE_EARS} style={{position: 'absolute', zIndex: 2, left: width ? px(14) : px(5), top: -px(7), width: px(30), height: px(8)}} resizeMode="stretch" />
-        ) : (
-          <Image source={TOGGLE_EARS_OFF} style={{position: 'absolute', zIndex: 2, right: (width ? px(14) : px(5)) - px(2.37), top: -px(9.25), width: px(34.7), height: px(12.75), transform: [{scaleX: -1}]}} resizeMode="stretch" />
-        )
-      ) : null}
-      {cat ? (
-        // Off faces the other way: words first, then the eyes, ears on the right
+    <RNView style={{paddingTop: room, marginTop: px(5) - room, marginBottom: px(3), marginRight: after}}>
+      <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, {marginTop: 0, marginBottom: 0, marginRight: 0}, active ? {paddingLeft: px(6)} : {paddingRight: px(6)}, width ? {width, alignItems: 'center', height: px(36), justifyContent: 'center'} : null]}>
         <RNView style={{flexDirection: active ? 'row' : 'row-reverse', alignItems: 'center'}}>
           <RNView style={[st.catEye, !active && {backgroundColor: BLACK}]} />
           <RNView style={[st.catEye, !active && {backgroundColor: BLACK}, active ? {marginLeft: px(4), marginRight: px(7)} : {marginRight: px(4), marginLeft: px(7)}]} />
-          <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, active && {color: '#ffffff'}]}>{label.replace(/^✓\s*/, '')}</Text>
+          {text}
         </RNView>
+      </Pressable>
+      {active ? (
+        <Image key="on" source={TOGGLE_EARS} style={{position: 'absolute', zIndex: 2, left: side, top: room - px(7), width: px(30), height: px(8)}} resizeMode="stretch" />
       ) : (
-        <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, active && {color: '#ffffff'}]}>{label}</Text>
+        <Image key="off" source={TOGGLE_EARS_OFF} style={{position: 'absolute', zIndex: 2, right: side - px(2.37) + after, top: room - px(9.25), width: px(34.7), height: px(12.75), transform: [{scaleX: -1}]}} resizeMode="stretch" />
       )}
-    </Pressable>
+    </RNView>
   );
 }
 
