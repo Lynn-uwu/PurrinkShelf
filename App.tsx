@@ -347,30 +347,37 @@ const PAGER = /^(previous( page)?|next( page)?|newer|older)$/i;
  */
 function SwipeArea({children, style, stop}: {children: React.ReactNode; style?: any; stop?: boolean}) {
   const hs = useRef<SwipeH[]>([]);
+  const fired = useRef(false);
+  const turn = async (g: {dx: number; x0: number; y0: number}) => {
+    const dir = g.dx < 0 ? 1 : -1;
+    const mine = hs.current.filter(h => h.dir === dir);
+    if (mine.length <= 1) return mine[0]?.go.current?.();
+    // several page arrows here: the ones that belong to where the swipe started. A part's arrows sit at its top
+    // (a heading) or bottom: take the nearest arrows above the swipe, else the nearest below.
+    const spots = await Promise.all(
+      mine.map(h => new Promise<{h: SwipeH; x: number; y: number} | null>(res => {
+        const v = h.at.current;
+        if (!v) return res(null);
+        v.measureInWindow((x, y, w, hh) => res(w || hh ? {h, x: x + w / 2, y: y + hh / 2} : null));
+      })),
+    );
+    const seen = spots.filter(Boolean) as {h: SwipeH; x: number; y: number}[];
+    if (!seen.length) return mine[mine.length - 1]?.go.current?.();
+    const above = seen.filter(s => s.y <= g.y0 + px(30));
+    const pick = (l: typeof seen) => l.sort((a, b) => Math.abs(a.y - g.y0) - Math.abs(b.y - g.y0) || Math.abs(a.x - g.x0) - Math.abs(b.x - g.x0))[0];
+    (pick(above.length ? above : seen)?.h.go.current || (() => {}))();
+  };
   const ctx = useMemo(() => ({add: (h: SwipeH) => { hs.current.push(h); return () => { hs.current = hs.current.filter(x => x !== h); }; }}), []);
   const pr = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > px(12) && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 && (!!stop || hs.current.length > 0),
-        onPanResponderRelease: async (_, g) => {
-          if (Math.abs(g.dx) < px(50)) return;
-          const dir = g.dx < 0 ? 1 : -1;
-          const mine = hs.current.filter(h => h.dir === dir);
-          if (mine.length <= 1) return mine[0]?.go.current?.();
-          // several page arrows here: the ones that belong to where the swipe started. A part's arrows sit at its top
-          // (a heading) or bottom: take the nearest arrows above the swipe, else the nearest below.
-          const spots = await Promise.all(
-            mine.map(h => new Promise<{h: SwipeH; x: number; y: number} | null>(res => {
-              const v = h.at.current;
-              if (!v) return res(null);
-              v.measureInWindow((x, y, w, hh) => res(w || hh ? {h, x: x + w / 2, y: y + hh / 2} : null));
-            })),
-          );
-          const seen = spots.filter(Boolean) as {h: SwipeH; x: number; y: number}[];
-          if (!seen.length) return mine[mine.length - 1]?.go.current?.();
-          const above = seen.filter(s => s.y <= g.y0 + px(30));
-          const pick = (l: typeof seen) => l.sort((a, b) => Math.abs(a.y - g.y0) - Math.abs(b.y - g.y0) || Math.abs(a.x - g.x0) - Math.abs(b.x - g.x0))[0];
-          (pick(above.length ? above : seen)?.h.go.current || (() => {}))();
+        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > px(8) && Math.abs(g.dx) > Math.abs(g.dy) * 1.2 && (!!stop || hs.current.length > 0),
+        onPanResponderGrant: () => { fired.current = false; },
+        // a short swipe is enough: turn as soon as the finger has moved about a finger's width sideways
+        onPanResponderMove: (_, g) => { if (!fired.current && Math.abs(g.dx) >= px(36)) { fired.current = true; turn(g); } },
+        onPanResponderRelease: (_, g) => {
+          // a quick flick counts too, even if short
+          if (!fired.current && (Math.abs(g.dx) >= px(20) && Math.abs(g.vx) > 0.25)) { fired.current = true; turn(g); }
         },
         onPanResponderTerminationRequest: () => false, // once a swipe is ours, the areas around it don't take it
       }),
@@ -418,12 +425,12 @@ function IconBtn({name, onPress, label, dark, bare, size, iconSize, disabled, st
   );
 }
 
-function Pill({label, onPress, active, small, width, toggle}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; width?: number; toggle?: boolean}) {
+function Pill({label, onPress, active, small, tiny, width, toggle}: {label: string; onPress?: () => void; active?: boolean; small?: boolean; tiny?: boolean; width?: number; toggle?: boolean}) {
   const cat = CAT && toggle; // only switches become cats; tags and labels stay plain pills
-  const text = <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, active && {color: '#ffffff'}]}>{cat ? label.replace(/^✓\s*/, '') : label}</Text>;
+  const text = <Text style={[st.pillText, small && {fontSize: px(14), lineHeight: px(19)}, tiny && {fontSize: px(13), lineHeight: px(17)}, active && {color: '#ffffff'}]}>{cat ? label.replace(/^✓\s*/, '') : label}</Text>;
   if (!cat) {
     return (
-      <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, active && st.pillActive, width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
+      <Pressable onPress={onPress} hitSlop={px(4)} style={[st.pill, small && st.pillSmall, tiny && st.pillTiny, active && st.pillActive, width ? {width, alignItems: 'center', marginRight: 0, height: px(36), justifyContent: 'center'} : null]}>
         {text}
       </Pressable>
     );
@@ -3457,7 +3464,7 @@ const ago = (t: number) => {
 };
 
 // ---------- book page: two columns, paged with arrows (or scrolling) ----------
-type Item = {h: number; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean; hl?: boolean};
+type Item = {h: number; lab?: boolean; brk?: boolean; group?: string; text?: string; endPara?: boolean; node?: React.ReactNode; sec?: string; vol?: boolean; hl?: boolean};
 
 /** greedy word wrap by character count (a cautious guess of what fits) */
 function wrapWords(text: string, perLine: number): string[] {
@@ -3473,11 +3480,12 @@ function wrapWords(text: string, perLine: number): string[] {
   return out;
 }
 const pillW = (t: string) => t.length * px(14) * 0.55 + px(25); // small pill incl. margin
-function pillLines(list: string[], width: number): string[][] {
+const pillTinyW = (t: string) => t.length * px(13) * 0.56 + px(24); // tiny pill incl. margin
+function pillLines(list: string[], width: number, wOf: (t: string) => number = pillW): string[][] {
   // first fit: a short pill can slot into a gap on an earlier line
   const lines: {pills: string[]; used: number}[] = [];
   for (const t of list) {
-    const w = pillW(t);
+    const w = wOf(t);
     const line = lines.find(l => l.used + w <= width);
     if (line) {
       line.pills.push(t);
@@ -3492,8 +3500,10 @@ function pack(items: Item[], cap: number): Item[][] {
   for (const it of items) {
     const cur = pages[pages.length - 1];
     if (cur.length && (it.brk || used + it.h > cap)) {
-      pages.push([]);
-      used = 0;
+      // a heading never ends a page on its own: it moves over with what it heads
+      const carry = !it.brk && cur.length > 1 && cur[cur.length - 1].lab ? [cur.pop()!] : [];
+      pages.push(carry);
+      used = carry.reduce((a, x) => a + x.h, 0);
     }
     if (it.brk && !it.node) continue;
     if (!pages[pages.length - 1].length && !it.node && !it.text) continue; // no spacer at the top of a page
@@ -4008,6 +4018,9 @@ function BookPage(props: {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [lp, setLp] = useState(0);
   const [rp, setRp] = useState(0);
+  const [lCap, setLCap] = useState(0); // measured room for the left column's items
+  const [rCap, setRCap] = useState(0);
+  const fit = (set: (n: number) => void, cur: number) => (e: any) => { const h = Math.floor(e.nativeEvent.layout.height); if (Math.abs(h - cur) > 2) set(h); };
   const scroll = paging === 'scroll';
 
   const LW = Math.round(CARD_W * 0.37);
@@ -4031,14 +4044,14 @@ function BookPage(props: {
   const left: Item[] = [];
   let sec = 'Overview';
   let hl = false; // marks what differs, in a Calibre preview
-  const label = (t: string) => ({h: px(32), sec, hl, node: <Text style={st.infoLabel}>{t}</Text>});
-  const maxPill = Math.floor((lIn - px(30)) / (px(14) * 0.58)); // a longer name is shortened (the filter still uses all of it)
+  const label = (t: string) => ({h: px(32), sec, hl, lab: true, node: <Text style={st.infoLabel}>{t}</Text>});
+  const maxPill = Math.floor((lIn - px(30)) / (px(13) * 0.58)); // a longer name is shortened (the filter still uses all of it)
   const pills = (list: string[], k: FilterKind) =>
-    pillLines(list.map(t => t), lIn - px(4)).map((line, i) => ({
-      h: px(34) + (i === 0 ? px(6) : px(2)), // room above each line so its top edge is never cut off (more under a heading)
+    pillLines(list.map(t => t), lIn - px(4), pillTinyW).map((line, i) => ({
+      h: px(31) + (i === 0 ? px(4) : 0), // a 25-high pill with room above and below, so no line touches the next
       sec,
       hl,
-      node: <View style={{flexDirection: 'row', paddingTop: i === 0 ? px(6) : px(2), paddingLeft: px(2)}}>{line.map(t => <Pill small key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
+      node: <View style={{flexDirection: 'row', paddingTop: i === 0 ? px(6) : px(2), paddingLeft: px(2)}}>{line.map(t => <Pill tiny key={t} label={t.length > maxPill ? t.slice(0, maxPill - 1).trim() + '…' : t} onPress={() => onFilter(k, t)} />)}</View>,
     }));
   const field = (name: string, value: string | undefined, onPress?: () => void) => {
     const v = value || 'Not set';
@@ -4246,9 +4259,10 @@ function BookPage(props: {
   const rated = ratingOf(m);
   const starsH = rated ? px(30) : 0; // your rating, under the cover
   const progH = where ? px(80) : 0;
-  const lPages = scroll ? [left] : pack(left, colH - coverH - starsH - px(28) - startH - progH - pagerH - px(4));
+  // pages hold what really fits: the space is measured once laid out (an estimate until then)
+  const lPages = scroll ? [left] : pack(left, (lCap || colH - coverH - starsH - px(28) - startH - progH - pagerH - px(4)) - px(2));
   const tabsH = epubs.length ? px(52) : 0;
-  const rPages = scroll ? [right] : pack(right, colH - pagerH - px(20) - px(36) - tabsH); // room for a "continued" line
+  const rPages = scroll ? [right] : pack(right, (rCap ? rCap - px(36) : colH - pagerH - px(20) - px(36) - tabsH) - px(2)); // room for a "continued" line
   rPages.forEach((pg, i) => {
     if (i > 0 && pg[0]?.vol) pg.unshift({h: px(36), node: <Text style={[st.colHead, {fontSize: px(18)}]}>Volumes, continued</Text>});
   });
@@ -4356,7 +4370,7 @@ function BookPage(props: {
                 {top}
                 {ratingRow}
                 <View style={{height: px(14)}} />
-                {renderItems(lPages[lpg])}
+                <View style={{flex: 1, overflow: 'hidden'}} onLayout={fit(setLCap, lCap)}>{renderItems(lPages[lpg])}</View>
               </View>
               <View style={{paddingHorizontal: px(14), paddingBottom: px(10)}}>{progress}{start}</View>
               <View style={{paddingHorizontal: px(10)}}>
@@ -4384,7 +4398,9 @@ function BookPage(props: {
             <ScrollView contentContainerStyle={{padding: px(16)}}>{renderItems(right)}</ScrollView>
           ) : (
             <>
-              <View style={{flex: 1, paddingHorizontal: px(16), paddingTop: px(12), overflow: 'hidden'}}>{renderItems(rPages[rpg])}</View>
+              <View style={{flex: 1, paddingHorizontal: px(16), paddingTop: px(12), overflow: 'hidden'}}>
+                <View style={{flex: 1, overflow: 'hidden'}} onLayout={fit(setRCap, rCap)}>{renderItems(rPages[rpg])}</View>
+              </View>
               <View style={{paddingHorizontal: px(12)}}>
                 <Arrows page={rpg} pages={rPages.length} onPage={setRp} />
               </View>
@@ -7488,6 +7504,7 @@ const st = StyleSheet.create({
   pillLine: {flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden', marginTop: px(2), marginBottom: px(2), height: px(40), paddingTop: px(3), alignItems: 'flex-start', paddingLeft: px(1)}, // room so the pills' top and bottom lines are never cut
   pill: {borderWidth: 2, borderColor: BLACK, borderRadius: px(30), paddingHorizontal: px(12), paddingVertical: px(4), marginRight: px(6), marginBottom: px(6), justifyContent: 'center'},
   pillSmall: {paddingHorizontal: px(10), paddingVertical: px(3), marginRight: px(6), marginBottom: px(5)},
+  pillTiny: {paddingHorizontal: px(9), paddingVertical: px(2), marginRight: px(5), marginBottom: 0}, // book pages: genres and tags
   pillActive: {backgroundColor: BLACK},
   pillText: {fontSize: px(15), lineHeight: px(20), color: BLACK},
   row: {flexDirection: 'row', borderBottomWidth: 1, borderColor: '#888888', paddingVertical: px(7), overflow: 'hidden'},
